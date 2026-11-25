@@ -15,8 +15,22 @@ end
 function Frame:SetSize() end
 function Frame:GetName() return self.name end
 function Frame:GetParent() return self.parent end
-function Frame:SetPoint() end
-function Frame:ClearAllPoints() end
+-- The last point set. A TOPLEFT point on its parent's BOTTOMLEFT gives the frame a position, as
+-- GetLeft and GetTop report it (in the frame's own units, like the client); other points don't.
+function Frame:SetPoint(...) self.point = { ... } end
+function Frame:GetLeft()
+  local p = self.point
+  if p and p[1] == "TOPLEFT" and p[3] == "BOTTOMLEFT" then return p[4] end
+end
+function Frame:GetTop()
+  local p = self.point
+  if p and p[1] == "TOPLEFT" and p[3] == "BOTTOMLEFT" then return p[5] end
+end
+function Frame:SetNormalTexture(path) self.normalTexture = path end
+function Frame:SetPushedTexture(path) self.pushedTexture = path end
+function Frame:SetHighlightTexture(path) self.highlightTexture = path end
+function Frame:RegisterForClicks(...) self.clicks = { ... } end
+function Frame:ClearAllPoints() self.point = nil end
 function Frame:SetFrameStrata() end
 function Frame:SetMovable() end
 function Frame:RegisterForDrag() end
@@ -30,6 +44,7 @@ function Frame:GetAlpha() return self.alpha end
 function Frame:SetScale(s) self.scale = s end
 function Frame:GetScale() return self.scale end
 function Frame:SetScript(name, fn) self.scripts[name] = fn end
+function Frame:GetScript(name) return self.scripts[name] end
 function Frame:RegisterEvent(e) self.events[e] = true end
 function Frame:UnregisterEvent(e) self.events[e] = nil end
 function Frame:EnableMouseWheel() end
@@ -142,6 +157,15 @@ function M.new(opts)
     }
   end
   env.UIParent = newFrame("Frame", "UIParent")
+  -- The screen in UIParent units, UIParent's effective scale, and the cursor in screen pixels.
+  env.screenWidth, env.screenHeight, env.uiScale = 1365, 768, 0.75
+  env.UIParent.GetWidth = function() return env.screenWidth end
+  env.UIParent.GetHeight = function() return env.screenHeight end
+  env.UIParent.GetEffectiveScale = function() return env.uiScale end
+  env.cursorX, env.cursorY = 0, 0
+  env.GetCursorPosition = function() return env.cursorX, env.cursorY end
+  env.mouseDown = true
+  env.IsMouseButtonDown = function() return env.mouseDown end
   -- Timers run once due. runTimers(seconds) moves the clock (env.now) forward
   -- by that many seconds, one second at a time, and runs every timer that is due.
   env.now = 1000000

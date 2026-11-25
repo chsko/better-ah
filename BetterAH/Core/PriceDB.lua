@@ -67,20 +67,31 @@ function PriceDB:lastScan(key)
   return data and data.lastScan
 end
 
--- Every item recorded for a market, sorted by name, as copies:
+-- Every item recorded for a market, as copies:
 --   { item, name, lowest, quantity, listings, seen }
-function PriceDB:items(key)
+-- nameOf(item), if given, names items the scan didn't (the caller looks them up; this module stays
+-- pure). Items are sorted by name, ignoring case; items still without a name come last, by item key.
+function PriceDB:items(key, nameOf)
   local data = marketData(self, key)
   local out = {}
   if not data then return out end
+  local sortKey = {}
   for item, e in pairs(data.items) do
-    out[#out + 1] = {
-      item = item, name = e.name, lowest = e.lowest, quantity = e.quantity, listings = e.listings, seen = e.seen,
+    local name = e.name
+    if not name and nameOf then
+      name = nameOf(item)
+      if type(name) ~= "string" or name == "" then name = nil end
+    end
+    local copy = {
+      item = item, name = name, lowest = e.lowest, quantity = e.quantity, listings = e.listings, seen = e.seen,
     }
+    out[#out + 1] = copy
+    sortKey[copy] = name and name:lower()
   end
   table.sort(out, function(a, b)
-    local an, bn = a.name or "", b.name or ""
-    if an ~= bn then return an < bn end
+    local ak, bk = sortKey[a], sortKey[b]
+    if (ak == nil) ~= (bk == nil) then return ak ~= nil end
+    if ak and ak ~= bk then return ak < bk end
     return tostring(a.item) < tostring(b.item)
   end)
   return out

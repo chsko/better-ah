@@ -74,8 +74,8 @@ describe("AuctionAPI", function()
     assert.same({ true, "Scanned 3 listings of 2 items in 7 seconds." }, result)
     local items = ns.prices:items("/1/Horde")
     assert.equal(2, #items)
-    assert.same({ "Linen Cloth", 80, 25 }, { items[2].name, items[2].lowest, items[2].quantity })
-    assert.equal("i:2592", items[1].item)
+    assert.same({ "Linen Cloth", 80, 25 }, { items[1].name, items[1].lowest, items[1].quantity })
+    assert.equal("i:2592", items[2].item, "items without a name come last")
     assert.equal(env.now, ns.prices:lastScan("/1/Horde"))
   end)
 
@@ -210,6 +210,21 @@ describe("AuctionAPI", function()
     assert.same({ 2592 }, requested)
     assert.equal("Wool Cloth", api:itemName("i:2592"))
     assert.is_nil(api:itemName("i:1"))
+  end)
+
+  it("stores the names it can look up for listings that came without one", function()
+    local env, _, ns = setup()
+    env.C_Item = { GetItemNameByID = function(id) return id == 2592 and "Wool Cloth" or nil end }
+    env.auctions = {
+      { count = 1, buyout = 5, itemID = 2592, hasAllInfo = false },
+      { count = 1, buyout = 5, itemID = 7, hasAllInfo = false },
+    }
+    ns.AuctionAPI.scanIntoPrices(ns, function() end)
+    env.runTimers()
+    local key = ns.AuctionAPI.currentMarket(env)
+    local names = {}
+    for _, it in ipairs(ns.prices:items(key)) do names[#names + 1] = it.name or it.item end
+    assert.same({ "Wool Cloth", "i:7" }, names)
   end)
 
   it("says so when the client has no full scan", function()

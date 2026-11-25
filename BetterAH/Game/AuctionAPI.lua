@@ -234,6 +234,14 @@ function AuctionAPI.scanIntoPrices(addon, onDone)
       addon.lastScanReport = { ok = false, detail = info }
       return onDone(false, "Scan failed. " .. info)
     end
+    -- Many listings arrive without a name (the item isn't in the client's cache yet); name what we can.
+    local looked = {}
+    for _, l in ipairs(listings) do
+      if not l.name and l.item ~= nil then
+        if looked[l.item] == nil then looked[l.item] = api:itemName(l.item) or false end
+        l.name = looked[l.item] or nil
+      end
+    end
     local items = addon.prices:recordScan(key, api:now(), listings)
     local first = listings[1]
     addon.lastScanReport = {

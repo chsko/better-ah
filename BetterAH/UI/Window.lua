@@ -304,7 +304,9 @@ function Window:renderPrices()
   -- recordScan is the only writer today; a later writer (imports) must also bump lastScan.
   local stamp = key and addon.prices and addon.prices:lastScan(key)
   if not (self.cache and self.cache.key == key and self.cache.stamp == stamp) then
-    self.cache = { key = key, stamp = stamp, items = (key and addon.prices) and addon.prices:items(key) or {} }
+    -- Names the item cache has loaded since the scan are picked up here, so they sort in place.
+    local nameOf = addon.auctionAPI and function(item) return addon.auctionAPI:itemName(item) end
+    self.cache = { key = key, stamp = stamp, items = (key and addon.prices) and addon.prices:items(key, nameOf) or {} }
   end
   local items = self.cache.items
   local now = addon.auctionAPI and addon.auctionAPI:now() or 0
@@ -329,7 +331,8 @@ function Window:renderPrices()
   for r, row in ipairs(self.rows) do
     local item = items[r + self.offset]
     if item then
-      row[1]:SetText(item.name or (addon.auctionAPI and addon.auctionAPI:itemName(item.item)) or item.item)
+      -- Only the sorted name: a name looked up now would show out of order until the list is rebuilt.
+      row[1]:SetText(item.name or item.item)
       row[2]:SetText(item.lowest and ns.Money.format(item.lowest) or "bid only")
       row[3]:SetText(tostring(item.quantity))
       row[4]:SetText(ns.Time.ago(item.seen, now))
@@ -358,6 +361,7 @@ function Window:render()
   local mode = self.model.mode
   self.switching = true
   if mode == "better" then
+    self.cache = nil -- rebuild the price list on open, with any item names loaded since
     self:build():Show()
     self:concealBlizzard()
   else

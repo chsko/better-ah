@@ -119,8 +119,10 @@ function AuctionAPI:itemInfo(item)
   if not id or type(self.env.GetItemInfo) ~= "function" then return nil end
   local r = { pcall(self.env.GetItemInfo, id) }
   if not r[1] or r[2] == nil then return nil end
-  -- name, link, quality, itemLevel, minLevel, type, subType, stackCount, equipLoc, texture, sellPrice, classID
-  return { id = id, quality = r[4], level = r[5], equip = r[10], classID = r[13] }
+  -- name, link, quality, itemLevel, minLevel, type, subType, stackCount, equipLoc, texture, sellPrice, classID,
+  -- subclassID
+  return { id = id, quality = r[4], level = r[5], required = r[6], equip = r[10], classID = r[13],
+    subclassID = r[14] }
 end
 
 function AuctionAPI:now()

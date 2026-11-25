@@ -122,7 +122,8 @@ end
 PostingAPI.EVENTS = {
   "COMMODITY_SEARCH_RESULTS_UPDATED", "ITEM_SEARCH_RESULTS_UPDATED", "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED",
   "AUCTION_HOUSE_THROTTLED_SYSTEM_READY", "AUCTION_HOUSE_AUCTION_CREATED", "AUCTION_HOUSE_POST_ERROR",
-  "AUCTION_HOUSE_SHOW_ERROR", "AUCTION_HOUSE_POST_WARNING",
+  "AUCTION_HOUSE_SHOW_ERROR", "AUCTION_HOUSE_POST_WARNING", "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED",
+  "ITEM_KEY_ITEM_INFO_RECEIVED", "GET_ITEM_INFO_RECEIVED",
 }
 
 function PostingAPI.new(env)
@@ -152,7 +153,9 @@ end
 function PostingAPI.commodityEntry(env, itemID, name)
   local ah = env.C_AuctionHouse
   local itemKey = ah and ah.MakeItemKey and try(ah.MakeItemKey, itemID)
-  return { item = "i:" .. itemID, itemID = itemID, name = name, commodity = true, itemKey = itemKey }
+  -- Whether it is a commodity is read from C_AuctionHouse.GetItemKeyInfo just before the search, as
+  -- Blizzard's own window does; until then either kind of answer is taken (unsure).
+  return { item = "i:" .. itemID, itemID = itemID, name = name, commodity = true, unsure = true, itemKey = itemKey }
 end
 
 function PostingAPI:nextSearch()
@@ -171,7 +174,26 @@ function PostingAPI:nextSearch()
     end)
   end
   -- Over the throttle the query waits for AUCTION_HOUSE_THROTTLED_SYSTEM_READY.
-  if self:ready() then self:send(job) end
+  if self:ready() then self:prepare(job) end
+end
+
+-- An unsure entry needs the item's details in the client before its search: without them the client
+-- can't route the search and sends no answer. Blizzard's window only searches keys whose info is
+-- loaded (GetItemKeyInfo), and waits for ITEM_KEY_ITEM_INFO_RECEIVED otherwise; so does this.
+function PostingAPI:prepare(job)
+  local e, ah = job.entry, self.env.C_AuctionHouse
+  if e.unsure and type(ah.GetItemKeyInfo) == "function" then
+    local info = try(ah.GetItemKeyInfo, e.itemKey)
+    if type(info) ~= "table" then
+      job.waitingInfo, e.uncached = true, true
+      local item = self.env.C_Item
+      if not (item and try(item.RequestLoadItemDataByID, e.itemID) ~= nil) then try(self.env.GetItemInfo, e.itemID) end
+      return
+    end
+    job.waitingInfo = nil
+    if info.isCommodity ~= nil then e.commodity = info.isCommodity and true or false end
+  end
+  self:send(job)
 end
 
 function PostingAPI:send(job)
@@ -201,19 +223,29 @@ function PostingAPI:onEvent(event, arg)
     if job then self:finishSearch(job, nil, "the auction house closed") end
     for _, j in ipairs(waiting) do pcall(j.done, nil, "the auction house closed") end
   elseif event == "AUCTION_HOUSE_THROTTLED_SYSTEM_READY" then
-    if job and not job.sent then self:send(job) end
+    if job and not job.sent and not job.waitingInfo then self:prepare(job) end
+  elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" then
+    -- The client dropped a query: send it again once, when the system is ready.
+    if job and job.sent and not job.resent then
+      job.sent, job.resent = false, true
+      if self:ready() then self:prepare(job) end
+    end
+  elseif event == "ITEM_KEY_ITEM_INFO_RECEIVED" or event == "GET_ITEM_INFO_RECEIVED" then
+    if job and job.waitingInfo and arg == job.entry.itemID and self:ready() then self:prepare(job) end
   elseif event == "COMMODITY_SEARCH_RESULTS_UPDATED" or event == "ITEM_SEARCH_RESULTS_UPDATED" then
     if not (job and job.sent) then return end
     local e = job.entry
     -- Item events are matched on itemID only: the client may hand back the key with level and suffix
     -- cleared, and one search runs at a time.
-    local mine
-    if e.commodity then
-      mine = event == "COMMODITY_SEARCH_RESULTS_UPDATED" and arg == e.itemID
-    else
-      mine = event == "ITEM_SEARCH_RESULTS_UPDATED" and type(arg) == "table" and arg.itemID == e.itemID
+    local commodity = event == "COMMODITY_SEARCH_RESULTS_UPDATED" and arg == e.itemID
+    local item = event == "ITEM_SEARCH_RESULTS_UPDATED" and type(arg) == "table" and arg.itemID == e.itemID
+    if e.unsure and (commodity or item) then
+      -- Read the listings the way the answer came.
+      local read = { itemID = e.itemID, itemKey = item and arg or e.itemKey, commodity = commodity }
+      self:finishSearch(job, PostingAPI.readListings(self.env, read))
+    elseif (e.commodity and commodity) or (not e.commodity and item) then
+      self:finishSearch(job, PostingAPI.readListings(self.env, e))
     end
-    if mine then self:finishSearch(job, PostingAPI.readListings(self.env, e)) end
   elseif event == "AUCTION_HOUSE_POST_WARNING" then
     if self.onPostWarning then self.onPostWarning() end
   elseif event == "AUCTION_HOUSE_AUCTION_CREATED" then

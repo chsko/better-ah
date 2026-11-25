@@ -625,14 +625,18 @@ function Window:scanMaterials()
     return self:renderMaterials()
   end
   local mats = ns.Disenchant.MATERIALS
-  local scan = { done = 0, found = 0, failed = 0, total = #mats }
+  local scan = { done = 0, found = 0, empty = 0, failed = 0, total = #mats }
   self.materialScan = scan
   self.statusText = string.format("Scanning materials: 0 of %d.", scan.total)
   self.materialStatus = self.statusText
-  for _, m in ipairs(mats) do
+  local function lookup(m, tries)
     local entry = ns.PostingAPI.commodityEntry(self.env, m.id, m.name)
     api:search(entry, function(listings, complete)
       if self.materialScan ~= scan then return end
+      -- A lookup with no answer gets one more try, at the back of the queue.
+      if not listings and tries < 2 and complete == "no answer from the auction house" then
+        return lookup(m, tries + 1)
+      end
       scan.done = scan.done + 1
       local rows = {}
       for _, l in ipairs(listings or {}) do
@@ -643,6 +647,7 @@ function Window:scanMaterials()
             buyout = math.floor(l.unit * count + 0.5) }
         end
       end
+      if entry.uncached then scan.uncached = (scan.uncached or 0) + 1 end
       if not listings then
         scan.failed, scan.why = scan.failed + 1, complete
       elseif complete ~= true then
@@ -650,22 +655,25 @@ function Window:scanMaterials()
       elseif #rows > 0 then
         addon.prices:recordScan(key, addon.auctionAPI and addon.auctionAPI:now() or 0, rows, true)
         scan.found = scan.found + 1
+      else
+        scan.empty = scan.empty + 1
       end
       if scan.done < scan.total then
         self.statusText = string.format("Scanning materials: %d of %d.", scan.done, scan.total)
       else
         self.materialScan = nil
-        self.statusText = string.format("Materials scanned: %d of %d listed by other sellers.", scan.found,
-          scan.total)
+        self.statusText = string.format("Materials: %d updated, %d not listed by others", scan.found, scan.empty)
         if scan.failed > 0 then
-          self.statusText = self.statusText .. string.format(" %d couldn't be checked: %s.", scan.failed,
-            tostring(scan.why))
+          self.statusText = self.statusText .. string.format(", %d failed (%s%s)", scan.failed, tostring(scan.why),
+            scan.uncached and string.format("; %d had to load item data", scan.uncached) or "")
         end
+        self.statusText = self.statusText .. "."
       end
       self.materialStatus = self.statusText
       self:renderMaterials()
     end)
   end
+  for _, m in ipairs(mats) do lookup(m, 1) end
   self:renderMaterials()
 end
 

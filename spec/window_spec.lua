@@ -1,8 +1,8 @@
 local helper = require("spec.helper")
 local fake = require("spec.fake_client")
 
-local function setup()
-  local env = fake.new()
+local function setup(opts)
+  local env = fake.new(opts)
   local ns = helper.load("BetterAH/Core/WindowModel.lua")
   helper.load("BetterAH/Core/SelfTest.lua", ns)
   helper.load("BetterAH/Core/Probes.lua", ns)
@@ -52,7 +52,7 @@ describe("Window", function()
   it("closes the auction house when Better AH's close button is pressed", function()
     local env = setup()
     env.openAuctionHouse()
-    env.BetterAHFrame.CloseButton:Click()
+    env.BetterAHFrameCloseButton:Click()
     assert.is_false(env.open)
     assert.is_false(env.BetterAHFrame:IsShown())
     assert.equal(1, env.AuctionFrame.alpha, "Blizzard's window is restored for next time")
@@ -123,6 +123,49 @@ describe("Window", function()
     local last = results[#results]
     assert.equal("Better AH window", last.name)
     assert.equal("pass", last.status)
-    assert.equal("window created with 8 sidebar entries", last.detail)
+    assert.equal("window created with 8 sidebar entries; close button BetterAHFrameCloseButton; inset InsetBg",
+      last.detail)
+  end)
+
+  it("passes the window check with the modern template shape", function()
+    local env, _, ns = setup({ template = "modern" })
+    local last = ns.Probes.suite():run(env, { db = {} })
+    last = last[#last]
+    assert.equal("pass", last.status)
+    assert.equal("window created with 8 sidebar entries; close button CloseButton; inset Inset", last.detail)
+  end)
+
+  it("finds the inset by its global name when it has no parent key", function()
+    local env, _, ns = setup({ template = "named" })
+    local last = ns.Probes.suite():run(env, { db = {} })
+    last = last[#last]
+    assert.equal("pass", last.status)
+    assert.equal("window created with 8 sidebar entries; close button BetterAHFrameCloseButton; "
+      .. "inset BetterAHFrameInsetBg",
+      last.detail)
+  end)
+
+  it("ignores a global with the close button's name that belongs to another frame", function()
+    local env, _, ns = setup({ template = "bare" })
+    env.BetterAHFrameCloseButton = env.CreateFrame("Button", nil, env.UIParent)
+    local last = ns.Probes.suite():run(env, { db = {} })
+    last = last[#last]
+    assert.equal("fail", last.status)
+  end)
+
+  it("closes the window from the modern template's close button", function()
+    local env = setup({ template = "modern" })
+    env.openAuctionHouse()
+    env.BetterAHFrame.CloseButton:Click()
+    assert.is_false(env.BetterAHFrame:IsShown())
+  end)
+
+  it("fails the window check when the window has no close button", function()
+    local env, _, ns = setup({ template = "bare" })
+    local last = ns.Probes.suite():run(env, { db = {} })
+    last = last[#last]
+    assert.equal("fail", last.status)
+    assert.equal("window has no close button (looked for CloseButton and BetterAHFrameCloseButton); inset none",
+      last.detail)
   end)
 end)

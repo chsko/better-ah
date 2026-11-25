@@ -54,16 +54,41 @@ function Frame:Hide()
   if self.scripts.OnHide then self.scripts.OnHide(self) end
 end
 function Frame:CreateFontString() return newFrame("FontString") end
+function Frame:CreateTexture(_, layer)
+  local t = newFrame("Texture")
+  t.layer = layer
+  self.textures = self.textures or {}
+  self.textures[#self.textures + 1] = t
+  return t
+end
+function Frame:SetAtlas(atlas) self.atlas = atlas end
+function Frame:SetAllPoints() end
+function Frame:SetFrameLevel(level) self.level = level end
+function Frame:GetFrameLevel() return self.level or 1 end
+function Frame:SetBlendMode() end
+function Frame:SetFontObject(font) self.font = font end
+function Frame:SetFontString(fs) self.fontString = fs end
+function Frame:GetFontString() return self.fontString end
+function Frame:SetShown(on) if on then self:Show() else self:Hide() end end
 function Frame:Click() if self.scripts.OnClick then self.scripts.OnClick(self) end end
 
--- opts.template picks the shape of BasicFrameTemplateWithInset:
---   "forever" (default) like the Forever client: a named $parentCloseButton and an InsetBg texture
---   "modern" with CloseButton and Inset parent keys
---   "named" like "forever" but with the inset texture reachable only by its global name
---   "bare" with no close button or inset at all
+-- opts.template picks the shape of PortraitFrameTemplate's close button:
+--   "forever" (default) like Forever's SharedUIPanelTemplates.xml: parent key CloseButton and global
+--     $parentCloseButton
+--   "named" with only the global name
+--   "bare" with no close button at all
+-- opts.missingArt lists atlases C_Texture.GetAtlasInfo doesn't know; opts.noAtlasInfo removes C_Texture.
 function M.new(opts)
-  local shape = (opts and opts.template) or "forever"
+  opts = opts or {}
+  local shape = opts.template or "forever"
   local env = { frames = {}, closed = 0, UISpecialFrames = {}, timers = {} }
+  if not opts.noAtlasInfo then
+    local missing = {}
+    for _, atlas in ipairs(opts.missingArt or {}) do missing[atlas] = true end
+    env.C_Texture = {
+      GetAtlasInfo = function(atlas) if not missing[atlas] then return { width = 1, height = 1 } end end,
+    }
+  end
   env.UIParent = newFrame("Frame", "UIParent")
   -- Timers run once due. runTimers(seconds) moves the clock (env.now) forward
   -- by that many seconds, one second at a time, and runs every timer that is due.
@@ -92,20 +117,14 @@ function M.new(opts)
   end
   env.CreateFrame = function(kind, name, parent, template)
     local f = newFrame(kind, name, parent, template)
-    if template == "BasicFrameTemplateWithInset" and shape ~= "bare" then
-      local close = newFrame("Button", name and (name .. "CloseButton"), f)
-      close:SetScript("OnClick", function() f:Hide() end)
-      if shape == "modern" then
-        f.CloseButton = close
-        f.Inset = newFrame("Frame", nil, f)
-      else
+    if template == "PortraitFrameTemplate" then
+      f.SetTitle = function(frame, text) frame.title = text end
+      f.SetPortraitToAsset = function(frame, path) frame.portrait = path end
+      if shape ~= "bare" then
+        local close = newFrame("Button", name and (name .. "CloseButton"), f)
+        close:SetScript("OnClick", function() f:Hide() end)
         if name then env[name .. "CloseButton"] = close end
-        local bg = newFrame("Texture", name and (name .. "InsetBg"), f)
-        if shape == "named" then
-          if name then env[name .. "InsetBg"] = bg end
-        else
-          f.InsetBg = bg
-        end
+        if shape == "forever" then f.CloseButton = close end
       end
     end
     env.frames[#env.frames + 1] = f

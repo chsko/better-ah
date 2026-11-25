@@ -116,8 +116,12 @@ end
 -- or nil while the item isn't in the client's cache.
 function AuctionAPI:itemInfo(item)
   local id = type(item) == "string" and tonumber(item:match("^i:(%d+)$"))
-  if not id or type(self.env.GetItemInfo) ~= "function" then return nil end
-  local r = { pcall(self.env.GetItemInfo, id) }
+  if not id then return nil end
+  -- The global GetItemInfo, or C_Item.GetItemInfo where a client only has that one.
+  local get = self.env.GetItemInfo
+  if type(get) ~= "function" then get = self.env.C_Item and self.env.C_Item.GetItemInfo end
+  if type(get) ~= "function" then return nil end
+  local r = { pcall(get, id) }
   if not r[1] or r[2] == nil then return nil end
   -- name, link, quality, itemLevel, minLevel, type, subType, stackCount, equipLoc, texture, sellPrice, classID,
   -- subclassID

@@ -55,6 +55,8 @@ describe("Sniper", function()
     assert.equal(1, #out)
     assert.equal(1, out[1].itemKey.itemID)
     assert.equal(1, #Sniper.near(band, results, maxOf, levelOf))
+    local wrongKey = { { itemKey = { itemID = 1, itemLevel = 23 }, minPrice = 500 } }
+    assert.equal(1, #Sniper.candidates(band, wrongKey, maxOf, nil, levelOf), "the details win over the key")
   end)
 
   it("lists the results nearest their max price, buyable ones first", function()

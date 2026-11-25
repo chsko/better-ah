@@ -46,11 +46,13 @@ function Sniper.browseQuery(target, band)
     filters = { Sniper.UNCOMMON_FILTER }, itemClassFilters = filters, sorts = Sniper.PRICE_SORT }
 end
 
--- A browse result's item level: from its item key, or, where the client leaves that 0 (Classic-style
--- auction houses show required level instead), from levelOf(itemID), the item's own details.
+-- A browse result's item level: from the item's own details (fallback(itemID)) when they are loaded,
+-- else from its item key. Classic-style auction houses work in required level, and the key's level
+-- can be 0 there, or not the item level the bands are cut by.
 local function levelOf(key, fallback)
-  local level = key and tonumber(key.itemLevel)
-  if (not level or level <= 0) and key and fallback then level = tonumber(fallback(key.itemID)) end
+  if not key then return nil end
+  local level = fallback and tonumber(fallback(key.itemID))
+  if not level or level <= 0 then level = tonumber(key.itemLevel) end
   if level and level > 0 then return level end
   return nil
 end

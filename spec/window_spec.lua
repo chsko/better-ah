@@ -1103,7 +1103,13 @@ describe("Window", function()
         env.browseResults = { { itemKey = { itemID = 5003, itemLevel = 35 }, minPrice = 100 } }
         s.startButton:Click()
         env.runTimers()
-        assert.equal("Last checks: 1 green listed, none in a band with a known worth.", s.hint:GetText())
+        assert.equal("Last checks: 1 green: 1 outside the band.", s.nearEmpty:GetText())
+        env.browseResults = { { itemKey = { itemID = 5003, itemLevel = 35 }, minPrice = 100 },
+          { itemKey = { itemID = 6000, itemLevel = 28 }, minPrice = 100 },
+          { itemKey = { itemID = 6001, itemLevel = 28 }, minPrice = 100 } }
+        env.uncached[6001] = true
+        env.runTimers(2)
+        assert.equal("Last checks: 3 greens: 2 not loaded yet, 1 outside the band.", s.nearEmpty:GetText())
       end)
 
       it("judges items only once their details are loaded", function()

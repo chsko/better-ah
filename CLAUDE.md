@@ -49,9 +49,14 @@ override any skill that says otherwise.
   with the Codex-based `adversarial-review` plugin, use `/adversarial-review`. Otherwise give the diff, the
   issue and this file to a fresh reviewer agent told to find real defects and mark each finding blocking or
   non-blocking. Fix every blocking finding before committing.
-- **Never merge, always rebase.** Pull requests land with "Rebase and merge", never a merge commit or a
-  squash. Locally, integrate with `git rebase` or `git pull --rebase`, never `git merge`. This overrides the
-  merge steps in `/implement-spec`.
+- **Never merge, always rebase.** Never create a merge commit or a squash; if a pull request is merged on
+  GitHub, use "Rebase and merge". Locally, integrate with
+  `git rebase` or `git pull --rebase`, never `git merge`. This overrides the merge steps in `/implement-spec`.
+- **Land on main by rebasing and pushing.** Once the adversarial review is done and its fixes are in,
+  rebase the issue branch onto the latest `main`, run `luacheck .` and `busted` again, and push to `main`
+  as a fast-forward. If the push is rejected because `main` moved, rebase again; never force-push. If it is
+  rejected for any other reason, stop and report it. If a pull request exists and GitHub does not mark it
+  merged, close it with a pointer to the commits on `main`.
 
 ## How we use the main flow
 

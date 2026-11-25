@@ -66,6 +66,38 @@ function Sniper.candidates(band, results, maxOf, skip)
   return out
 end
 
+-- Every browse result in the band with a known max price, as { itemKey, minPrice, max, delta }: delta is
+-- how far the cheapest is under the max (negative: over it). For the "closest to your max prices" list.
+function Sniper.near(band, results, maxOf)
+  local out = {}
+  for _, r in ipairs(results or {}) do
+    local key = r.itemKey
+    local level = key and tonumber(key.itemLevel)
+    local max = key and maxOf(key.itemID)
+    if level and level >= band.min and level <= band.max and max and max > 0 and (r.minPrice or 0) > 0 then
+      out[#out + 1] = { itemKey = key, minPrice = r.minPrice, max = max, delta = max - r.minPrice }
+    end
+  end
+  return out
+end
+
+Sniper.CLOSEST = 5
+
+-- The listings to show from each target's last check (lists: a list of Sniper.near lists): what can be
+-- bought first, most under the max first, then what is over it, closest first. At most n (CLOSEST).
+function Sniper.closest(lists, n)
+  local all = {}
+  for _, list in ipairs(lists) do
+    for _, e in ipairs(list) do all[#all + 1] = e end
+  end
+  table.sort(all, function(a, b)
+    if a.delta ~= b.delta then return a.delta > b.delta end
+    return a.itemKey.itemID < b.itemKey.itemID
+  end)
+  while #all > (n or Sniper.CLOSEST) do table.remove(all) end
+  return all
+end
+
 -- The buys among an item's auctions ({ auctionID, unit, count, ownCount, link } from
 -- PostingAPI.readListings): other sellers' buyouts at or under max.
 function Sniper.buys(listings, max)

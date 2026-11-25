@@ -4,8 +4,8 @@ local fake = require("spec.fake_client")
 local function setup(opts)
   local env = fake.new(opts)
   local ns = helper.load("BetterAH/Core/WindowModel.lua")
-  local core = { "Money", "Time", "MarketKey", "MarketValue", "PriceDB", "CharacterRecords", "Posting", "PostQueue",
-    "SelfTest", "Probes" }
+  local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "PriceDB", "CharacterRecords", "Posting",
+    "PostQueue", "SelfTest", "Probes" }
   for _, file in ipairs(core) do
     helper.load("BetterAH/Core/" .. file .. ".lua", ns)
   end
@@ -394,6 +394,32 @@ describe("Window", function()
       local _, _, ns = setup()
       local text = ns.Window.detailText({ item = "i:1", seen = 1, lowest = 195 }, nil, nil, {}, 1)
       assert.matches("Scanned before Better AH kept price history", text, 1, true)
+    end)
+
+    it("shows what a green item disenchants into, and what that's worth here", function()
+      local env, w, ns = setup()
+      ns.prices:importPrices("/1/Horde", env.now, { ["i:16204"] = { value = 200 }, ["i:16203"] = { value = 1000 } })
+      ns.prices:recordScan("/1/Horde", env.now, { { item = "i:15000", name = "Green Robe", count = 1, buyout = 500 } })
+      env.GetItemInfo = function(id)
+        if id ~= 15000 then return nil end
+        return "Green Robe", "link", 2, 58, 53, "Armor", "Cloth", 1, "INVTYPE_ROBE", 0, 100, 4
+      end
+      env.openAuctionHouse()
+      w:select("prices")
+      for r = 1, 14 do
+        if w.rows[r][1]:GetText() == "Green Robe" then w.rows[r].button:Click() end
+      end
+      assert.matches(table.concat({
+        "Disenchant value: 5s 25c (4s 98c after the 5% auction house cut)",
+        "Illusion Dust (75%, 1-2): 2s 25c",
+        "Greater Eternal Essence (20%, 1-2): 3s 0c",
+        "Large Brilliant Shard (5%, 1): no price",
+        "Materials without a price count as nothing. Scan to price them.",
+      }, "\n"), w.detailBody:GetText(), 1, true)
+      env.GetItemInfo = function() return nil end
+      w:renderPrices()
+      assert.is_nil(w.detailBody:GetText():find("Disenchant", 1, true), "item details not loaded: no section")
+      assert.matches("Market value", w.detailBody:GetText(), 1, true)
     end)
 
     it("explains an item known only from imported prices", function()

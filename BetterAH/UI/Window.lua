@@ -483,6 +483,29 @@ function Window:buildDetail(f)
   self.detailPanel, self.detailLayer, self.detailTitle, self.detailBody = detail, text, title, body
 end
 
+-- The disenchant part of the detail text, from Disenchant.value: the expected value, what it nets
+-- after the auction house cut, and each material with its chance, amount and value.
+function Window.disenchantText(value, breakdown, missing)
+  local money = ns.Money.format
+  local lines = {}
+  local function add(text) lines[#lines + 1] = text end
+  if value then
+    add(string.format("Disenchant value: %s (%s after the 5%% auction house cut)", money(value),
+      money(ns.Disenchant.net(value))))
+  else
+    add("Disenchant value: no prices for its materials yet")
+  end
+  for _, y in ipairs(breakdown or {}) do
+    local amount = y.min == y.max and tostring(y.min) or (y.min .. "-" .. y.max)
+    add(string.format("%s (%s%%, %s): %s", y.name, string.format("%.1f", y.chance * 100):gsub("%.0$", ""), amount,
+      y.value and money(y.value) or "no price"))
+  end
+  if value and (missing or 0) > 0 then
+    add("Materials without a price count as nothing. Scan to price them.")
+  end
+  return table.concat(lines, "\n")
+end
+
 -- The detail text for one item: its market value and how it was worked out, then its history.
 -- Pure apart from formatting; value/info come from PriceDB:marketValue and history from PriceDB:history.
 function Window.detailText(item, value, info, history, now)
@@ -557,7 +580,15 @@ function Window:renderDetail(items, now)
   end
   local value, info = addon.prices:marketValue(key, item.item, now)
   self.detailTitle:SetText(item.name or item.item)
-  self.detailBody:SetText(Window.detailText(item, value, info, addon.prices:history(key, item.item), now))
+  local text = Window.detailText(item, value, info, addon.prices:history(key, item.item), now)
+  local details = addon.auctionAPI and addon.auctionAPI:itemInfo(item.item)
+  if details and ns.Disenchant and ns.Disenchant.yields(details) then
+    local deValue, breakdown, missing = ns.Disenchant.value(details, function(id)
+      return (addon.prices:marketValue(key, "i:" .. id, now))
+    end)
+    text = text .. "\n\n" .. Window.disenchantText(deValue, breakdown, missing)
+  end
+  self.detailBody:SetText(text)
 end
 
 function Window:market()

@@ -112,6 +112,17 @@ function AuctionAPI:itemName(item)
   return nonEmpty(items and try(items.GetItemNameByID, id)) or nonEmpty(try(self.env.GetItemInfo, id))
 end
 
+-- What Disenchant needs to know about an item, from GetItemInfo: { id, quality, classID, level, equip },
+-- or nil while the item isn't in the client's cache.
+function AuctionAPI:itemInfo(item)
+  local id = type(item) == "string" and tonumber(item:match("^i:(%d+)$"))
+  if not id or type(self.env.GetItemInfo) ~= "function" then return nil end
+  local r = { pcall(self.env.GetItemInfo, id) }
+  if not r[1] or r[2] == nil then return nil end
+  -- name, link, quality, itemLevel, minLevel, type, subType, stackCount, equipLoc, texture, sellPrice, classID
+  return { id = id, quality = r[4], level = r[5], equip = r[10], classID = r[13] }
+end
+
 function AuctionAPI:now()
   return try(self.env.GetServerTime) or try(self.env.time) or 0
 end

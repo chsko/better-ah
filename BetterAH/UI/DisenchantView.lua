@@ -139,8 +139,6 @@ function DisenchantView:build(f, x, y, width, height)
     b:SetScript("OnClick", function() self:selectTab(tab[1]) end)
     self.tabButtons[tab[1]] = b
   end
-  self.tabButtons.snipe:Disable()
-  ns.Window.tooltip(env, self.tabButtons.snipe, "Snipe", "Not available yet: sniping your targets comes next.")
 
   local salvager = env.CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
   salvager:SetSize(24, 24)
@@ -160,6 +158,9 @@ function DisenchantView:build(f, x, y, width, height)
 
   self:buildValues(subPanel(env, panel, width, height), width)
   self:buildTargets(subPanel(env, panel, width, height), width)
+  self.snipe = ns.SnipeView.new(self)
+  self.snipePanel = subPanel(env, panel, width, height)
+  self.snipe:build(self.snipePanel, width)
   self:buildEditors()
   return panel
 end
@@ -229,6 +230,14 @@ function DisenchantView:buildTargets(p, width)
     ns.Window.tooltip(env, box, "Snipe this target", "Untick to keep the target without sniping it.")
     cells.check = box
   end
+  local start = env.CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
+  start:SetSize(width, 26)
+  start:SetPoint("BOTTOMLEFT", p, "BOTTOMLEFT", 0, 0)
+  start:SetScript("OnClick", function()
+    self:selectTab("snipe")
+    if not self.snipe.running then self.snipe:start() end
+  end)
+  self.startButton = start
   self.targetsEmpty = p:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   self.targetsEmpty:SetPoint("TOPLEFT", p, "TOPLEFT", 4, -56)
   self.targetsEmpty:SetWidth(width - 8)
@@ -351,13 +360,13 @@ end
 
 function DisenchantView:hideEditors()
   self:dropFocus()
+  if self.snipe then self.snipe:hide() end
   if self.editor then self.editor:Hide() end
   if self.makeButton then self.makeButton:Hide() end
 end
 
 function DisenchantView:selectTab(tab)
   self:dropFocus()
-  if tab == "snipe" then return end
   self.tab = tab
   self.message = nil
   self:render()
@@ -510,14 +519,17 @@ function DisenchantView:render()
   self.today = ns.MarketValue.day(now)
   self.salvagerButton:SetChecked(opts.salvager)
   for id, b in pairs(self.tabButtons) do ns.Window.markSelected(b, id == self.tab) end
-  self.tabButtons.snipe:GetFontString():SetFontObject("GameFontDisableSmall") -- not available yet
   self.valuesPanel:SetShown(self.tab == "values")
   self.targetsPanel:SetShown(self.tab == "targets")
+  self.snipePanel:SetShown(self.tab == "snipe")
+  if self.tab ~= "snipe" then self.snipe:hide() end
   -- Only hidden when it goes away: hiding the editor would take focus from the profit box.
   if self.tab ~= "targets" then self.editor:Hide() end
   if self.tab ~= "values" then self.makeButton:Hide() end
   if self.tab == "targets" then
     self:renderTargets()
+  elseif self.tab == "snipe" then
+    self.snipe:render()
   else
     self:renderValues(key, opts)
   end
@@ -592,6 +604,14 @@ function DisenchantView:renderTargets()
     cells.button.selectedTexture:SetShown(t ~= nil and index == self.target)
   end
   self.targetsEmpty:SetShown(#list == 0)
+  local ticked = #self.snipe:runnable()
+  if self.snipe.running then
+    self.startButton:SetText("Sniping: show it")
+  else
+    self.startButton:SetText(ticked > 0 and string.format("Start sniping %d target%s", ticked,
+      ticked == 1 and "" or "s") or "Tick a target to snipe it")
+  end
+  if ticked > 0 or self.snipe.running then self.startButton:Enable() else self.startButton:Disable() end
 
   local t = self:current()
   if not t then

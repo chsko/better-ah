@@ -185,6 +185,22 @@ function Disenchant.greenBands()
   return out
 end
 
+-- Three lesser essences combine into one greater, so a lesser essence is worth at least a third of the
+-- greater one: sold as it is or combined, whichever brings more.
+Disenchant.GREATER = { [10938] = 10939, [10998] = 11082, [11134] = 11135, [11174] = 11175, [16202] = 16203 }
+
+-- A material's price for disenchant values: its market value from priceOf(materialID), and for a lesser
+-- essence the higher of that and a third of the greater essence's. nil when nothing is known.
+function Disenchant.priceOf(id, priceOf)
+  if not priceOf then return nil end
+  local own = tonumber(priceOf(id))
+  if own and own <= 0 then own = nil end
+  local greater = Disenchant.GREATER[id] and tonumber(priceOf(Disenchant.GREATER[id]))
+  local combined = greater and greater > 0 and math.floor(greater / 3) or nil
+  if own and combined then return math.max(own, combined) end
+  return own or combined
+end
+
 -- The expected value of disenchanting the item, in copper. opts as for yields. priceOf(materialID)
 -- gives a material's market value or nil. Returns value (nil when no material has a price), the breakdown
 -- ({ id, name, chance, min, max, expected, price, value } per material) and how many materials had
@@ -194,7 +210,7 @@ function Disenchant.value(info, priceOf, opts)
   if not yields then return nil, nil, nil, why end
   local total, priced, missing = 0, 0, 0
   for _, y in ipairs(yields) do
-    local price = priceOf and tonumber(priceOf(y.id))
+    local price = Disenchant.priceOf(y.id, priceOf)
     if price and price > 0 then
       y.price, y.value = price, math.floor(y.expected * price + 0.5)
       total, priced = total + y.expected * price, priced + 1

@@ -81,6 +81,7 @@ function Frame:SetSpacing() end
 function Frame:SetFrameLevel(level) self.level = level end
 function Frame:GetFrameLevel() return self.level or 1 end
 function Frame:SetBlendMode() end
+function Frame:SetColorTexture(...) self.color = { ... } end
 function Frame:SetFontObject(font) self.font = font end
 function Frame:SetFontString(fs) self.fontString = fs end
 function Frame:GetFontString() return self.fontString end
@@ -322,7 +323,7 @@ function M.new(opts)
   ah.GetItemSearchResultInfo = function(key, i)
     local r = (env.listings[key.itemID] or {})[i]
     return r and { itemKey = key, buyoutAmount = r.buyoutAmount, quantity = r.quantity or 1,
-      containsOwnerItem = r.containsOwnerItem or false }
+      containsOwnerItem = r.containsOwnerItem or false, auctionID = r.auctionID, itemLink = r.itemLink }
   end
   ah.HasFullItemSearchResults = function() return env.fullResults end
   env.needsConfirmation = false
@@ -360,6 +361,32 @@ function M.new(opts)
       price = buyout }
     created()
   end
+  -- Browsing: env.browseResults answer each SendBrowseQuery on the next tick, unless env.browseSilent.
+  env.browseResults, env.browses = {}, {}
+  ah.SendBrowseQuery = function(query)
+    env.browses[#env.browses + 1] = query
+    if env.browseSilent or not env.open then return end
+    env.C_Timer.After(0, function() env.fire("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED") end)
+  end
+  ah.GetBrowseResults = function() return env.browseResults end
+  -- Buying: PlaceBid answers with AUCTION_HOUSE_PURCHASE_COMPLETED on the next tick, or with
+  -- AUCTION_HOUSE_SHOW_ERROR when env.bidFails. env.money is the character's gold.
+  env.bids, env.money = {}, 1000000
+  ah.PlaceBid = function(auctionID, amount)
+    env.bids[#env.bids + 1] = { auctionID = auctionID, amount = amount }
+    env.C_Timer.After(0, function()
+      if env.bidFails then
+        env.fire("AUCTION_HOUSE_SHOW_ERROR", 1)
+      else
+        env.money = env.money - amount
+        env.fire("AUCTION_HOUSE_PURCHASE_COMPLETED", auctionID)
+      end
+    end)
+  end
+  env.GetMoney = function() return env.money end
+  env.sounds = {}
+  env.SOUNDKIT = { AUCTION_WINDOW_OPEN = 5274 }
+  env.PlaySound = function(id) env.sounds[#env.sounds + 1] = id end
   -- Fire an event at every frame registered for it.
   env.fire = function(event, ...)
     for _, f in ipairs(env.frames) do

@@ -4,14 +4,16 @@ local fake = require("spec.fake_client")
 local function setup(opts)
   local env = fake.new(opts)
   local ns = helper.load("BetterAH/Core/WindowModel.lua")
-  local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "Targets", "PriceDB", "CharacterRecords",
-    "Posting", "PostQueue", "SelfTest", "Probes" }
+  local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "Targets", "Sniper", "PriceDB",
+    "CharacterRecords", "Posting", "PostQueue", "SelfTest", "Probes" }
   for _, file in ipairs(core) do
     helper.load("BetterAH/Core/" .. file .. ".lua", ns)
   end
   helper.load("BetterAH/Game/AuctionAPI.lua", ns)
   helper.load("BetterAH/Game/PostingAPI.lua", ns)
+  helper.load("BetterAH/Game/SnipeAPI.lua", ns)
   helper.load("BetterAH/UI/PostView.lua", ns)
+  helper.load("BetterAH/UI/SnipeView.lua", ns)
   helper.load("BetterAH/UI/DisenchantView.lua", ns)
   helper.load("BetterAH/UI/Window.lua", ns)
   ns.prices = ns.PriceDB.new({})
@@ -19,6 +21,7 @@ local function setup(opts)
   ns.posting = ns.Posting.Settings.new({})
   ns.AuctionAPI.install(env, ns)
   ns.PostingAPI.install(env, ns)
+  ns.SnipeAPI.install(env, ns)
   if opts and opts.tracker then
     helper.load("BetterAH/Game/CharacterTracker.lua", ns)
     ns.CharacterTracker.install(env, ns)
@@ -724,13 +727,13 @@ describe("Window", function()
       return out
     end
 
-    it("opens on Values, with Targets beside it and Snipe still to come", function()
+    it("opens on Values, with Targets and Snipe beside it", function()
       local _, w = deSetup()
       local v = w.disenchantView
       assert.is_true(v.valuesPanel:IsShown())
       assert.is_false(v.targetsPanel:IsShown())
       assert.is_true(v.tabButtons.values.selectedTexture:IsShown())
-      assert.is_false(v.tabButtons.snipe:IsEnabled())
+      assert.is_true(v.tabButtons.snipe:IsEnabled())
       v.tabButtons.targets:Click()
       assert.is_true(v.targetsPanel:IsShown())
       assert.is_false(v.valuesPanel:IsShown())
@@ -848,6 +851,209 @@ describe("Window", function()
       assert.equal("Materials: 1 updated, 23 not listed by others.", w.disenchantView.status:GetText())
       assert.is_true(w.disenchantView.materialsButton:IsEnabled())
       assert.are_not.equal("14s 20c", band(w, 4)[3], "the new Soul Dust price counts")
+    end)
+
+    describe("Snipe", function()
+      -- An Armor target for 26-30 (worth 14s 20c, 10% profit: max 12s 78c), and one cheap bracer on the
+      -- auction house among results that aren't buys.
+      local function snipeSetup()
+        local env, w, ns = deSetup()
+        local v = w.disenchantView
+        v.tabButtons.targets:Click()
+        v.newButton:Click()
+        env.browseResults = {
+          { itemKey = { itemID = 5001, itemLevel = 28 }, minPrice = 900, totalQuantity = 2 },
+          { itemKey = { itemID = 5002, itemLevel = 28 }, minPrice = 5000, totalQuantity = 1 },
+          { itemKey = { itemID = 5003, itemLevel = 35 }, minPrice = 100, totalQuantity = 1 },
+        }
+        env.listings[5001] = { item = true, level = 28,
+          { buyoutAmount = 900, auctionID = 77, itemLink = "[Ridgeback Bracers]" },
+          { buyoutAmount = 1200, auctionID = 78, itemLink = "[Ridgeback Bracers]" },
+          { buyoutAmount = 1300, auctionID = 79, itemLink = "[Ridgeback Bracers]" } }
+        -- Item details: leather bracers. Others aren't loaded.
+        env.GetItemInfo = function(id)
+          if id ~= 5001 or env.uncached[id] then return nil end
+          return "Ridgeback Bracers", "link", 2, 28, 23, "Armor", "Leather", 1, "INVTYPE_WRIST", 0, 100, 4, 2
+        end
+        v.tabButtons.snipe:Click()
+        return env, w, ns, v.snipe
+      end
+
+      it("starts from Targets and lists the buys it finds, most profit first", function()
+        local env, w, ns = snipeSetup()
+        local v = w.disenchantView
+        v.tabButtons.targets:Click()
+        assert.equal("Start sniping 1 target", v.startButton:GetText())
+        v.startButton:Click()
+        local s = v.snipe
+        assert.is_true(v.snipePanel:IsShown())
+        assert.is_true(s.running)
+        assert.equal(21, env.browses[1].minLevel)
+        assert.equal(25, env.browses[1].maxLevel)
+        env.runTimers()
+        assert.equal(1, #env.searches, "only the cheap bracer in the band is looked up")
+        assert.equal("[Ridgeback Bracers]", s.cardName:GetText())
+        assert.equal("Next buy: Armor, req. 21-25", s.cardLabel:GetText())
+        assert.equal("Buy for 9s 0c", s.buyButton:GetText())
+        assert.equal("+5s 20c", s.cols[3].value:GetText())
+        assert.equal("1 more found", s.queueLabel:GetText(), "1300 is over the max")
+        assert.equal(1, #env.sounds)
+        assert.matches("^Sniping 1 target", s.status:GetText())
+        assert.equal("This session", w.detailTitle:GetText())
+        assert.is_true(s.settingsBox:IsShown())
+        assert.is_not_nil(ns.disenchant.session, "the session is saved")
+      end)
+
+      it("buys with the button or a mouse wheel turn and counts the spend", function()
+        local env, w, ns, s = snipeSetup()
+        s.startButton:Click()
+        env.runTimers()
+        s.buyButton:Click()
+        assert.equal("Buying...", s.buyButton:GetText())
+        assert.is_false(s.buyButton:IsEnabled())
+        env.runTimers()
+        assert.same({ auctionID = 77, amount = 900 }, env.bids[1])
+        assert.equal("Spent this session: 9s 0c", s.spentText:GetText())
+        assert.matches("Bought %[Ridgeback Bracers%] for 9s 0c", w.detailBody:GetText())
+        assert.equal("Buy for 12s 0c", s.buyButton:GetText())
+        s.panel.scripts.OnMouseWheel(s.panel, -1)
+        env.runTimers()
+        assert.same({ auctionID = 78, amount = 1200 }, env.bids[2])
+        assert.equal("Spent this session: 21s 0c", s.spentText:GetText())
+        assert.equal("2 bought, worth 28s 40c disenchanted: +7s 40c expected profit", s.summary:GetText())
+        assert.equal(2100, ns.disenchant.session.spent)
+        env.runTimers(2)
+        assert.equal(2, #env.browses, "the next round starts after a rest")
+        assert.equal("Nothing under your max prices yet", s.cardName:GetText(), "bought auctions don't come back")
+      end)
+
+      it("passes, logs a missed buy and stops at the spend cap", function()
+        local env, w, ns, s = snipeSetup()
+        s.startButton:Click()
+        env.runTimers()
+        s.passButton:Click()
+        assert.equal("Buy for 12s 0c", s.buyButton:GetText(), "most profit first: 78 was behind 77")
+        env.bidFails = true
+        s.buyButton:Click()
+        env.runTimers()
+        assert.matches("Missed %[Ridgeback Bracers%]: sold to someone else", w.detailBody:GetText())
+        assert.matches("Passed", w.detailBody:GetText())
+        assert.equal(0, ns.disenchant.session.spent)
+        env.bidFails = false
+        s.capInput:SetFocus()
+        s.capInput:SetText("10s")
+        s.capInput:ClearFocus()
+        assert.equal(1000, ns.disenchant.snipe.cap)
+        assert.equal("Spent this session: 0c of 10s 0c", s.spentText:GetText())
+        ns.disenchant.session.spent = 500
+        s.session:add({ auctionID = 90, name = "[Pricey]", price = 600, worth = 1420, max = 1278, target = "Armor" })
+        w.disenchantView:render()
+        s.buyButton:Click()
+        assert.equal(1, #env.bids, "no bid over the cap")
+        assert.equal("Can't buy [Pricey]: over your spend cap for this session.", s.status:GetText())
+      end)
+
+      it("stops when the auction house closes and keeps the session in the history", function()
+        local env, w, ns, s = snipeSetup()
+        s.startButton:Click()
+        env.runTimers()
+        s.buyButton:Click()
+        env.runTimers()
+        env.CloseAuctionHouse()
+        assert.is_false(s.running)
+        assert.equal("The auction house closed, so sniping stopped.", s.status:GetText())
+        assert.equal(1, #ns.disenchant.history)
+        assert.equal(900, ns.disenchant.history[1].spent)
+        assert.equal("Start sniping", s.startButton:GetText())
+        assert.equal("Press Start sniping", s.cardName:GetText())
+        assert.equal("Spent this session: 9s 0c", s.spentText:GetText(), "the last session stays in view")
+        w:select("prices")
+        assert.is_false(s.settingsBox:IsShown())
+      end)
+
+      it("counts a buy the auction house confirms after Stop", function()
+        local env, _, ns, s = snipeSetup()
+        s.startButton:Click()
+        env.runTimers()
+        s.buyButton:Click()
+        s.startButton:Click()
+        assert.is_false(s.running)
+        env.runTimers()
+        assert.equal(900, ns.disenchant.history[1].spent, "the filed session has the late buy")
+        assert.equal(900, ns.disenchant.session.spent)
+        s.startButton:Click()
+        assert.equal(1, #ns.disenchant.history, "filed once")
+        assert.equal(0, ns.disenchant.session.spent, "a new session")
+      end)
+
+      it("counts a buy confirmed after the timeout", function()
+        local env, _, ns, s = snipeSetup()
+        s.startButton:Click()
+        env.runTimers()
+        local placeBid = env.C_AuctionHouse.PlaceBid
+        env.C_AuctionHouse.PlaceBid = function(id, amount)
+          env.bids[#env.bids + 1] = { auctionID = id, amount = amount }
+        end
+        s.buyButton:Click()
+        env.runTimers(10)
+        assert.equal(0, ns.disenchant.session.spent, "missed for now")
+        env.C_AuctionHouse.PlaceBid = placeBid
+        env.fire("AUCTION_HOUSE_PURCHASE_COMPLETED", 77)
+        assert.equal(900, ns.disenchant.session.spent)
+        assert.equal(1, ns.disenchant.session.bought)
+      end)
+
+      it("doesn't look up the same item again until a cheaper auction shows up", function()
+        local env, _, _, s = snipeSetup()
+        s.startButton:Click()
+        env.runTimers()
+        assert.equal(1, #env.searches)
+        s.passButton:Click()
+        s.passButton:Click()
+        env.runTimers(2)
+        assert.equal(2, #env.browses)
+        assert.equal(1, #env.searches, "nothing cheaper: the slot goes to other items")
+        env.browseResults[1].minPrice = 800
+        env.listings[5001][4] = { buyoutAmount = 800, auctionID = 80, itemLink = "[Ridgeback Bracers]" }
+        env.runTimers(2)
+        assert.equal(2, #env.searches)
+        assert.equal("Buy for 8s 0c", s.buyButton:GetText())
+      end)
+
+      it("judges items only once their details are loaded", function()
+        local env, _, _, s = snipeSetup()
+        env.uncached[5001] = true
+        s.startButton:Click()
+        env.runTimers()
+        assert.equal(0, #env.searches, "an unknown item isn't guessed at")
+        env.uncached[5001] = nil
+        env.runTimers(2)
+        assert.equal(1, #env.searches)
+      end)
+
+      it("keeps sniping behind other views without drawing over them", function()
+        local env, w, _, s = snipeSetup()
+        s.startButton:Click()
+        w:select("alts")
+        env.runTimers()
+        assert.is_true(s.running)
+        assert.are_not.equal("This session", w.detailTitle:GetText())
+        assert.is_false(s.settingsBox:IsShown())
+        assert.equal(1, #env.searches)
+      end)
+
+      it("asks for the auction house and a ticked target before it starts", function()
+        local env, w, _, s = snipeSetup()
+        w.disenchantView.tabButtons.targets:Click()
+        w.disenchantView.targetRows[1].check:Click()
+        w.disenchantView.tabButtons.snipe:Click()
+        s.startButton:Click()
+        assert.is_falsy(s.running)
+        assert.equal("Tick at least one target on Targets first.", s.status:GetText())
+        env.CloseAuctionHouse()
+        s.startButton:Click()
+        assert.equal("Open the auction house to snipe.", s.status:GetText())
+      end)
     end)
   end)
 

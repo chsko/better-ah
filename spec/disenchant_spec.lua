@@ -115,4 +115,20 @@ describe("Disenchant", function()
       "shards only")
     assert.is_false(Disenchant.salvagerAdds(nil))
   end)
+  it("prices a lesser essence at a third of the greater one when that is more, as three combine", function()
+    local prices = { [11135] = 2291, [11134] = 500, [11083] = 446 }
+    local function priceOf(id) return prices[id] end
+    assert.equal(763, Disenchant.priceOf(11134, priceOf), "a third of Greater Mystic beats 5s, in whole copper")
+    prices[11134] = 900
+    assert.equal(900, Disenchant.priceOf(11134, priceOf), "its own price when higher")
+    prices[11134] = nil
+    assert.equal(763, Disenchant.priceOf(11134, priceOf), "no listings of its own")
+    assert.equal(446, Disenchant.priceOf(11083, priceOf), "dust is just its price")
+    assert.is_nil(Disenchant.priceOf(11138, priceOf))
+    -- The spreadsheet's 31-35 row: ((dust*3)+(greater*0.33*0.4)+(shard*0.05))*0.95 with Soul Dust 4.46s,
+    -- Greater Mystic 22.91s and Small Glowing Shard 8.4s gives 15.98s; a true third gives 16.00s.
+    prices[11138] = 840
+    local value = Disenchant.value({ quality = 2, class = "armor", level = 33 }, priceOf, { salvager = true })
+    assert.equal(1600, Disenchant.net(value))
+  end)
 end)

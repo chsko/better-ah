@@ -920,10 +920,11 @@ describe("Window", function()
           { buyoutAmount = 900, auctionID = 77, itemLink = "[Ridgeback Bracers]" },
           { buyoutAmount = 1200, auctionID = 78, itemLink = "[Ridgeback Bracers]" },
           { buyoutAmount = 1300, auctionID = 79, itemLink = "[Ridgeback Bracers]" } }
-        -- Item details: leather bracers. Others aren't loaded.
+        -- Item details: two leather pieces. Others aren't loaded.
+        local names = { [5001] = "Ridgeback Bracers", [5002] = "Ridgeback Boots", [5003] = "Ridgeback Belt" }
         env.GetItemInfo = function(id)
-          if id ~= 5001 or env.uncached[id] then return nil end
-          return "Ridgeback Bracers", "link", 2, 28, 23, "Armor", "Leather", 1, "INVTYPE_WRIST", 0, 100, 4, 2
+          if not names[id] or env.uncached[id] then return nil end
+          return names[id], "link", 2, 28, 23, "Armor", "Leather", 1, "INVTYPE_WRIST", 0, 100, 4, 2
         end
         v.tabButtons.snipe:Click()
         return env, w, ns, v.snipe
@@ -946,7 +947,17 @@ describe("Window", function()
         assert.equal("Next buy: Armor, req. 21-25", s.cardLabel:GetText())
         assert.equal("Buy for 9s 0c", s.buyButton:GetText())
         assert.equal("+5s 20c", s.cols[3].value:GetText())
-        assert.equal("1 more found", s.queueLabel:GetText(), "1300 is over the max")
+        local function near(i)
+          local row = s.nearRows[i]
+          return { row[1]:GetText(), row[2]:GetText(), row[3]:GetText(), row[4]:GetText(), row[5]:GetText() }
+        end
+        assert.same({ "Ridgeback Bracers", "Armor, req. 21-25", "9s 0c", "12s 78c", "|cff1eff003s 78c under|r" },
+          near(1), "the cheapest bracer, under the max")
+        assert.is_true(s.nearRows[1].bg:IsShown(), "buyable: tinted")
+        assert.same({ "Ridgeback Boots", "Armor, req. 21-25", "50s 0c", "12s 78c", "|cffff9d3a37s 22c over|r" },
+          near(2), "over the max, and by how much")
+        assert.is_false(s.nearRows[2].bg:IsShown())
+        assert.equal("", near(3)[1], "the item level 35 result is out of the band")
         assert.equal(1, #env.sounds)
         assert.matches("^Sniping 1 target", s.status:GetText())
         assert.equal("This session", w.detailTitle:GetText())
@@ -1012,6 +1023,7 @@ describe("Window", function()
         env.CloseAuctionHouse()
         assert.is_false(s.running)
         assert.equal("The auction house closed, so sniping stopped.", s.status:GetText())
+        assert.equal("", s.nearRows[1][1]:GetText(), "the closest listings go with it")
         assert.equal(1, #ns.disenchant.history)
         assert.equal(900, ns.disenchant.history[1].spent)
         assert.equal("Start sniping", s.startButton:GetText())
@@ -1054,7 +1066,7 @@ describe("Window", function()
       end)
 
       it("doesn't look up the same item again until a cheaper auction shows up", function()
-        local env, _, _, s = snipeSetup()
+        local env, w, ns, s = snipeSetup()
         s.startButton:Click()
         env.runTimers()
         assert.equal(1, #env.searches)
@@ -1063,6 +1075,12 @@ describe("Window", function()
         env.runTimers(2)
         assert.equal(2, #env.browses)
         assert.equal(1, #env.searches, "nothing cheaper: the slot goes to other items")
+        assert.equal("Ridgeback Bracers", s.nearRows[1][1]:GetText())
+        assert.is_false(s.nearRows[1].bg:IsShown(), "passed: still under the max, but nothing to buy")
+        ns.disenchant.targets[1].profit = { kind = "gold", amount = 1000 }
+        w.disenchantView:render()
+        assert.equal("4s 20c", s.nearRows[1][4]:GetText(), "an edited target's max shows at once")
+        ns.disenchant.targets[1].profit = { kind = "percent", amount = 10 }
         env.browseResults[1].minPrice = 800
         env.listings[5001][4] = { buyoutAmount = 800, auctionID = 80, itemLink = "[Ridgeback Bracers]" }
         env.runTimers(2)

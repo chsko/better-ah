@@ -11,7 +11,10 @@ SnipeView.__index = SnipeView
 
 SnipeView.REST = 2 -- seconds between browses
 SnipeView.HISTORY = 20 -- finished sessions kept
-SnipeView.QUEUE_LINES = 3
+-- The "closest to your max prices" list: columns as { label, x, width, justify } on a 540 px row.
+SnipeView.NEAR_COLUMNS = { { "Item", 4, 150, "LEFT" }, { "Target", 158, 156, "LEFT" }, { "Cheapest", 316, 70 },
+  { "Max", 390, 70 }, { "vs. max", 462, 74 } }
+SnipeView.NEAR_ROW = 17
 SnipeView.LOG_LINES = 14
 
 -- The sniping settings, saved in BetterAHDB.disenchant.snipe: spend cap and gold to keep (copper, 0 for
@@ -39,7 +42,7 @@ end
 
 function SnipeView.new(dview)
   return setmetatable({ dview = dview, window = dview.window, env = dview.env, addon = dview.addon,
-    round = 0 }, SnipeView)
+    round = 0, near = {} }, SnipeView)
 end
 
 -- Redraws the Disenchant view, but only while the window shows it: sniping runs on behind other views,
@@ -98,7 +101,7 @@ function SnipeView:build(p, width)
   -- The next buy.
   local card = env.CreateFrame("Frame", nil, p)
   card:SetPoint("TOPLEFT", p, "TOPLEFT", 0, -72)
-  card:SetSize(width, 150)
+  card:SetSize(width, 128)
   local bg = card:CreateTexture(nil, "BACKGROUND")
   bg:SetAllPoints(card)
   bg:SetColorTexture(0.14, 0.10, 0.05, 0.9)
@@ -124,27 +127,49 @@ function SnipeView:build(p, width)
   end
   local buy = env.CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
   buy:SetSize(width - 120, 26)
-  buy:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 24)
+  buy:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 6)
   buy:SetScript("OnClick", function() self:buyNext() end)
   self.buyButton = buy
   local pass = env.CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
   pass:SetSize(90, 26)
-  pass:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -10, 24)
+  pass:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -10, 6)
   pass:SetText("Pass")
   pass:SetScript("OnClick", function() self:passNext() end)
   ns.Window.tooltip(env, pass, "Pass", "Skip this auction for the rest of the session.")
   self.passButton = pass
-  self.hint = text("GameFontDisableSmall", 10, -132, width - 20)
-
-  self.queueLabel = p:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  self.queueLabel:SetPoint("TOPLEFT", p, "TOPLEFT", 0, -230)
-  self.queueLines = {}
-  for i = 1, SnipeView.QUEUE_LINES do
-    local line = p:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    line:SetPoint("TOPLEFT", p, "TOPLEFT", 4, -230 - i * 18)
-    line:SetWidth(width - 8)
-    line:SetJustifyH("LEFT")
-    self.queueLines[i] = line
+  -- The listings closest to the targets' max prices, buyable ones first (#59).
+  local top = -206
+  self.nearTitle = p:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  self.nearTitle:SetPoint("TOPLEFT", p, "TOPLEFT", 0, top)
+  self.nearTitle:SetText("Closest to your max prices")
+  self.hint = p:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  self.hint:SetPoint("TOPRIGHT", p, "TOPRIGHT", 0, top)
+  self.hint:SetWidth(width - 160)
+  self.hint:SetJustifyH("RIGHT")
+  if self.hint.SetWordWrap then self.hint:SetWordWrap(false) end
+  local function cell(font, col, y)
+    local t = p:CreateFontString(nil, "OVERLAY", font)
+    t:SetPoint("TOPLEFT", p, "TOPLEFT", col[2], y)
+    t:SetWidth(col[3])
+    t:SetJustifyH(col[4] or "RIGHT")
+    if t.SetWordWrap then t:SetWordWrap(false) end
+    return t
+  end
+  for _, col in ipairs(SnipeView.NEAR_COLUMNS) do cell("GameFontDisableSmall", col, top - 16):SetText(col[1]) end
+  self.nearRows = {}
+  for i = 1, ns.Sniper.CLOSEST do
+    local y = top - 16 - i * SnipeView.NEAR_ROW
+    local row = {}
+    local shade = p:CreateTexture(nil, "BACKGROUND")
+    shade:SetPoint("TOPLEFT", p, "TOPLEFT", 0, y + 2)
+    shade:SetSize(width, SnipeView.NEAR_ROW)
+    shade:SetColorTexture(0.12, 1, 0, 0.12)
+    shade:Hide()
+    row.bg = shade
+    for c, col in ipairs(SnipeView.NEAR_COLUMNS) do
+      row[c] = cell(c == 1 and "GameFontNormalSmall" or "GameFontHighlightSmall", col, y)
+    end
+    self.nearRows[i] = row
   end
   self:buildSettings()
 end
@@ -233,7 +258,7 @@ function SnipeView:start()
   SnipeView.file(db, self:now())
   db.session = {}
   self.session = ns.Sniper.Session.new(db.session, self:now())
-  self.running, self.message, self.lastCheck = true, nil, nil
+  self.running, self.message, self.lastCheck, self.near = true, nil, nil, {}
   self.run = {} -- this run's identity: late answers from an earlier run are dropped
   self:refresh()
   self:tick(self.run)
@@ -303,18 +328,29 @@ function SnipeView:tick(run)
       return rest()
     end
     self.problem = nil
-    local worthOf = {}
-    local candidates = ns.Sniper.candidates(band, results, function(itemID)
-      local max, worth = self:maxFor(entry, itemID)
-      worthOf[itemID] = worth
-      return max
-    end, function(key, minPrice) return self.session:fresh(key, minPrice, self:now()) end)
+    local worthOf, maxOf = {}, {}
+    local function max(itemID)
+      if maxOf[itemID] == nil then
+        local m, worth = self:maxFor(entry, itemID)
+        maxOf[itemID], worthOf[itemID] = m or false, worth
+      end
+      return maxOf[itemID] or nil
+    end
+    local name = ns.DisenchantView.targetName(entry.target, entry.row)
+    local near = ns.Sniper.near(band, results, max)
+    for _, e in ipairs(near) do
+      local auctionAPI = self.addon.auctionAPI
+      e.name = auctionAPI and auctionAPI:itemName("i:" .. e.itemKey.itemID) or ("item " .. e.itemKey.itemID)
+      e.target = name
+    end
+    self.near[entry.target] = near
+    local candidates = ns.Sniper.candidates(band, results, max,
+      function(key, minPrice) return self.session:fresh(key, minPrice, self:now()) end)
     local left = #candidates
     if left == 0 then
       self:refresh()
       return rest()
     end
-    local name = ns.DisenchantView.targetName(entry.target, entry.row)
     for _, c in ipairs(candidates) do
       self.session:lookedUp(c.itemKey, c.minPrice, self:now())
       api:auctions(c.itemKey, function(listings)
@@ -323,7 +359,8 @@ function SnipeView:tick(run)
         for _, l in ipairs(ns.Sniper.buys(listings, c.max)) do
           local auctionAPI = self.addon.auctionAPI
           local itemName = l.link or (auctionAPI and auctionAPI:itemName("i:" .. c.itemKey.itemID))
-          found = self.session:add({ auctionID = l.auctionID, name = itemName or ("item " .. c.itemKey.itemID),
+          found = self.session:add({ auctionID = l.auctionID, itemID = c.itemKey.itemID,
+            name = itemName or ("item " .. c.itemKey.itemID),
             price = l.unit, worth = worthOf[c.itemKey.itemID], max = c.max, target = name,
             level = c.itemKey.itemLevel }) or found
         end
@@ -368,6 +405,63 @@ function SnipeView:passNext()
   if not find or self.buying then return end
   self.session:pass(self:now(), find.auctionID)
   self:refresh()
+end
+
+-- The listings closest to the targets' max prices, from each ticked target's last check.
+function SnipeView:renderNear()
+  local short = ns.Money.short
+  -- Each target's last check, with its max price and name as the target is now (it may have been
+  -- edited since).
+  local lists = {}
+  if self.running then
+    for _, entry in ipairs(self:runnable()) do
+      local list, fresh = self.near[entry.target], {}
+      local name = ns.DisenchantView.targetName(entry.target, entry.row)
+      for _, e in ipairs(list or {}) do
+        local max = self:maxFor(entry, e.itemKey.itemID)
+        if max and max > 0 then
+          fresh[#fresh + 1] = { itemKey = e.itemKey, minPrice = e.minPrice, max = max, delta = max - e.minPrice,
+            name = e.name, target = name }
+        end
+      end
+      lists[#lists + 1] = fresh
+    end
+  end
+  local near = ns.Sniper.closest(lists)
+  -- An item under the max is buyable while it has a find waiting, or hasn't been looked up yet. Once
+  -- looked up with nothing to buy (passed, or only your own auctions), it isn't tinted.
+  local queued = {}
+  for _, f in ipairs(self.session and self.session.finds or {}) do queued[f.itemID or 0] = true end
+  local now = self:now()
+  local function buyable(e)
+    if e.delta < 0 then return false end
+    return queued[e.itemKey.itemID] or not (self.session and self.session:fresh(e.itemKey, e.minPrice, now))
+  end
+  if self.running then
+    local finds = self.session and self.session.finds or {}
+    self.hint:SetText(#near == 0 and "Nothing in your bands on the auction house yet."
+      or #finds > 0 and "Turn the mouse wheel over this tab to buy the next find."
+      or "From the last check of each target.")
+  else
+    self.hint:SetText("Shows what is close to your max prices while sniping.")
+  end
+  for i, row in ipairs(self.nearRows) do
+    local e = near[i]
+    row[1]:SetText(e and e.name or "")
+    row[2]:SetText(e and e.target or "")
+    row[3]:SetText(e and short(e.minPrice) or "")
+    row[4]:SetText(e and short(e.max) or "")
+    local delta = e and e.delta
+    if delta == nil then
+      row[5]:SetText("")
+    elseif delta >= 0 then
+      row[5]:SetText("|cff1eff00" .. short(delta) .. " under|r")
+    else
+      row[5]:SetText("|cffff9d3a" .. short(-delta) .. " over|r")
+    end
+    row.bg:SetShown(e ~= nil and buyable(e) and true or false)
+    row.entry = e
+  end
 end
 
 function SnipeView:hide()
@@ -423,7 +517,6 @@ function SnipeView:render()
     self.buyButton:SetText(self.buying and "Buying..." or ("Buy for " .. money(find.price)))
     if self.buying then self.buyButton:Disable() else self.buyButton:Enable() end
     self.passButton:Enable()
-    self.hint:SetText("Or turn the mouse wheel over this tab: each notch buys the next find.")
   else
     self.cardLabel:SetText(self.running and "Next buy" or "")
     self.cardName:SetText(self.running and "Nothing under your max prices yet" or "Press Start sniping")
@@ -432,15 +525,8 @@ function SnipeView:render()
     self.buyButton:SetText("Buy")
     self.buyButton:Disable()
     self.passButton:Disable()
-    self.hint:SetText(self.running and "Better AH checks each ticked target in turn and lists what it finds here."
-      or "Sniping checks each ticked target in turn. Each find waits here for you to buy or pass.")
   end
-  local more = #finds - 1
-  self.queueLabel:SetText(more > 0 and string.format("%d more found", more) or "")
-  for i, line in ipairs(self.queueLines) do
-    local f = finds[i + 1]
-    line:SetText(f and string.format("%s  %s  %s  +%s", f.name, f.target, money(f.price), money(f.profit)) or "")
-  end
+  self:renderNear()
 
   -- The session log, in the detail panel.
   w.detailTitle:SetText("This session")

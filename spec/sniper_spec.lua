@@ -44,6 +44,22 @@ describe("Sniper", function()
     assert.same({}, Sniper.candidates(band, nil, maxOf))
   end)
 
+  it("lists the results nearest their max price, buyable ones first", function()
+    local function result(id, level, price)
+      return { itemKey = { itemID = id, itemLevel = level }, minPrice = price }
+    end
+    local maxOf = function(id) if id == 9 then return nil end return 1000 end
+    local a = Sniper.near(band, { result(1, 28, 820), result(2, 28, 1300), result(3, 31, 10), result(9, 28, 5),
+      result(4, 27, 1010) }, maxOf)
+    assert.equal(3, #a, "out of band and unknown worth left out")
+    assert.equal(180, a[1].delta)
+    local b = Sniper.near(band, { result(5, 26, 990), result(6, 26, 2000), result(7, 26, 999) }, maxOf)
+    local ids = {}
+    for i, e in ipairs(Sniper.closest({ a, b })) do ids[i] = e.itemKey.itemID end
+    assert.same({ 1, 5, 7, 4, 2 }, ids, "under the max (most first), then over it (closest first), five at most")
+    assert.same({}, Sniper.closest({}))
+  end)
+
   it("buys other sellers' buyouts at or under the max", function()
     local out = Sniper.buys({
       { auctionID = 1, unit = 900, count = 1, ownCount = 0 },

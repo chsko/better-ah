@@ -176,14 +176,29 @@ function Window:entryButton(style, parent, width)
     local ok, b = pcall(env.CreateFrame, "Button", nil, parent, "AuctionCategoryButtonTemplate")
     if ok and b and b.SelectedTexture and b:GetFontString() then
       b:SetSize(width, 20)
-      -- The template's textures are anchored for Blizzard's own list and spill across the window
-      -- (seen in game); pin every texture to the button itself.
-      for _, region in ipairs({ b:GetRegions() }) do
-        if region.GetObjectType and region:GetObjectType() == "Texture" then
-          region:ClearAllPoints()
-          region:SetAllPoints(b)
-        end
+      -- Set up like AuctionHouseFilterButton_SetUp does for a "category" button in Forever's
+      -- Blizzard_AuctionHouseUI (Mainline/Blizzard_AuctionHouseCategoriesList.lua), widened to our
+      -- sidebar. Without it the textures keep their bare template anchors and spill (seen in game).
+      b:SetNormalFontObject(GameFontNormalSmall)
+      b.NormalTexture:SetAtlas("auctionhouse-nav-button", false)
+      b.NormalTexture:SetSize(width + 4, 32)
+      b.NormalTexture:ClearAllPoints()
+      b.NormalTexture:SetPoint("TOPLEFT", -2, 0)
+      for _, key in ipairs({ "SelectedTexture", "HighlightTexture" }) do
+        local tex = b[key]
+        local atlas = key == "SelectedTexture" and "auctionhouse-nav-button-select" or "auctionhouse-nav-button-highlight"
+        tex:SetAtlas(atlas, false)
+        tex:SetSize(width, 21)
+        tex:ClearAllPoints()
+        tex:SetPoint("LEFT")
       end
+      b.HighlightTexture:SetBlendMode("BLEND")
+      if b.Lines then b.Lines:Hide() end
+      b:HookScript("OnEnter", function() b.HighlightTexture:Show() end)
+      b:HookScript("OnLeave", function() b.HighlightTexture:Hide() end)
+      local text = b:GetFontString()
+      text:ClearAllPoints()
+      text:SetPoint("LEFT", b, "LEFT", 8, 0)
       b.isCategory = true
       return b, 21
     end

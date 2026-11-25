@@ -14,7 +14,7 @@ read_globals = {
   "QueryAuctionItems", "GetNumAuctionItems", "GetAuctionItemInfo", "GetAuctionItemLink",
   "CanSendAuctionQuery", "PostAuction", "StartAuction", "CancelAuction", "PlaceAuctionBid",
   "ClickAuctionSellItemButton", "GetAuctionSellItemInfo", "CalculateAuctionDeposit", "GetOwnerAuctionItems",
-  "DEFAULT_CHAT_FRAME", "GameTooltip", "UIParent", "UISpecialFrames",
+  "DEFAULT_CHAT_FRAME", "GameTooltip", "GameFontNormalSmall", "UIParent", "UISpecialFrames",
   "AuctionFrame", "AuctionHouseFrame", "CloseAuctionHouse",
 }
 

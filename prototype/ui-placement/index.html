@@ -1,0 +1,282 @@
+<title>Better AH UI Placement</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<!-- PROTOTYPE, throwaway. Question: where should Better AH's UI live?
+     Three variants of the disenchant sniper screen, switch with the bottom bar or #a / #b / #c. Example data only. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a fake game screen holding one of three AH layouts, with a floating variant switcher. Single dark theme on purpose: it mimics the WoW client. */
+:root {
+  color-scheme: dark;
+  --world: #0e1014;
+  --frame: #1b1712;
+  --frame-edge: #6b5428;
+  --panel: #241f18;
+  --row: #2c261d;
+  --row-alt: #262119;
+  --gold: #f2c94c;
+  --text: #e8e0cc;
+  --muted: #a39780;
+  --green: #1eff00;
+  --blue: #0070dd;
+  --epic: #a335ee;
+  --profit: #5fd068;
+  --warn: #e0a23a;
+  --btn: #7a1d14;
+  --btn-edge: #c2902f;
+  --bar: #f5f1e6;
+  --bar-fg: #15130f;
+  --display: "Cinzel", Georgia, serif;
+  --body: "Inter", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+body { background: var(--world); color: var(--text); font-family: var(--body); font-size: 13px; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 16px 96px; }
+header.intro { max-width: 1100px; margin: 0 auto 14px; display: grid; gap: 4px; }
+header.intro h1 { font-family: var(--display); color: var(--gold); font-size: 20px; margin: 0; letter-spacing: .02em; text-wrap: balance; }
+header.intro p { margin: 0; color: var(--muted); max-width: 70ch; line-height: 1.5; }
+.stage { max-width: 1100px; margin: 0 auto; overflow-x: auto; }
+.screen { min-width: 980px; display: flex; gap: 10px; align-items: flex-start; }
+
+.frame { background: var(--frame); border: 2px solid var(--frame-edge); border-radius: 6px; box-shadow: 0 8px 30px rgba(0,0,0,.6); }
+.frame-title { font-family: var(--display); color: var(--gold); padding: 8px 12px; border-bottom: 1px solid var(--frame-edge); display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+.frame-title .x { color: var(--muted); font-family: var(--body); }
+.q-green { color: var(--green); } .q-blue { color: var(--blue); } .q-epic { color: var(--epic); }
+.money { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.g { color: var(--gold); } .s { color: #c7c7cf; } .c { color: #c8834a; }
+.pos { color: var(--profit); } .warnc { color: var(--warn); }
+table { border-collapse: collapse; width: 100%; }
+th { text-align: left; color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; padding: 6px 8px; border-bottom: 1px solid var(--frame-edge); }
+td { padding: 6px 8px; border-bottom: 1px solid #00000040; vertical-align: middle; }
+tbody tr:nth-child(odd) { background: var(--row); } tbody tr:nth-child(even) { background: var(--row-alt); }
+tbody tr.sel { outline: 1px solid var(--gold); outline-offset: -1px; }
+td.num, th.num { text-align: right; }
+.btn { background: var(--btn); color: var(--gold); border: 1px solid var(--btn-edge); border-radius: 3px; padding: 4px 10px; font: 600 12px var(--body); cursor: pointer; }
+.btn:focus-visible, .pill:focus-visible, .tab:focus-visible, .nav button:focus-visible, .switch button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.btn.big { padding: 8px 16px; font-size: 13px; }
+.chip { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 9px; border: 1px solid var(--frame-edge); color: var(--muted); }
+.mats { color: var(--muted); font-size: 11px; }
+
+/* Variant A: Blizzard AH with extra bottom tabs */
+.blizz { width: 830px; }
+.blizz .body { display: grid; grid-template-columns: 170px 1fr; min-height: 380px; }
+.blizz .filters { border-right: 1px solid var(--frame-edge); padding: 10px; display: grid; gap: 8px; align-content: start; }
+.blizz .filters label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.field { background: #00000055; border: 1px solid var(--frame-edge); color: var(--text); padding: 5px 7px; border-radius: 3px; font: 12px var(--mono); width: 100%; }
+.tabs { display: flex; gap: 2px; padding: 0 10px; }
+.tab { background: var(--panel); border: 1px solid var(--frame-edge); border-top: none; border-radius: 0 0 5px 5px; padding: 6px 14px; color: var(--muted); font: 500 12px var(--body); cursor: pointer; }
+.tab.on { background: var(--frame); color: var(--gold); }
+.tab.ours { color: #d9c48a; }
+.tab-sep { width: 10px; }
+.foot { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-top: 1px solid var(--frame-edge); color: var(--muted); }
+
+/* Variant B: own window with sidebar */
+.own { width: 980px; }
+.own .body { display: grid; grid-template-columns: 180px 1fr 250px; min-height: 470px; }
+.nav { border-right: 1px solid var(--frame-edge); padding: 8px; display: grid; gap: 2px; align-content: start; }
+.nav .sec { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; padding: 10px 8px 4px; }
+.nav button { all: unset; cursor: pointer; padding: 7px 8px; border-radius: 3px; color: var(--text); display: flex; justify-content: space-between; }
+.nav button.on { background: var(--row); color: var(--gold); box-shadow: inset 2px 0 0 var(--gold); }
+.nav .count { font-family: var(--mono); font-size: 11px; color: var(--profit); }
+.own .main { padding: 10px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pill { all: unset; cursor: pointer; padding: 4px 10px; border: 1px solid var(--frame-edge); border-radius: 12px; color: var(--muted); font-size: 12px; }
+.pill.on { color: var(--gold); border-color: var(--gold); }
+.detail { border-left: 1px solid var(--frame-edge); padding: 12px; display: grid; gap: 10px; align-content: start; }
+.detail h3 { margin: 0; font-size: 14px; }
+.breakdown { display: grid; gap: 4px; }
+.breakdown div { display: flex; justify-content: space-between; gap: 8px; }
+.breakdown .total { border-top: 1px solid var(--frame-edge); padding-top: 6px; font-weight: 600; }
+.why { color: var(--muted); line-height: 1.45; font-size: 12px; }
+
+/* Variant C: Blizzard AH untouched + docked panel */
+.ghost { width: 640px; opacity: .55; }
+.ghost .body { min-height: 470px; display: grid; place-items: center; color: var(--muted); font-family: var(--display); font-size: 15px; text-align: center; padding: 20px; }
+.dock { width: 330px; }
+.dock .body { padding: 10px; display: grid; gap: 10px; }
+.deal { background: var(--row); border: 1px solid #00000060; border-radius: 4px; padding: 9px 10px; display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; }
+.deal.first { border-color: var(--gold); }
+.deal .meta { color: var(--muted); font-size: 11px; grid-column: 1 / -1; }
+.queue { display: flex; justify-content: space-between; align-items: center; background: var(--panel); border-radius: 4px; padding: 8px 10px; }
+.seg { display: flex; border: 1px solid var(--frame-edge); border-radius: 4px; overflow: hidden; }
+.seg span { flex: 1; text-align: center; padding: 5px 0; color: var(--muted); font-size: 12px; }
+.seg span.on { background: var(--row); color: var(--gold); }
+
+.note { max-width: 1100px; margin: 14px auto 0; color: var(--muted); line-height: 1.5; display: grid; gap: 4px; }
+.note b { color: var(--text); }
+
+.switch { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); background: var(--bar); color: var(--bar-fg); border-radius: 999px; display: flex; align-items: center; gap: 4px; padding: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.5); z-index: 20; max-width: calc(100vw - 32px); }
+.switch button { all: unset; cursor: pointer; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; font-size: 18px; }
+.switch button:hover { background: #00000014; }
+.switch .label { font: 600 13px var(--body); padding: 0 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (prefers-reduced-motion: no-preference) { .screen { animation: fade .18s ease-out; } @keyframes fade { from { opacity: .4 } to { opacity: 1 } } }
+</style>
+
+<header class="intro">
+  <h1>Where should Better AH live?</h1>
+  <p>Three layouts of the same disenchant sniper screen. Flip with the bar at the bottom or your arrow keys. All items and prices are made-up examples.</p>
+</header>
+
+<div class="stage"><div class="screen" id="screen"></div></div>
+<div class="note" id="note"></div>
+
+<nav class="switch" aria-label="Prototype variant switcher">
+  <button id="prev" aria-label="Previous variant">‹</button>
+  <span class="label" id="label">A</span>
+  <button id="next" aria-label="Next variant">›</button>
+</nav>
+
+<script>
+const deals = [
+  { name: "Sorcerer's Robe of the Owl", q: "green", ilvl: 47, kind: "Armor", buyout: 31500, de: 58400, mats: "Vision Dust ×1-2 (75%), Greater Mystic Essence (20%), Large Glimmering Shard (5%)" },
+  { name: "Mercurial Blade", q: "blue", ilvl: 55, kind: "Weapon", buyout: 98000, de: 141000, mats: "Large Radiant Shard ×1 (100%)" },
+  { name: "Scaled Leather Bracers of the Bear", q: "green", ilvl: 33, kind: "Armor", buyout: 9200, de: 16100, mats: "Soul Dust ×1-2 (75%), Lesser Mystic Essence (20%), Small Radiant Shard (5%)" },
+  { name: "Thick Bark Buckler", q: "green", ilvl: 28, kind: "Armor", buyout: 6400, de: 9800, mats: "Soul Dust ×1-2 (75%), Greater Astral Essence (20%), Large Glimmering Shard (5%)" },
+];
+const net = d => Math.round(d.de * 0.95) - d.buyout; // 5% AH cut on the mats
+const pct = d => Math.round(net(d) / d.buyout * 100);
+function money(c) {
+  const neg = c < 0; c = Math.abs(c);
+  const g = Math.floor(c / 10000), s = Math.floor(c % 10000 / 100), cu = c % 100;
+  let out = "";
+  if (g) out += `<span class="g">${g}g</span> `;
+  if (g || s) out += `<span class="s">${s}s</span> `;
+  out += `<span class="c">${cu}c</span>`;
+  return `<span class="money">${neg ? "-" : ""}${out}</span>`;
+}
+const rows = (withMats) => deals.map((d, i) => `
+  <tr class="${i === 0 ? "sel" : ""}">
+    <td><span class="q-${d.q}">[${d.name}]</span>${withMats ? `<div class="mats">${d.mats}</div>` : ""}</td>
+    <td class="num">${d.ilvl}</td>
+    <td class="num">${money(d.buyout)}</td>
+    <td class="num">${money(d.de)}</td>
+    <td class="num pos">${money(net(d))}</td>
+    <td class="num pos">${pct(d)}%</td>
+  </tr>`).join("");
+const head = `<thead><tr><th>Item</th><th class="num">iLvl</th><th class="num">Buyout</th><th class="num">DE value</th><th class="num">Net profit</th><th class="num">Profit</th></tr></thead>`;
+
+const variants = {
+  a: {
+    name: "Tabs on Blizzard's AH",
+    note: `<b>Tabs on Blizzard's auction house.</b> Post, Snipe and Craft sit next to Browse, Bids and Auctions in the normal window. It feels like part of the game, but it's confined to Blizzard's fixed frame size, so the mats breakdown has to hide in a tooltip.`,
+    html: () => `
+      <div class="frame blizz">
+        <div class="frame-title">Auction House <span class="x">✕</span></div>
+        <div class="body">
+          <div class="filters">
+            <label for="a-target">Target</label>
+            <select class="field" id="a-target"><option>Disenchant flips</option><option>Mats shopping list</option></select>
+            <label for="a-gold">Min net profit</label>
+            <input class="field" id="a-gold" value="1g 00s">
+            <label for="a-pct">Min profit %</label>
+            <input class="field" id="a-pct" value="25%">
+            <label>Qualities</label>
+            <div><span class="chip q-green">Green</span> <span class="chip q-blue">Blue</span> <span class="chip q-epic">Epic</span></div>
+            <button class="btn big">Scan for deals</button>
+          </div>
+          <div style="min-width:0"><table>${head}<tbody>${rows(false)}</tbody></table></div>
+        </div>
+        <div class="foot"><span>4 deals · last scan 2 min ago</span><button class="btn big">Buy selected · ${money(deals[0].buyout)}</button></div>
+      </div>
+      <div style="position:absolute"></div>`,
+    after: () => `<div class="tabs" style="width:830px">
+        <button class="tab">Browse</button><button class="tab">Bids</button><button class="tab">Auctions</button><span class="tab-sep"></span>
+        <button class="tab ours">Post</button><button class="tab ours on">Snipe</button><button class="tab ours">Craft</button></div>`
+  },
+  b: {
+    name: "Own window, like TSM",
+    note: `<b>Its own window, replacing Blizzard's.</b> A sidebar covers every workflow, there's room for a detail panel that explains each price, and the window can be resized. It needs the most building, since Blizzard's browse and bid screens have to be rebuilt or reached through a "Blizzard UI" button.`,
+    html: () => `
+      <div class="frame own">
+        <div class="frame-title">Better AH <span class="x">Blizzard UI · ✕</span></div>
+        <div class="body">
+          <div class="nav">
+            <div class="sec">Sell</div>
+            <button>Post <span class="count">23</span></button>
+            <button>Cancel <span class="count">5</span></button>
+            <div class="sec">Buy</div>
+            <button class="on">Disenchant snipe <span class="count">4</span></button>
+            <button>Deals below market <span class="count">11</span></button>
+            <button>Shopping lists</button>
+            <div class="sec">Make</div>
+            <button>Crafting profit</button>
+            <div class="sec">Data</div>
+            <button>Prices &amp; history</button>
+            <button>Alts &amp; inventory</button>
+          </div>
+          <div class="main">
+            <div class="toolbar">
+              <button class="pill on">≥ 1g net</button><button class="pill on">≥ 25%</button>
+              <button class="pill on q-green">Green</button><button class="pill on q-blue">Blue</button><button class="pill on q-epic">Epic</button>
+              <span style="flex:1"></span><button class="btn">Rescan</button>
+            </div>
+            <table>${head}<tbody>${rows(true)}</tbody></table>
+          </div>
+          <div class="detail">
+            <h3 class="q-green">[${deals[0].name}]</h3>
+            <div class="mats">iLvl ${deals[0].ilvl} ${deals[0].kind}. Your enchanter (Mirelle, 285) can disenchant this.</div>
+            <div class="breakdown">
+              <div><span>Vision Dust ×1.5 avg (75%)</span>${money(40200)}</div>
+              <div><span>Greater Mystic Essence (20%)</span>${money(14100)}</div>
+              <div><span>Large Glimmering Shard (5%)</span>${money(4100)}</div>
+              <div class="total"><span>DE value</span>${money(deals[0].de)}</div>
+              <div><span>AH cut 5%</span>${money(-Math.round(deals[0].de*0.05))}</div>
+              <div><span>Buyout</span>${money(-deals[0].buyout)}</div>
+              <div class="total pos"><span>Net profit</span>${money(net(deals[0]))}</div>
+            </div>
+            <div class="why">Mat prices are 3-day market values from your scans on this realm and ruleset.</div>
+            <button class="btn big">Buy · ${money(deals[0].buyout)}</button>
+          </div>
+        </div>
+      </div>`
+  },
+  c: {
+    name: "Docked side panel",
+    note: `<b>A slim panel docked beside Blizzard's window.</b> Blizzard's auction house stays untouched, and Better AH shows a ranked feed of deals and a posting queue next to it. It's the least to build and fast for one-click buying, but there's little room for crafting tables or price history.`,
+    html: () => `
+      <div class="frame ghost"><div class="frame-title">Auction House <span class="x">✕</span></div>
+        <div class="body">Blizzard's auction house window,<br>unchanged</div></div>
+      <div class="frame dock">
+        <div class="frame-title">Better AH <span class="x">⚙</span></div>
+        <div class="body">
+          <div class="seg"><span>Post</span><span class="on">Snipe</span><span>Craft</span></div>
+          ${deals.map((d, i) => `
+            <div class="deal ${i === 0 ? "first" : ""}">
+              <span class="q-${d.q}">[${d.name}]</span>
+              <button class="btn">Buy</button>
+              <span>${money(d.buyout)} → <span class="pos">+${money(net(d))}</span></span>
+              <span class="pos money">${pct(d)}%</span>
+              <span class="meta">DE ${money(d.de)} · iLvl ${d.ilvl}</span>
+            </div>`).join("")}
+          <div class="queue"><span>Post queue: 23 items</span><button class="btn">Post next</button></div>
+          <div class="mats">Target: Disenchant flips · ≥ 1g and ≥ 25%</div>
+        </div>
+      </div>`
+  }
+};
+const keys = ["a", "b", "c"];
+function current() { const h = location.hash.slice(1); return keys.includes(h) ? h : "a"; }
+function render() {
+  const k = current(), v = variants[k];
+  const screen = document.getElementById("screen");
+  if (k === "a") {
+    screen.style.flexDirection = "column"; screen.style.gap = "0";
+    screen.innerHTML = v.html() + v.after();
+  } else {
+    screen.style.flexDirection = "row"; screen.style.gap = "10px";
+    screen.innerHTML = v.html();
+  }
+  document.getElementById("label").textContent = `${k.toUpperCase()} (${v.name})`;
+  document.getElementById("note").innerHTML = v.note;
+}
+function step(d) { const i = keys.indexOf(current()); location.hash = keys[(i + d + keys.length) % keys.length]; }
+document.getElementById("prev").onclick = () => step(-1);
+document.getElementById("next").onclick = () => step(1);
+document.addEventListener("keydown", e => {
+  if (e.target.closest("input, textarea, select, [contenteditable]")) return;
+  if (e.key === "ArrowLeft") step(-1);
+  if (e.key === "ArrowRight") step(1);
+});
+window.addEventListener("hashchange", render);
+render();
+</script>

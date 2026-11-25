@@ -93,6 +93,36 @@ function Sniper.near(band, results, maxOf, levelFallback)
   return out
 end
 
+-- Why each browse result was left out of Sniper.near, counted by reason. reasonOf(itemID) gives the
+-- item's max price and, when there is none, why: "loading", "type" or "worth". A max of 0 or less is
+-- "profit" (the profit takes the whole worth), a result outside the band is "band", one with no buyout
+-- "price", one without an item key "unreadable", and one that fits "fits". The counts add up to #results.
+function Sniper.why(band, results, reasonOf, levelFallback)
+  local out = {}
+  for _, r in ipairs(results or {}) do
+    local key, reason = r.itemKey, "fits"
+    if not (key and key.itemID) then
+      reason = "unreadable"
+    else
+      local max, no = reasonOf(key.itemID)
+      local level = levelOf(key, levelFallback)
+      if no == "loading" or no == "type" then
+        reason = no
+      elseif not level or level < band.min or level > band.max then
+        reason = "band"
+      elseif no then
+        reason = no
+      elseif not max or max <= 0 then
+        reason = "profit"
+      elseif (r.minPrice or 0) <= 0 then
+        reason = "price"
+      end
+    end
+    out[reason] = (out[reason] or 0) + 1
+  end
+  return out
+end
+
 Sniper.CLOSEST = 5
 
 -- The listings to show from each target's last check (lists: a list of Sniper.near lists): what can be

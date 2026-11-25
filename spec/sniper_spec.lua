@@ -75,6 +75,23 @@ describe("Sniper", function()
     assert.same({}, Sniper.closest({}))
   end)
 
+  it("gives every browse result one reason, so the counts add up", function()
+    local function result(id, level, price)
+      return { itemKey = { itemID = id, itemLevel = level }, minPrice = price }
+    end
+    local reasons = { [1] = { nil, "loading" }, [2] = { nil, "type" }, [4] = { nil, "worth" }, [5] = { 0 },
+      [6] = { 1000 }, [7] = { 1000 } }
+    local reasonOf = function(id) local r = reasons[id] or { 1000 } return r[1], r[2] end
+    local results = { result(1, 28, 10), result(2, 28, 10), result(3, 40, 10), result(4, 28, 10),
+      result(5, 28, 10), result(6, 28, 0), result(7, 28, 900), { minPrice = 5 } }
+    local why = Sniper.why(band, results, reasonOf)
+    assert.same({ loading = 1, type = 1, band = 1, worth = 1, profit = 1, price = 1, fits = 1, unreadable = 1 }, why)
+    local total = 0
+    for _, n in pairs(why) do total = total + n end
+    assert.equal(#results, total)
+    assert.same({}, Sniper.why(band, nil, reasonOf))
+  end)
+
   it("buys other sellers' buyouts at or under the max", function()
     local out = Sniper.buys({
       { auctionID = 1, unit = 900, count = 1, ownCount = 0 },

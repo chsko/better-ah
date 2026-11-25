@@ -18,7 +18,7 @@ local TAB_HEIGHT = 28 -- the tab row above each tab's own panel
 
 DisenchantView.COLUMNS = {
   { "Item level", 4, 90 }, { "Required level", 100, 100, "LEFT" }, { "Armor", 205, 105 }, { "Weapon", 315, 105 },
-  { "Prices", 425, 110 },
+  { "Oldest price", 425, 110 },
 }
 
 -- The view's settings, saved in BetterAHDB.disenchant. The Arcane Salvager is on unless turned off.
@@ -34,9 +34,11 @@ local function range(min, max, open)
 end
 DisenchantView.range = range
 
--- One row per green band: { band, armor = { value, net, breakdown, missing }, weapon = {...}, priced, mats }.
--- priceOf(materialID) gives a market value or nil. Pure, so the numbers are tested without frames.
-function DisenchantView.rows(priceOf, opts)
+-- One row per green band: { band, armor = { value, net, breakdown, missing }, weapon = {...}, priced, mats,
+-- oldest }. priceOf(materialID) gives a market value or nil; dayOf(materialID), if given, the last day a
+-- scan or check saw the material, and oldest is the oldest of those among the priced materials. Pure,
+-- so the numbers are tested without frames.
+function DisenchantView.rows(priceOf, opts, dayOf)
   local out = {}
   for _, band in ipairs(ns.Disenchant.greenBands()) do
     local row = { band = band }
@@ -49,7 +51,11 @@ function DisenchantView.rows(priceOf, opts)
         if not seen[y.id] then
           seen[y.id] = true
           mats = mats + 1
-          if y.price then priced = priced + 1 end
+          if y.price then
+            priced = priced + 1
+            local day = dayOf and dayOf(y.id)
+            if day and (not row.oldest or day < row.oldest) then row.oldest = day end
+          end
         end
       end
     end
@@ -57,6 +63,16 @@ function DisenchantView.rows(priceOf, opts)
     out[#out + 1] = row
   end
   return out
+end
+
+-- The "Prices from" cell: how many materials have a price, or how old the oldest price is.
+function DisenchantView.ageText(row, today)
+  if row.priced < row.mats then return string.format("%d of %d priced", row.priced, row.mats) end
+  if not (row.oldest and today) then return "all priced" end
+  local age = today - row.oldest
+  if age <= 0 then return "today" end
+  if age == 1 then return "yesterday" end
+  return age .. " days ago"
 end
 
 -- A value cell: the value after the cut, marked * when some material had no price, or - with none.
@@ -486,7 +502,12 @@ function DisenchantView:render()
   local priceOf = function(id)
     return key and prices and (prices:marketValue(key, "i:" .. id, now))
   end
-  self.list = DisenchantView.rows(priceOf, opts)
+  local dayOf = function(id)
+    local history = key and prices and prices:history(key, "i:" .. id) or {}
+    return history[#history] and history[#history].day
+  end
+  self.list = DisenchantView.rows(priceOf, opts, dayOf)
+  self.today = ns.MarketValue.day(now)
   self.salvagerButton:SetChecked(opts.salvager)
   for id, b in pairs(self.tabButtons) do ns.Window.markSelected(b, id == self.tab) end
   self.tabButtons.snipe:GetFontString():SetFontObject("GameFontDisableSmall") -- not available yet
@@ -524,8 +545,7 @@ function DisenchantView:renderValues(key, opts)
       cells[2]:SetText(range(row.band.required.min, row.band.required.max, row.band.max))
       cells[3]:SetText(DisenchantView.cellText(row.armor))
       cells[4]:SetText(DisenchantView.cellText(row.weapon))
-      cells[5]:SetText(row.priced == row.mats and "all priced" or string.format("%d of %d priced", row.priced,
-        row.mats))
+      cells[5]:SetText(DisenchantView.ageText(row, self.today))
       cells.button:Show()
       if row.band.min == self.selected then chosen = row end
     else

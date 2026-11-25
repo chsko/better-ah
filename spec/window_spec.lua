@@ -442,13 +442,38 @@ describe("Window", function()
       assert.is_false(w.scanButton:IsEnabled(), "and no full scan during it")
       assert.matches("Scanning materials: 0 of 24.", w.scanStatus:GetText(), 1, true)
       env.runTimers()
-      assert.equal("Materials scanned: 2 of 24 listed by other sellers.", w.scanStatus:GetText())
+      assert.equal("Materials: 2 updated, 22 not listed by others.", w.scanStatus:GetText())
       assert.is_true(w.materialsButton:IsEnabled())
       assert.equal(24, #env.searches)
       assert.equal(200, (ns.prices:marketValue("/1/Horde", "i:16204", env.now)), "your own listings don't count")
       assert.equal(1000, (ns.prices:marketValue("/1/Horde", "i:16203", env.now)))
       assert.is_nil(ns.prices:lastScan("/1/Horde"), "not a full scan")
       assert.equal("Illusion Dust", rowText(w, 2)[1])
+    end)
+
+    it("takes a material the auction house answers as an item, and retries one with no answer", function()
+      local env, w, ns = setup()
+      env.listings[16204] = { item = true, level = 5, { buyoutAmount = 200, quantity = 5 } }
+      env.listings[11083] = { { unitPrice = 446, quantity = 5 } }
+      env.uncached[11083] = true -- not in the item cache: loaded before its search
+      env.listings[16203] = { { unitPrice = 1000, quantity = 5 } }
+      env.openAuctionHouse()
+      w:select("prices")
+      local send = env.C_AuctionHouse.SendSearchQuery
+      local dropped = false
+      env.C_AuctionHouse.SendSearchQuery = function(key, ...)
+        if key.itemID == 16203 and not dropped then
+          dropped = true -- the first lookup gets no answer
+          return
+        end
+        return send(key, ...)
+      end
+      w.materialsButton:Click()
+      env.runTimers(30)
+      assert.equal("Materials: 3 updated, 21 not listed by others.", w.scanStatus:GetText())
+      assert.equal(200, (ns.prices:marketValue("/1/Horde", "i:16204", env.now)), "answered as an item")
+      assert.equal(446, (ns.prices:marketValue("/1/Horde", "i:11083", env.now)), "searched once its data loaded")
+      assert.equal(1000, (ns.prices:marketValue("/1/Horde", "i:16203", env.now)), "answered on the retry")
     end)
 
     it("says when the auction house closes during a materials scan", function()
@@ -459,7 +484,7 @@ describe("Window", function()
       w:scanMaterials()
       env.CloseAuctionHouse()
       assert.is_nil(w.materialScan, "the scan ends")
-      assert.matches("couldn't be checked: the auction house closed", w.scanStatus:GetText(), 1, true)
+      assert.matches("24 failed (the auction house closed)", w.scanStatus:GetText(), 1, true)
       assert.is_nil(ns.prices:marketValue("/1/Horde", "i:16204", env.now))
     end)
 
@@ -613,13 +638,19 @@ describe("Window", function()
     end
 
     it("lists every green band with what one is worth after the auction house cut", function()
-      local _, w = deSetup()
+      local env, w, ns = deSetup()
       assert.is_true(w.disenchantPanel:IsShown())
       assert.is_false(w.placeholder:IsShown())
       assert.is_false(w.pricesPanel:IsShown())
       assert.same({ "5-15", "1-10", "-", "-", "0 of 2 priced" }, band(w, 1))
       local cells = band(w, 4)
       assert.same({ "26-30", "21-25", "14s 20c", "3 of 4 priced" }, { cells[1], cells[2], cells[3], cells[5] })
+      ns.prices:recordScan("/1/Horde", env.now, { { item = "i:10940", name = "Strange Dust", count = 5, buyout = 500 },
+        { item = "i:10939", name = "Greater Magic Essence", count = 5, buyout = 5000 },
+        { item = "i:10998", name = "Lesser Astral Essence", count = 5, buyout = 2000 },
+        { item = "i:10978", name = "Small Glimmering Shard", count = 5, buyout = 2500 } }, true)
+      w.disenchantView:render()
+      assert.equal("today", band(w, 3)[5], "how old the oldest material price is")
       assert.matches("^%d+s %d+c %*$", cells[4], "weapons miss Greater Magic Essence: marked as too low")
       assert.equal("61+", band(w, 11)[1])
       assert.equal("56+", band(w, 11)[2])
@@ -675,7 +706,7 @@ describe("Window", function()
       local env, w = deSetup()
       w.disenchantView.materialsButton:Click()
       env.runTimers()
-      assert.matches("Materials scanned", w.disenchantView.status:GetText(), 1, true)
+      assert.matches("Materials: ", w.disenchantView.status:GetText(), 1, true)
       w:startScan()
       env.runTimers()
       assert.equal("Prices from ruleset 1, Horde.", w.disenchantView.status:GetText())
@@ -814,7 +845,7 @@ describe("Window", function()
       assert.is_false(w.disenchantView.materialsButton:IsEnabled())
       assert.equal("Scanning materials: 0 of 24.", w.disenchantView.status:GetText())
       env.runTimers()
-      assert.matches("Materials scanned: 1 of 24", w.disenchantView.status:GetText(), 1, true)
+      assert.equal("Materials: 1 updated, 23 not listed by others.", w.disenchantView.status:GetText())
       assert.is_true(w.disenchantView.materialsButton:IsEnabled())
       assert.are_not.equal("14s 20c", band(w, 4)[3], "the new Soul Dust price counts")
     end)

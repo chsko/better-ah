@@ -289,7 +289,9 @@ function M.new(opts)
     if env.searchSilent or not env.open then return end
     env.C_Timer.After(0, function()
       local rows = env.listings[itemKey.itemID] or {}
-      if rows.item then env.fire("ITEM_SEARCH_RESULTS_UPDATED", itemKey) else
+      -- The client answers items with its own key, which can carry a level the query's key didn't.
+      if rows.item then env.fire("ITEM_SEARCH_RESULTS_UPDATED", { itemID = itemKey.itemID,
+        itemLevel = rows.level or itemKey.itemLevel, itemSuffix = 0, battlePetSpeciesID = 0 }) else
         env.fire("COMMODITY_SEARCH_RESULTS_UPDATED", itemKey.itemID) end
     end)
   end
@@ -299,7 +301,24 @@ function M.new(opts)
     return r and { itemID = id, unitPrice = r.unitPrice, quantity = r.quantity, numOwnerItems = r.numOwnerItems or 0 }
   end
   ah.HasFullCommoditySearchResults = function() return env.fullResults end
-  ah.GetNumItemSearchResults = function(key) return #(env.listings[key.itemID] or {}) end
+  ah.GetNumItemSearchResults = function(key)
+    local rows = env.listings[key.itemID] or {}
+    if rows.level and key.itemLevel ~= rows.level then return 0 end
+    return #rows
+  end
+  -- Item details: env.uncached[itemID] until C_Item.RequestLoadItemDataByID loads them.
+  env.uncached = {}
+  ah.GetItemKeyInfo = function(key)
+    if env.uncached[key.itemID] then return nil end
+    return { itemID = key.itemID, isCommodity = not (env.listings[key.itemID] or {}).item }
+  end
+  env.C_Item = { RequestLoadItemDataByID = function(id)
+    if not env.uncached[id] then return end
+    env.C_Timer.After(0, function()
+      env.uncached[id] = nil
+      env.fire("ITEM_KEY_ITEM_INFO_RECEIVED", id)
+    end)
+  end }
   ah.GetItemSearchResultInfo = function(key, i)
     local r = (env.listings[key.itemID] or {})[i]
     return r and { itemKey = key, buyoutAmount = r.buyoutAmount, quantity = r.quantity or 1,

@@ -9,7 +9,7 @@ globals = { "BetterAHDB", "SLASH_BETTERAH1", "SlashCmdList" }
 read_globals = {
   "CreateFrame", "GetBuildInfo", "UnitName", "C_Container", "GetRealmName", "GetNormalizedRealmName", "UnitGUID", "UnitFactionGroup",
   "GetCurrentRegionName",
-  "C_GameRules", "Enum", "C_Seasons", "C_Realm", "GetServerTime", "GetItemInfo", "GetMoney", "ItemLocation", "AUCTION_DURATION_ONE", "AUCTION_DURATION_TWO", "AUCTION_DURATION_THREE",
+  "C_GameRules", "Enum", "C_Seasons", "C_Realm", "GetServerTime", "GetItemInfo", "GetItemInfoInstant", "GetMoney", "ItemLocation", "AUCTION_DURATION_ONE", "AUCTION_DURATION_TWO", "AUCTION_DURATION_THREE",
   "C_AuctionHouse", "C_Timer", "C_Item", "C_Map",
   "QueryAuctionItems", "GetNumAuctionItems", "GetAuctionItemInfo", "GetAuctionItemLink",
   "CanSendAuctionQuery", "PostAuction", "StartAuction", "CancelAuction", "PlaceAuctionBid",

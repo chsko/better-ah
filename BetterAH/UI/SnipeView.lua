@@ -264,6 +264,7 @@ function SnipeView:start()
   db.session = {}
   self.session = ns.Sniper.Session.new(db.session, self:now())
   self.running, self.message, self.lastCheck, self.near, self.seen, self.why = true, nil, nil, {}, {}, {}
+  self.requested = {}
   self.run = {} -- this run's identity: late answers from an earlier run are dropped
   self:refresh()
   self:tick(self.run)
@@ -292,20 +293,29 @@ function SnipeView:stop(why)
 end
 
 -- The most to pay for an item of a target, by the item's class (armor and weapons are worth different
--- amounts), and its worth. nil when it isn't one of the target's types, has no worth, or its details
--- aren't loaded yet: those are asked for, and the item is judged on a later round.
--- The third value says why there is no max: "loading", "type" (not one of the target's types, or not
--- green) or "worth" (no material prices for its class).
+-- amounts), and its worth. nil when it isn't one of the target's types, has no worth, or not even its
+-- class is known yet.
+-- The third value says why there is no max: "loading", "type" (not one of the target's types, or a known
+-- quality that isn't green) or "worth" (no material prices for its class).
 function SnipeView:maxFor(entry, itemID)
   local t, row = entry.target, entry.row
-  local info = self.addon.auctionAPI and self.addon.auctionAPI:itemInfo("i:" .. itemID)
+  local api = self.addon.auctionAPI
+  local info = api and api:itemInfo("i:" .. itemID)
   if not (info and info.classID) then
+    -- Not in the cache: ask for it (for the name and level), and judge it by its class meanwhile, which
+    -- GetItemInfoInstant knows right away. The browse only asks for greens, so the quality is known.
     local load = self.env.C_Item and self.env.C_Item.RequestLoadItemDataByID
-    if type(load) == "function" then pcall(load, itemID) end
-    return nil, nil, "loading"
+    self.requested = self.requested or {}
+    if type(load) == "function" and not self.requested[itemID] then
+      self.requested[itemID] = true
+      pcall(load, itemID)
+    end
+    info = api and api:itemType("i:" .. itemID)
+    if not (info and info.classID) then return nil, nil, "loading" end
   end
   local typeID = ns.Targets.typeOf(info)
-  if not (typeID and t.types[typeID] and tonumber(info.quality) == 2) then return nil, nil, "type" end
+  local quality = tonumber(info.quality)
+  if not (typeID and t.types[typeID]) or (quality and quality ~= 2) then return nil, nil, "type" end
   local worth = row[ns.Targets.BY_ID[typeID].class].net
   if not worth then return nil, nil, "worth" end
   return ns.Targets.maxPrice(t, worth), worth

@@ -1123,6 +1123,19 @@ describe("Window", function()
         assert.equal(1, #env.searches)
       end)
 
+      it("judges an item not in the cache by its class from GetItemInfoInstant", function()
+        local env, _, _, s = snipeSetup()
+        env.uncached[5001] = true
+        env.GetItemInfoInstant = function(id)
+          if id == 5001 then return id, "Armor", "Leather", "INVTYPE_WRIST", 0, 4, 2 end
+          return nil
+        end
+        s.startButton:Click()
+        env.runTimers()
+        assert.equal(1, #env.searches, "the bracer is looked up at once, by its key's item level")
+        assert.equal(5001, env.searches[1].itemKey.itemID)
+      end)
+
       it("keeps sniping behind other views without drawing over them", function()
         local env, w, _, s = snipeSetup()
         s.startButton:Click()

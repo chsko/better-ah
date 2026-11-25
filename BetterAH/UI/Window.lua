@@ -167,8 +167,18 @@ function Window:build()
   self.postPanel = self.postView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
   self.disenchantView = ns.DisenchantView.new(self, self.addon)
   self.disenchantPanel = self.disenchantView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
+  self:attachResize(f)
   self:renderView()
   return f
+end
+
+-- The resize grip (UI/WindowResize.lua), with the scale saved in BetterAHDB.window.
+function Window:attachResize(f)
+  if not (ns.WindowResize and ns.WindowScale) then return end
+  local db = self.addon.db
+  local saved = db and db.window or {}
+  if db then db.window = saved end
+  self.resize = ns.WindowResize.attach(self.env, f, WIDTH, HEIGHT, saved, Window.tooltip)
 end
 
 -- An inset panel with an auction house background, like AuctionHouseBackgroundTemplate. That template

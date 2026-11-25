@@ -20,9 +20,11 @@ Core/SelfTest.lua
 Core/Probes.lua
 Core/Commands.lua
 Core/WindowModel.lua
+Core/WindowScale.lua
 Game/AuctionAPI.lua
 Game/CharacterTracker.lua
 Game/PostingAPI.lua
 UI/PostView.lua
 UI/DisenchantView.lua
+UI/WindowResize.lua
 UI/Window.lua

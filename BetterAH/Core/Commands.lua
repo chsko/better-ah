@@ -30,6 +30,13 @@ commands.proto = function(msg)
   say("Sidebar style " .. style .. (note and (" (" .. note .. ")") or ""))
 end
 
+-- PROTOTYPE (#23): /bah show opens the window without an auctioneer, for design screenshots.
+commands.show = function()
+  if not ns.window then return say("The window isn't loaded.") end
+  ns.window:build():Show()
+  ns.window:renderView()
+end
+
 SLASH_BETTERAH1 = "/bah"
 SlashCmdList.BETTERAH = function(msg)
   local name = (msg or ""):match("^%s*(%S*)"):lower()

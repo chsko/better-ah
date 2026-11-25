@@ -23,4 +23,5 @@ Game/AuctionAPI.lua
 Game/CharacterTracker.lua
 Game/PostingAPI.lua
 UI/PostView.lua
+UI/DisenchantView.lua
 UI/Window.lua

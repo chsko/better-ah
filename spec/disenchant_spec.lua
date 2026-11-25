@@ -83,9 +83,36 @@ describe("Disenchant", function()
       select(4, Disenchant.value({ quality = 4, class = "armor", level = 30 })))
   end)
 
+  it("adds the Arcane Salvager's 50% chance of one extra dust or essence", function()
+    -- Christian's spreadsheet, uncommon armor 26-30, prices in silver: (dust * 1.5 + essence * 0.4 + shard * 0.05)
+    -- * 0.95 = 14.20s with Soul Dust 4s 46c, Greater Astral Essence 15s 68c, Large Glimmering Shard 39s 78c.
+    local prices = { [11083] = 446, [11082] = 1568, [11084] = 3978 }
+    local info = { quality = 2, class = "armor", level = 28 }
+    local yields = Disenchant.yields(info, { salvager = true })
+    assert.same({ 1.5, 0.4, 0.05 }, { yields[1].expected, yields[2].expected, yields[3].expected })
+    local value = Disenchant.value(info, function(id) return prices[id] end, { salvager = true })
+    assert.equal(1420, Disenchant.net(value))
+    assert.equal(1.125, Disenchant.yields(info)[1].expected, "without it")
+    assert.equal(1, Disenchant.yields({ quality = 3, class = "armor", level = 28 }, { salvager = true })[1].expected,
+      "shards get no extra")
+  end)
+
+  it("lists the green bands with their usual required levels", function()
+    local bands = Disenchant.greenBands()
+    assert.equal(11, #bands)
+    assert.same({ min = 26, max = 30, required = { min = 21, max = 25 } }, bands[4])
+    assert.same({ min = 5, max = 15, required = { min = 1, max = 10 } }, bands[1])
+  end)
+
   it("takes the 5% auction house cut and deposits off what the materials sell for", function()
     assert.equal(950, Disenchant.net(1000))
     assert.equal(940, Disenchant.net(1000, 10))
     assert.is_nil(Disenchant.net(nil))
+  end)
+  it("says whether an Arcane Salvager adds anything", function()
+    assert.is_true(Disenchant.salvagerAdds(Disenchant.yields({ quality = 2, class = "armor", level = 28 })))
+    assert.is_false(Disenchant.salvagerAdds(Disenchant.yields({ quality = 3, class = "armor", level = 40 })),
+      "shards only")
+    assert.is_false(Disenchant.salvagerAdds(nil))
   end)
 end)

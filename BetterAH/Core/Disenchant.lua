@@ -127,9 +127,16 @@ Disenchant.CLASS_IDS = { [2] = "weapon", [4] = "armor" }
 local NOT_GEAR = { [""] = true, INVTYPE_NON_EQUIP = true, INVTYPE_NON_EQUIP_IGNORE = true, INVTYPE_BODY = true,
   INVTYPE_TABARD = true, INVTYPE_BAG = true, INVTYPE_AMMO = true, INVTYPE_QUIVER = true }
 
+-- Disenchanting with an Arcane Salvager gives a 50% chance of one extra common or uncommon material
+-- (dust or essence), drawn with the band's own chances. Measured by players over thousands of
+-- disenchants, not confirmed by Blizzard.
+Disenchant.SALVAGER_CHANCE = 0.5
+local EXTRA_KINDS = { dust = true, essence = true }
+
 -- info: { id, quality, class = "armor"/"weapon" (or classID), level = item level, equip = equip slot }.
+-- opts: { salvager = true } adds the Arcane Salvager's extra material.
 -- Returns the band's materials as { id, name, chance, min, max, expected } or nil and why not.
-function Disenchant.yields(info)
+function Disenchant.yields(info, opts)
   if type(info) ~= "table" then return nil, "unknown item" end
   local class = info.class or Disenchant.CLASS_IDS[info.classID]
   local quality, level = tonumber(info.quality), tonumber(info.level)
@@ -143,8 +150,12 @@ function Disenchant.yields(info)
       and level >= band.min and level <= band.max then
       local out = {}
       for _, mat in ipairs(band.mats) do
+        local expected = mat.chance * (mat.min + mat.max) / 2
+        if opts and opts.salvager and EXTRA_KINDS[Disenchant.BY_ID[mat.id].kind] then
+          expected = expected + Disenchant.SALVAGER_CHANCE * mat.chance
+        end
         out[#out + 1] = { id = mat.id, name = Disenchant.BY_ID[mat.id].name, chance = mat.chance, min = mat.min,
-          max = mat.max, expected = mat.chance * (mat.min + mat.max) / 2 }
+          max = mat.max, expected = expected }
       end
       return out
     end
@@ -152,12 +163,34 @@ function Disenchant.yields(info)
   return nil, "no disenchant data for item level " .. level
 end
 
--- The expected value of disenchanting the item, in copper. priceOf(materialID) gives a material's
--- market value or nil. Returns value (nil when no material has a price), the breakdown
+-- Whether an Arcane Salvager adds anything to these yields (from yields or value): only bands with dust
+-- or essence get its extra material.
+function Disenchant.salvagerAdds(yields)
+  for _, y in ipairs(yields or {}) do
+    if EXTRA_KINDS[Disenchant.BY_ID[y.id].kind] then return true end
+  end
+  return false
+end
+
+-- The green bands, lowest first, as { min, max, required = { min, max } } (item level and the usual
+-- required level, five below; the last band is open-ended), for the Disenchant view and targets.
+function Disenchant.greenBands()
+  local out = {}
+  for _, band in ipairs(BANDS) do
+    if band.quality == UNCOMMON and band.class == "armor" then
+      out[#out + 1] = { min = band.min, max = band.max,
+        required = { min = math.max(1, band.min - 5), max = band.max - 5 } }
+    end
+  end
+  return out
+end
+
+-- The expected value of disenchanting the item, in copper. opts as for yields. priceOf(materialID)
+-- gives a material's market value or nil. Returns value (nil when no material has a price), the breakdown
 -- ({ id, name, chance, min, max, expected, price, value } per material) and how many materials had
 -- no price; or nil, nil, nil, why when the item doesn't disenchant.
-function Disenchant.value(info, priceOf)
-  local yields, why = Disenchant.yields(info)
+function Disenchant.value(info, priceOf, opts)
+  local yields, why = Disenchant.yields(info, opts)
   if not yields then return nil, nil, nil, why end
   local total, priced, missing = 0, 0, 0
   for _, y in ipairs(yields) do

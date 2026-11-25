@@ -34,7 +34,6 @@ Window.ART = {
 -- What each placeholder view will show, until it is built.
 Window.EMPTY = {
   cancel = "Your auctions that have been undercut will be listed here, ready to cancel.",
-  disenchant = "Green, blue and epic listings worth more disenchanted than their buyout will be listed here.",
   deals = "Listings below 70% of market value and your shopping list hits will be listed here.",
   shopping = "Your shopping lists: items you want, with the most you'll pay for each.",
   crafting = "Recipes your characters know, with what each one costs to make and sells for.",
@@ -166,6 +165,8 @@ function Window:build()
   self:buildAlts(f)
   self.postView = ns.PostView.new(self, self.addon)
   self.postPanel = self.postView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
+  self.disenchantView = ns.DisenchantView.new(self, self.addon)
+  self.disenchantPanel = self.disenchantView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
   self:renderView()
   return f
 end
@@ -594,10 +595,14 @@ function Window:renderDetail(items, now)
   local text = Window.detailText(item, value, info, addon.prices:history(key, item.item), now)
   local details = addon.auctionAPI and addon.auctionAPI:itemInfo(item.item)
   if details and ns.Disenchant and ns.Disenchant.yields(details) then
+    local opts = ns.DisenchantView.options(addon)
     local deValue, breakdown, missing = ns.Disenchant.value(details, function(id)
       return (addon.prices:marketValue(key, "i:" .. id, now))
-    end)
+    end, opts)
     text = text .. "\n\n" .. Window.disenchantText(deValue, breakdown, missing)
+    if opts.salvager and ns.Disenchant.salvagerAdds(breakdown) then
+      text = text .. "\nCounts an Arcane Salvager (set in Disenchant snipe)."
+    end
   end
   self.detailBody:SetText(text)
 end
@@ -613,15 +618,17 @@ function Window:scanMaterials()
   local addon = self.addon
   local api, key = addon.postingAPI, self:market()
   if self.materialScan then return end
-  self.statusMarket = key
+  self.statusMarket, self.materialMarket = key, key
   if not (api and api.open and addon.prices and key) then
     self.statusText = "Open the auction house to scan materials."
-    return self:renderPrices()
+    self.materialStatus = self.statusText
+    return self:renderMaterials()
   end
   local mats = ns.Disenchant.MATERIALS
   local scan = { done = 0, found = 0, failed = 0, total = #mats }
   self.materialScan = scan
   self.statusText = string.format("Scanning materials: 0 of %d.", scan.total)
+  self.materialStatus = self.statusText
   for _, m in ipairs(mats) do
     local entry = ns.PostingAPI.commodityEntry(self.env, m.id, m.name)
     api:search(entry, function(listings, complete)
@@ -655,10 +662,17 @@ function Window:scanMaterials()
             tostring(scan.why))
         end
       end
-      self:renderPrices()
+      self.materialStatus = self.statusText
+      self:renderMaterials()
     end)
   end
+  self:renderMaterials()
+end
+
+-- Redraws the views that show prices, after a scan or materials scan step.
+function Window:renderMaterials()
   self:renderPrices()
+  if self.model.view == "disenchant" and self.disenchantView then self.disenchantView:render() end
 end
 
 function Window:startScan()
@@ -671,13 +685,14 @@ function Window:startScan()
   -- Set the waiting text first: the reply may come before scanIntoPrices returns.
   self.statusMarket = self:market()
   self.statusText = "Scanning the auction house. This can take a minute or two."
+  self.materialStatus = nil -- a full scan supersedes the last materials scan's message
   local started, why = ns.AuctionAPI.scanIntoPrices(addon, function(_, message)
     self.statusText = message
     self.offset = 0
-    self:renderPrices()
+    self:renderMaterials()
   end)
   if not started then self.statusText = why end
-  self:renderPrices()
+  self:renderMaterials()
 end
 
 function Window:scrollPrices(by)
@@ -735,7 +750,8 @@ function Window:renderPrices()
     end
     row.button.selectedTexture:SetShown(item ~= nil and item.item == self.selected)
   end
-  self:renderDetail(items, now)
+  -- The detail panel is shared between views: only the Prices view's own render may fill it.
+  if self.model.view == "prices" then self:renderDetail(items, now) end
 end
 
 function Window:renderView()
@@ -743,8 +759,9 @@ function Window:renderView()
   self.heading:SetText(self.model:label(self.model.view))
   self.placeholder:SetText(Window.EMPTY[self.model.view] or "")
   local view = self.model.view
-  self.placeholder:SetShown(view ~= "prices" and view ~= "alts" and view ~= "post")
+  self.placeholder:SetShown(view ~= "prices" and view ~= "alts" and view ~= "post" and view ~= "disenchant")
   self.pricesPanel:SetShown(view == "prices")
+  self.disenchantPanel:SetShown(view == "disenchant")
   self.altsPanel:SetShown(view == "alts")
   self.postPanel:SetShown(view == "post")
   if view ~= "post" then self.postView.editor:Hide() end
@@ -754,6 +771,8 @@ function Window:renderView()
     self:renderAlts()
   elseif view == "post" then
     if self.frame:IsShown() then self.postView:show() end
+  elseif view == "disenchant" then
+    self.disenchantView:render()
   else
     self.detailTitle:SetText("")
     self.detailBody:SetText("")

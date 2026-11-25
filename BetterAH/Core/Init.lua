@@ -17,6 +17,8 @@ frame:SetScript("OnEvent", function(self, event, loadedName)
     if ns.CharacterRecords then ns.characters = ns.CharacterRecords.new(BetterAHDB.characters) end
     BetterAHDB.posting = BetterAHDB.posting or {}
     if ns.Posting then ns.posting = ns.Posting.Settings.new(BetterAHDB.posting) end
+    BetterAHDB.disenchant = BetterAHDB.disenchant or {}
+    ns.disenchant = BetterAHDB.disenchant
     self:UnregisterEvent("ADDON_LOADED")
   end
 end)

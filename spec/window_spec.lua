@@ -3,6 +3,7 @@ local fake = require("spec.fake_client")
 
 local function setup(opts)
   local env = fake.new(opts)
+  if not (opts and opts.portrait) then env.BetterAHDB = { protoFrame = "basic" } end
   local ns = helper.load("BetterAH/Core/WindowModel.lua")
   for _, file in ipairs({ "Money", "Time", "MarketKey", "PriceDB", "SelfTest", "Probes" }) do
     helper.load("BetterAH/Core/" .. file .. ".lua", ns)
@@ -28,6 +29,15 @@ describe("Window", function()
     assert.is_true(env.AuctionFrame:IsShown(), "Blizzard's window must not be hidden, or the AH closes")
     assert.is_true(env.open)
     assert.equal("Post", w.heading:GetText())
+  end)
+
+  it("uses Blizzard's auction house frame and brown panels by default", function()
+    local env, w = setup({ portrait = true })
+    env.openAuctionHouse()
+    assert.equal("PortraitFrameTemplate", env.BetterAHFrame.template)
+    assert.is_truthy(w.sidebarInset and w.mainInset)
+    env.BetterAHFrame.CloseButton:Click()
+    assert.is_false(env.open)
   end)
 
   it("switches the main view from the sidebar", function()

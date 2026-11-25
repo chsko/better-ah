@@ -58,7 +58,11 @@ end
 function Window:build()
   if self.frame then return self.frame end
   local env = self.env
-  local f = env.CreateFrame("Frame", "BetterAHFrame", env.UIParent, "BasicFrameTemplateWithInset")
+  -- PROTOTYPE (#23): "portrait" uses the same outer frame as Blizzard's AuctionHouseFrame
+  -- (PortraitFrameTemplate, Shared/Blizzard_AuctionHouseFrame.xml); "basic" is the old dark frame.
+  local portrait = Window.protoFrame(env) == "portrait"
+  local f = env.CreateFrame("Frame", "BetterAHFrame", env.UIParent,
+    portrait and "PortraitFrameTemplate" or "BasicFrameTemplateWithInset")
   -- Claim the frame at once so a later error can't lead to a second one.
   self.frame = f
   f:SetSize(WIDTH, HEIGHT)
@@ -78,9 +82,23 @@ function Window:build()
   end)
   if env.UISpecialFrames then table.insert(env.UISpecialFrames, "BetterAHFrame") end
 
-  local title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  title:SetPoint("TOP", f, "TOP", 0, -5)
-  title:SetText("Better AH")
+  if portrait and f.SetTitle then
+    f:SetTitle("Better AH")
+    if f.SetPortraitToAsset then f:SetPortraitToAsset("Interface\\Icons\\INV_Misc_Coin_02") end
+    -- Brown panels like Blizzard's AH: InsetFrameTemplate borders with the AH background atlases
+    -- (AuctionHouseBackgroundMixin:OnLoad in Shared/Blizzard_AuctionHouseSharedTemplates.lua).
+    self.sidebarInset = Window.panel(env, f, "auctionhouse-background-categories")
+    self.sidebarInset:SetPoint("TOPLEFT", f, "TOPLEFT", 4, -60)
+    self.sidebarInset:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 4, 6)
+    self.sidebarInset:SetWidth(SIDEBAR - 2)
+    self.mainInset = Window.panel(env, f, "auctionhouse-background-index")
+    self.mainInset:SetPoint("TOPLEFT", f, "TOPLEFT", SIDEBAR + 6, -60)
+    self.mainInset:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -6, 6)
+  else
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    title:SetPoint("TOP", f, "TOP", 0, -5)
+    title:SetText("Better AH")
+  end
 
   local toggle = env.CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
   toggle:SetSize(100, 22)
@@ -94,7 +112,7 @@ function Window:build()
   self:buildSidebar(Window.protoStyle(env))
 
   local heading = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  heading:SetPoint("TOPLEFT", f, "TOPLEFT", SIDEBAR + 14, -60)
+  heading:SetPoint("TOPLEFT", f, "TOPLEFT", SIDEBAR + 16, portrait and -72 or -60)
   self.heading = heading
 
   local placeholder = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
@@ -122,6 +140,23 @@ Window.EMPTY = {
   crafting = "Recipes your characters know, with what each one costs to make and sells for.",
   alts = "Everything your characters own, with counts per character.",
 }
+
+function Window.protoFrame(env)
+  local db = env.BetterAHDB
+  return (db and db.protoFrame == "basic") and "basic" or "portrait"
+end
+
+-- An inset panel with an auction house background atlas, like AuctionHouseBackgroundTemplate
+-- (which is load-on-demand, so its few lines are copied rather than inherited).
+function Window.panel(env, parent, atlas)
+  local p = env.CreateFrame("Frame", nil, parent, "InsetFrameTemplate")
+  local bg = p:CreateTexture(nil, "BACKGROUND")
+  bg:SetPoint("TOPLEFT", 3, -3)
+  bg:SetPoint("BOTTOMRIGHT", -3, 3)
+  if bg.SetAtlas then bg:SetAtlas(atlas, false) end
+  p.Background = bg
+  return p
+end
 
 function Window.protoStyle(env)
   local db = env.BetterAHDB
@@ -232,7 +267,7 @@ function Window:buildSidebar(style)
   if not bar then
     local env, f = self.env, self.frame
     bar = env.CreateFrame("Frame", nil, f)
-    bar:SetPoint("TOPLEFT", f, "TOPLEFT", 8, -26)
+    bar:SetPoint("TOPLEFT", f, "TOPLEFT", 8, self.sidebarInset and -64 or -26)
     bar:SetSize(SIDEBAR - 8, HEIGHT - 34)
     bar.buttons = {}
     self.allBars[#self.allBars + 1] = bar
@@ -287,7 +322,7 @@ end
 function Window:buildPrices(f)
   local env = self.env
   local panel = env.CreateFrame("Frame", nil, f)
-  panel:SetPoint("TOPLEFT", f, "TOPLEFT", SIDEBAR + 14, -90)
+  panel:SetPoint("TOPLEFT", f, "TOPLEFT", SIDEBAR + 16, self.mainInset and -102 or -90)
   panel:SetSize(WIDTH - SIDEBAR - 30, HEIGHT - 100)
   panel:EnableMouseWheel(true)
   panel:SetScript("OnMouseWheel", function(_, delta) self:scrollPrices(-delta * 3) end)

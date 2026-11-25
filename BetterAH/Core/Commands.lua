@@ -30,6 +30,16 @@ commands.proto = function(msg)
   say("Sidebar style " .. style .. (note and (" (" .. note .. ")") or ""))
 end
 
+-- PROTOTYPE (#23): /bah frame portrait|basic picks the outer frame; it takes effect after /reload.
+commands.frame = function(msg)
+  local kind = (msg or ""):lower():match("^%s*%S+%s+(%a+)%s*$")
+  if kind ~= "portrait" and kind ~= "basic" then
+    return say("/bah frame portrait|basic - portrait: like Blizzard's AH, basic: the old dark frame")
+  end
+  if ns.db then ns.db.protoFrame = kind end
+  say("Frame " .. kind .. " after /reload")
+end
+
 -- PROTOTYPE (#23): /bah show opens the window without an auctioneer, for design screenshots.
 commands.show = function()
   if not ns.window then return say("The window isn't loaded.") end

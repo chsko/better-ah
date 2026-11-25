@@ -100,6 +100,12 @@ function M.new(opts)
   end
   env.CreateFrame = function(kind, name, parent, template)
     local f = newFrame(kind, name, parent, template)
+    if template == "PortraitFrameTemplate" then
+      f.CloseButton = newFrame("Button", name and (name .. "CloseButton"), f)
+      f.CloseButton:SetScript("OnClick", function() f:Hide() end)
+      if name then env[name .. "CloseButton"] = f.CloseButton end
+      f.SetTitle = function(frame, text) frame.title = text end
+    end
     if template == "BasicFrameTemplateWithInset" and shape ~= "bare" then
       local close = newFrame("Button", name and (name .. "CloseButton"), f)
       close:SetScript("OnClick", function() f:Hide() end)

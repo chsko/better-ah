@@ -29,7 +29,9 @@ PriceDB.MAX_PRICE = 2 ^ 31 - 1 -- the most copper a character can hold; imports 
 -- where buyout is the whole stack's buyout in copper (0 or nil for bid-only listings).
 -- Every item seen gets its lowest buyout per unit, its quantity and a market value point for today;
 -- items not in this scan keep their earlier numbers and seen time. Returns the number of distinct items.
-function PriceDB:recordScan(key, time, listings)
+-- With some = true the listings are a scan of only some items (the materials scan): each one counts
+-- like a full scan of that item, but the market's lastScan stays.
+function PriceDB:recordScan(key, time, listings, some)
   local seen, order = {}, {}
   for _, l in ipairs(listings) do
     local count = tonumber(l.count) or 0
@@ -55,7 +57,7 @@ function PriceDB:recordScan(key, time, listings)
       dropped = info and info.dropped,
     }
   end
-  self:recordPoints(key, time, points, "scan")
+  self:recordPoints(key, time, points, some and "itemscan" or "scan")
   return #order
 end
 
@@ -170,7 +172,7 @@ function PriceDB:recordPoints(key, time, points, source)
       data.items[item] = e
     end
     if p.name and p.name ~= "" then e.name = p.name end
-    if source == "scan" then
+    if source == "scan" or source == "itemscan" then
       e.lowest, e.quantity, e.listings, e.seen = p.lowest, p.quantity, p.listings, time
       if p.value then e.scan = string.format("%d:%d:%d:%d", day, p.units or 0, p.used or 0, p.dropped or 0) end
     elseif source == "search" then

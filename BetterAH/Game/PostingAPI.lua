@@ -148,6 +148,13 @@ function PostingAPI:search(entry, done)
   if not self.active then self:nextSearch() end
 end
 
+-- A search entry for an item that isn't in the bags, such as a disenchant material (a commodity).
+function PostingAPI.commodityEntry(env, itemID, name)
+  local ah = env.C_AuctionHouse
+  local itemKey = ah and ah.MakeItemKey and try(ah.MakeItemKey, itemID)
+  return { item = "i:" .. itemID, itemID = itemID, name = name, commodity = true, itemKey = itemKey }
+end
+
 function PostingAPI:nextSearch()
   if self.active or not self.open then return end
   local job = table.remove(self.queue, 1)

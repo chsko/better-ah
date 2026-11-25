@@ -54,6 +54,14 @@ function Frame:Hide()
   if self.scripts.OnHide then self.scripts.OnHide(self) end
 end
 function Frame:CreateFontString() return newFrame("FontString") end
+function Frame:CreateTexture() return newFrame("Texture") end
+function Frame:SetAllPoints() end
+function Frame:SetColorTexture() end
+function Frame:SetHighlightTexture() end
+function Frame:SetFontObject(font) self.font = font end
+function Frame:SetFontString(fs) self.fontString = fs end
+function Frame:GetFontString() return self.fontString end
+function Frame:SetShown(on) if on then self:Show() else self:Hide() end end
 function Frame:Click() if self.scripts.OnClick then self.scripts.OnClick(self) end end
 
 -- opts.template picks the shape of BasicFrameTemplateWithInset:

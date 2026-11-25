@@ -35,8 +35,10 @@ describe("Window", function()
     env.openAuctionHouse()
     sidebarButton(w, "disenchant"):Click()
     assert.equal("Disenchant snipe", w.heading:GetText())
-    assert.is_true(sidebarButton(w, "disenchant").highlighted)
-    assert.is_false(sidebarButton(w, "post").highlighted)
+    assert.is_true(sidebarButton(w, "disenchant").selectedBar:IsShown())
+    assert.is_false(sidebarButton(w, "post").selectedBar:IsShown())
+    assert.equal("Green, blue and epic listings worth more disenchanted than their buyout will be listed here.",
+      w.placeholder:GetText())
   end)
 
   it("toggles to Blizzard's window and back without closing the auction house", function()

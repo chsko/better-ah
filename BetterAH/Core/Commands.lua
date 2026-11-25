@@ -20,9 +20,19 @@ commands.selftest = function()
   end
 end
 
+-- PROTOTYPE (#23): /bah proto a|b|c switches the sidebar style. Not for main.
+commands.proto = function(msg)
+  local style = (msg or ""):lower():match("^%s*%S+%s+(%a)%s*$")
+  if not (style == "a" or style == "b" or style == "c") or not ns.window then
+    return say("/bah proto a|b|c - a: red buttons, b: flat list, c: Blizzard's AH category buttons")
+  end
+  local note = ns.window:setStyle(style)
+  say("Sidebar style " .. style .. (note and (" (" .. note .. ")") or ""))
+end
+
 SLASH_BETTERAH1 = "/bah"
 SlashCmdList.BETTERAH = function(msg)
   local name = (msg or ""):match("^%s*(%S*)"):lower()
   local handler = commands[name] or commands.help
-  handler()
+  handler(msg)
 end

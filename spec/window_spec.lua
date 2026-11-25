@@ -924,7 +924,7 @@ describe("Window", function()
         local names = { [5001] = "Ridgeback Bracers", [5002] = "Ridgeback Boots", [5003] = "Ridgeback Belt" }
         env.GetItemInfo = function(id)
           if not names[id] or env.uncached[id] then return nil end
-          return names[id], "link", 2, 28, 23, "Armor", "Leather", 1, "INVTYPE_WRIST", 0, 100, 4, 2
+          return names[id], "link", 2, id == 5003 and 35 or 28, 23, "Armor", "Leather", 1, "INVTYPE_WRIST", 0, 100, 4, 2
         end
         v.tabButtons.snipe:Click()
         return env, w, ns, v.snipe
@@ -1086,6 +1086,23 @@ describe("Window", function()
         env.runTimers(2)
         assert.equal(2, #env.searches)
         assert.equal("Buy for 8s 0c", s.buyButton:GetText())
+      end)
+
+      it("finds greens when the auction house gives no item level in its keys", function()
+        local env, _, _, s = snipeSetup()
+        for _, r in ipairs(env.browseResults) do r.itemKey.itemLevel = 0 end
+        s.startButton:Click()
+        env.runTimers()
+        assert.equal("[Ridgeback Bracers]", s.cardName:GetText(), "the level comes from the item's details")
+        assert.equal("Ridgeback Bracers", s.nearRows[1][1]:GetText())
+      end)
+
+      it("says how many greens the last check saw when none are in the band", function()
+        local env, _, _, s = snipeSetup()
+        env.browseResults = { { itemKey = { itemID = 5003, itemLevel = 35 }, minPrice = 100 } }
+        s.startButton:Click()
+        env.runTimers()
+        assert.equal("Last check: 1 green listed, none in the band with a known worth.", s.hint:GetText())
       end)
 
       it("judges items only once their details are loaded", function()

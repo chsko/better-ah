@@ -21,6 +21,12 @@ describe("MarketKey", function()
     assert.are_not.equal(a, MarketKey.build({ realm = "Firemaw", ruleset = "1", faction = "Horde" }))
   end)
 
+  it("names a ruleset by its name, and a numbered one as a ruleset", function()
+    assert.equal("PvP, Alliance", MarketKey.describe("/PvP/Alliance"))
+    assert.equal("Roleplay PvP, Horde", MarketKey.describe("/Roleplay PvP/Horde"))
+    assert.equal("ruleset default, Horde", MarketKey.describe("/default/Horde"))
+  end)
+
   it("needs a ruleset and a faction", function()
     assert.has_error(function() MarketKey.build({ realm = "Firemaw", faction = "Horde" }) end)
     assert.has_error(function() MarketKey.build({ realm = "Firemaw", ruleset = "1" }) end)

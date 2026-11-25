@@ -194,8 +194,10 @@ function PostView:buildEditor()
   box:Hide()
 end
 
+-- The market key and its parts (both, so no "and" here: that would keep only the key).
 function PostView:market()
-  return ns.AuctionAPI and ns.AuctionAPI.currentMarket(self.env)
+  if not ns.AuctionAPI then return nil end
+  return ns.AuctionAPI.currentMarket(self.env)
 end
 
 function PostView:now()
@@ -210,9 +212,14 @@ end
 
 -- Called when the view is shown: a fresh queue for this visit, then look up each item.
 function PostView:open()
-  local key = self:market()
+  local key, parts = self:market()
   local api = self.addon.postingAPI
   self.key = key
+  -- Floors set before rulesets had names were kept under the numbered key (ADR 0005).
+  local settings = self.addon.posting
+  if key and settings and type(parts) == "table" and not parts.ruleset:match("^%d+$") then
+    settings:adoptFloors(ns.MarketKey.build({ realm = "", ruleset = "1", faction = parts.faction }), key)
+  end
   self.queue = ns.PostQueue.new({
     settings = self.addon.posting, key = key, step = api and ns.PostingAPI.priceStep(self.env) or 1,
     marketValue = function(item) return self:marketValue(item) end,

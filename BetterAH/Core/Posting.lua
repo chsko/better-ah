@@ -145,6 +145,17 @@ function Settings:floor(key, item)
   return floors and floors[item]
 end
 
+-- Moves every floor saved under an old market key to a new one, when the new one has none yet. Used
+-- once rulesets got names (ADR 0005): floors set under "/1/Horde" belong to "/Normal/Horde" (or
+-- whichever ruleset the player is on). Returns true when it moved anything.
+function Settings:adoptFloors(from, to)
+  local floors = self.store.floors
+  if from == to or not floors[from] or next(floors[from]) == nil then return false end
+  if floors[to] and next(floors[to]) ~= nil then return false end
+  floors[to], floors[from] = floors[from], nil
+  return true
+end
+
 -- Sets the item's own floor on a market in whole copper; nil or 0 goes back to the default share of
 -- market value. Returns false (and changes nothing) for anything else that isn't at least 1 copper.
 function Settings:setFloor(key, item, copper)

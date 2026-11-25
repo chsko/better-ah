@@ -32,11 +32,14 @@ function MarketKey.parse(key)
   return { realm = realm, ruleset = ruleset, faction = faction }
 end
 
--- A short label for players, for example "Firemaw, ruleset 1, Horde".
+-- A short label for players, for example "PvP, Alliance". A ruleset that is only a number (or
+-- "default") reads "ruleset 1, Horde".
 function MarketKey.describe(key)
   local parts = MarketKey.parse(key)
   if not parts then return tostring(key) end
-  local label = "ruleset " .. parts.ruleset .. ", " .. parts.faction
+  local ruleset = parts.ruleset
+  if ruleset:match("^%d+$") or ruleset == "default" then ruleset = "ruleset " .. ruleset end
+  local label = ruleset .. ", " .. parts.faction
   if parts.realm ~= "" then label = parts.realm .. ", " .. label end
   return label
 end

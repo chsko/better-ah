@@ -10,4 +10,4 @@ Of the ruleset candidates, only `C_GameRules` answered: `GetActiveGameMode()` re
 
 - `GetRealmName()` returned an empty string; settled in ADR 0005 (realm part pinned empty).
 - Whether and how `ReplicateItems` is throttled.
-- Whether `GetActiveGameMode()` differs between rulesets.
+- Whether `GetActiveGameMode()` differs between rulesets: it does not (1 on Normal and PvP); settled in ADR 0005.

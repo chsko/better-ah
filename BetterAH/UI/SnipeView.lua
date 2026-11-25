@@ -312,30 +312,8 @@ function SnipeView:maxFor(entry, itemID)
 end
 
 SnipeView.WHY = { { "loading", "not loaded yet" }, { "type", "other types" }, { "band", "outside the band" },
-  { "worth", "no worth known" } }
-
--- Why the results of a check came to nothing, counted by reason (see WHY), for the hint.
-function SnipeView:whyNot(entry, band, results, level)
-  local why = {}
-  for _, r in ipairs(results or {}) do
-    local id = r.itemKey and r.itemKey.itemID
-    local reason
-    if id then
-      local _, _, no = self:maxFor(entry, id)
-      local l = tonumber(level(id))
-      if not l or l <= 0 then l = tonumber(r.itemKey.itemLevel) end
-      if no == "loading" or no == "type" then
-        reason = no
-      elseif not l or l < band.min or l > band.max then
-        reason = "band"
-      else
-        reason = no
-      end
-    end
-    if reason then why[reason] = (why[reason] or 0) + 1 end
-  end
-  return why
-end
+  { "worth", "no worth known" }, { "profit", "profit above worth" }, { "price", "no buyout" },
+  { "unreadable", "unreadable" } }
 
 -- One round: browse the next target, then look up the auctions of the browse results under its max
 -- price. The next round starts REST seconds after this one's lookups are done.
@@ -362,21 +340,24 @@ function SnipeView:tick(run)
       return rest()
     end
     self.problem = nil
-    local worthOf, maxOf = {}, {}
+    local worthOf, maxOf, whyOf, levelOf = {}, {}, {}, {}
     local function max(itemID)
       if maxOf[itemID] == nil then
-        local m, worth = self:maxFor(entry, itemID)
-        maxOf[itemID], worthOf[itemID] = m or false, worth
+        local m, worth, no = self:maxFor(entry, itemID)
+        maxOf[itemID], worthOf[itemID], whyOf[itemID] = m or false, worth, no
       end
-      return maxOf[itemID] or nil
+      return maxOf[itemID] or nil, whyOf[itemID]
     end
     local function level(itemID)
-      local info = self.addon.auctionAPI and self.addon.auctionAPI:itemInfo("i:" .. itemID)
-      return info and info.level
+      if levelOf[itemID] == nil then
+        local info = self.addon.auctionAPI and self.addon.auctionAPI:itemInfo("i:" .. itemID)
+        levelOf[itemID] = info and info.level or false
+      end
+      return levelOf[itemID] or nil
     end
     local name = ns.DisenchantView.targetName(entry.target, entry.row)
     self.seen[entry.target] = #results
-    self.why[entry.target] = self:whyNot(entry, band, results, level)
+    self.why[entry.target] = ns.Sniper.why(band, results, max, level)
     local near = ns.Sniper.near(band, results, max, level)
     for _, e in ipairs(near) do
       local auctionAPI = self.addon.auctionAPI

@@ -9,6 +9,17 @@ AuctionAPI.__index = AuctionAPI
 
 AuctionAPI.TIMEOUT = 120
 
+-- How often the replicate list is checked directly, in case the update event never comes.
+AuctionAPI.POLL = 1
+
+-- Auction house events watched during a scan, only to report what the client did when a
+-- scan fails. Unknown events are skipped (RegisterEvent errors on them).
+AuctionAPI.TRACE_EVENTS = {
+  "REPLICATE_ITEM_LIST_UPDATE", "AUCTION_HOUSE_THROTTLED_SYSTEM_READY", "AUCTION_HOUSE_THROTTLED_MESSAGE_SENT",
+  "AUCTION_HOUSE_THROTTLED_MESSAGE_QUEUED", "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED",
+  "AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED", "AUCTION_HOUSE_BROWSE_FAILURE", "UI_ERROR_MESSAGE",
+}
+
 -- Maps (uiMapID) whose only auction house is a neutral one: Tanaris (Gadgetzan),
 -- Stranglethorn Vale (Booty Bay) and Winterspring (Everlook).
 AuctionAPI.NEUTRAL_MAPS = { [1446] = "Gadgetzan", [1434] = "Booty Bay", [1452] = "Everlook" }
@@ -17,7 +28,7 @@ AuctionAPI.NEUTRAL_MAPS = { [1446] = "Gadgetzan", [1434] = "Booty Bay", [1452] =
 function AuctionAPI.new(env)
   local self = setmetatable({ env = env }, AuctionAPI)
   self.events = env.CreateFrame("Frame")
-  self.events:SetScript("OnEvent", function(_, event) self:onEvent(event) end)
+  self.events:SetScript("OnEvent", function(_, event, ...) self:onEvent(event, ...) end)
   self.events:RegisterEvent("AUCTION_HOUSE_SHOW")
   self.events:RegisterEvent("AUCTION_HOUSE_CLOSED")
   return self
@@ -88,30 +99,75 @@ function AuctionAPI:scan(onDone)
   if not (C and C.ReplicateItems and C.GetNumReplicateItems and C.GetReplicateItemInfo) then
     return false, "This client can't do a full scan (C_AuctionHouse.ReplicateItems is missing)."
   end
-  local pending = { onDone = onDone, started = self:now() }
+  -- The client keeps the last replicate list, so remember its size: polling only accepts a
+  -- list that differs from it, never an old one left over from an earlier or throttled scan.
+  local pending = { onDone = onDone, started = self:now(), seen = {}, order = {}, first = {}, unknown = {},
+    before = try(C.GetNumReplicateItems) or 0, stable = 0 }
   self.pending = pending
-  self.events:RegisterEvent("REPLICATE_ITEM_LIST_UPDATE")
+  for _, event in ipairs(AuctionAPI.TRACE_EVENTS) do
+    if not pcall(self.events.RegisterEvent, self.events, event) then pending.unknown[#pending.unknown + 1] = event end
+  end
   local ok, err = pcall(C.ReplicateItems)
   if not ok then
     self:finish(nil, "The auction house refused the scan: " .. tostring(err))
     return false, "The auction house refused the scan: " .. tostring(err)
   end
   if self.env.C_Timer then
+    self:poll(pending)
     self.env.C_Timer.After(AuctionAPI.TIMEOUT, function()
       if self.pending == pending then
         self:finish(nil, "No reply from the auction house after " .. AuctionAPI.TIMEOUT
-          .. " seconds. Full scans may be limited to one every 15 minutes; try again later.")
+          .. " seconds. Full scans may be limited to one every 15 minutes; try again later. "
+          .. self:diagnosis(pending))
       end
     end)
   end
   return true
 end
 
+-- What the client did during a failed scan, for the self-test.
+function AuctionAPI:diagnosis(pending)
+  local events = {}
+  for _, event in ipairs(pending.order) do
+    local first = pending.first[event]
+    events[#events + 1] = event .. " x" .. pending.seen[event] .. (first and (" (" .. first .. ")") or "")
+  end
+  return string.format("(replicate list: %s listings before, %s now; events: %s; not in this client: %s)",
+    tostring(pending.before), tostring(try(self.env.C_AuctionHouse.GetNumReplicateItems)),
+    #events > 0 and table.concat(events, ", ") or "none",
+    #pending.unknown > 0 and table.concat(pending.unknown, ", ") or "none")
+end
+
+-- Fallback for clients that fill the replicate list without firing REPLICATE_ITEM_LIST_UPDATE:
+-- read it once its size is non-zero, differs from the size before the scan, and has stayed the
+-- same for two polls in a row.
+function AuctionAPI:poll(pending)
+  self.env.C_Timer.After(AuctionAPI.POLL, function()
+    if self.pending ~= pending then return end
+    local n = try(self.env.C_AuctionHouse.GetNumReplicateItems) or 0
+    if n > 0 and n ~= pending.before and n == pending.lastCount then
+      pending.stable = pending.stable + 1
+      if pending.stable >= 2 then return self:complete("polling") end
+    else
+      pending.stable = 0
+    end
+    pending.lastCount = n
+    self:poll(pending)
+  end)
+end
+
 function AuctionAPI:finish(listings, info)
   local pending = self.pending
   self.pending = nil
-  self.events:UnregisterEvent("REPLICATE_ITEM_LIST_UPDATE")
+  for _, event in ipairs(AuctionAPI.TRACE_EVENTS) do pcall(self.events.UnregisterEvent, self.events, event) end
   if pending and pending.onDone then pending.onDone(listings, info) end
+end
+
+function AuctionAPI:complete(via)
+  local listings, info = self:readReplicate()
+  info.seconds = self:now() - self.pending.started
+  info.via = via
+  self:finish(listings, info)
 end
 
 -- Reads the replicate list. Indices start at 0. The return order follows
@@ -141,7 +197,7 @@ function AuctionAPI:readReplicate()
   return listings, { listings = #listings, incomplete = incomplete, skipped = skipped }
 end
 
-function AuctionAPI:onEvent(event)
+function AuctionAPI:onEvent(event, ...)
   if event == "AUCTION_HOUSE_SHOW" then
     self.open = true
     return
@@ -150,10 +206,21 @@ function AuctionAPI:onEvent(event)
     if self.pending then self:finish(nil, "The auction house closed before the scan finished.") end
     return
   end
-  if event ~= "REPLICATE_ITEM_LIST_UPDATE" or not self.pending then return end
-  local listings, info = self:readReplicate()
-  info.seconds = self:now() - self.pending.started
-  self:finish(listings, info)
+  local pending = self.pending
+  if not pending then return end
+  if not pending.seen[event] then
+    pending.order[#pending.order + 1] = event
+    -- Keep the first text argument (for example a UI error message) to tell events apart.
+    for i = 1, select("#", ...) do
+      local arg = select(i, ...)
+      if type(arg) == "string" and arg ~= "" then
+        pending.first[event] = arg
+        break
+      end
+    end
+  end
+  pending.seen[event] = (pending.seen[event] or 0) + 1
+  if event == "REPLICATE_ITEM_LIST_UPDATE" then self:complete("event") end
 end
 
 -- Runs a scan of the current market into the price database and keeps a report for the
@@ -171,8 +238,8 @@ function AuctionAPI.scanIntoPrices(addon, onDone)
     local first = listings[1]
     addon.lastScanReport = {
       ok = true,
-      detail = string.format("%d listings, %d items, %d without full info, %d unreadable, %ds; first: %s",
-        info.listings, items, info.incomplete, info.skipped, info.seconds,
+      detail = string.format("%d listings, %d items, %d without full info, %d unreadable, %ds via %s; first: %s",
+        info.listings, items, info.incomplete, info.skipped, info.seconds, info.via or "?",
         first and string.format("%s x%s for %s", tostring(first.name or first.item), tostring(first.count),
           tostring(first.buyout)) or "none"),
     }

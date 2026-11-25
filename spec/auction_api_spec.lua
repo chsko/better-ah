@@ -87,7 +87,8 @@ describe("AuctionAPI", function()
     env.runTimers()
     local r = check(ns, env, "Full scan")
     assert.equal("pass", r.status)
-    assert.equal("1 listings, 1 items, 0 without full info, 0 unreadable, 0s; first: Linen Cloth x20 for 4000",
+    assert.equal("1 listings, 1 items, 0 without full info, 0 unreadable, 0s via event; "
+      .. "first: Linen Cloth x20 for 4000",
       r.detail)
     assert.equal("pass", check(ns, env, "Market key").status)
     assert.equal("\"/1/Horde\" (ruleset 1, Horde)", check(ns, env, "Market key").detail)
@@ -108,13 +109,64 @@ describe("AuctionAPI", function()
     local env, api, ns = setup()
     env.replicateSilent = true
     local result
+    env.auctions = {}
     ns.AuctionAPI.scanIntoPrices(ns, function(ok, message) result = { ok, message } end)
-    env.runTimers()
+    env.runTimers(119)
+    assert.is_nil(result, "still waiting just before the timeout")
+    env.fire("UI_ERROR_MESSAGE", 51, "Too many requests")
+    env.fire("UI_ERROR_MESSAGE", 51, "Something else")
+    env.runTimers(1)
     assert.is_false(result[1])
     assert.matches("No reply from the auction house after 120 seconds", result[2])
+    assert.matches("(replicate list: 0 listings before, 0 now; events: UI_ERROR_MESSAGE x2 (Too many requests); "
+      .. "not in this client: none)", result[2], 1, true)
     assert.is_nil(api.pending)
     assert.equal("fail", check(ns, env, "Full scan").status)
     assert.is_true(api:scan(function() end), "a new scan can start after a timeout")
+  end)
+
+  it("reads the replicate list once it stops growing when the update event never comes", function()
+    local env, _, ns = setup()
+    env.replicateSilent = true
+    env.auctions = { { name = "Linen Cloth", count = 20, buyout = 4000, itemID = 2589 } }
+    local result
+    ns.AuctionAPI.scanIntoPrices(ns, function(ok, message) result = { ok, message } end)
+    env.runTimers(2)
+    assert.is_nil(result, "two polls can't tell the list has stopped growing")
+    env.runTimers(1)
+    assert.same({ true, "Scanned 1 listings of 1 items in 3 seconds." }, result)
+    assert.matches("via polling", ns.lastScanReport.detail)
+  end)
+
+  it("never takes a replicate list left over from an earlier scan as a new one", function()
+    local env, _, ns = setup()
+    env.auctions = { { name = "Linen Cloth", count = 20, buyout = 4000, itemID = 2589 } }
+    ns.AuctionAPI.scanIntoPrices(ns, function() end)
+    env.runTimers()
+    local first = ns.prices:lastScan("/1/Horde")
+    env.replicateSilent = true
+    local result
+    ns.AuctionAPI.scanIntoPrices(ns, function(ok, message) result = { ok, message } end)
+    env.runTimers(120)
+    assert.is_false(result[1])
+    assert.matches("1 listings before, 1 now", result[2], 1, true)
+    assert.equal(first, ns.prices:lastScan("/1/Horde"), "the old list was not stored again")
+  end)
+
+  it("names trace events this client doesn't have", function()
+    local env, _, ns = setup()
+    env.replicateSilent = true
+    local register = env.CreateFrame("Frame").RegisterEvent
+    for _, f in ipairs(env.frames) do
+      f.RegisterEvent = function(frame, event)
+        if event == "AUCTION_HOUSE_BROWSE_FAILURE" then error("unknown event") end
+        return register(frame, event)
+      end
+    end
+    local result
+    ns.AuctionAPI.scanIntoPrices(ns, function(ok, message) result = { ok, message } end)
+    env.runTimers(120)
+    assert.matches("not in this client: AUCTION_HOUSE_BROWSE_FAILURE)", result[2], 1, true)
   end)
 
   it("ignores a late reply after a timeout", function()
@@ -122,7 +174,7 @@ describe("AuctionAPI", function()
     env.replicateSilent = true
     local calls = 0
     ns.AuctionAPI.scanIntoPrices(ns, function() calls = calls + 1 end)
-    env.runTimers()
+    env.runTimers(120)
     env.fire("REPLICATE_ITEM_LIST_UPDATE")
     assert.equal(1, calls)
   end)

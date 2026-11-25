@@ -34,6 +34,25 @@ busted
 Things that need the real client (frames, events, AH queries) cannot be tested here. Say so in the
 issue or commit, and describe how to verify in game.
 
+## Working rules
+
+These come from the repo owner (`chsko`) and apply to everything we do, by any agent or person. They
+override any skill that says otherwise.
+
+- **Every change is based on a GitHub issue.** If the work has no issue yet, file one first. (Convention:
+  branch as `issue-<n>-<slug>`.)
+- **Conventional Commits** (https://www.conventionalcommits.org), for example `feat(selftest): add probe`
+  or `docs: add working rules`.
+- **Every commit references the issue being worked on**, for example `Refs #12`, or `Closes #12` on the
+  commit that finishes it.
+- **Adversarial review of every change first**, before it is committed or opened as a PR. In environments
+  with the Codex-based `adversarial-review` plugin, use `/adversarial-review`. Otherwise give the diff, the
+  issue and this file to a fresh reviewer agent told to find real defects and mark each finding blocking or
+  non-blocking. Fix every blocking finding before committing.
+- **Never merge, always rebase.** Pull requests land with "Rebase and merge", never a merge commit or a
+  squash. Locally, integrate with `git rebase` or `git pull --rebase`, never `git merge`. This overrides the
+  merge steps in `/implement-spec`.
+
 ## How we use the main flow
 
 `/grill-with-docs` -> `/prototype` (whenever a question needs a runnable answer) -> `/to-spec` -> `/to-tickets`

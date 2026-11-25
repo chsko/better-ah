@@ -2,7 +2,7 @@ local helper = require("spec.helper")
 
 describe("PriceDB", function()
   local PriceDB = helper.load("BetterAH/Core/PriceDB.lua").PriceDB
-  local A, B = "|1|Horde", "|1|Alliance"
+  local A, B = "/1/Horde", "/1/Alliance"
 
   local function linen(count, buyout)
     return { item = "i:2589", name = "Linen Cloth", count = count, buyout = buyout }

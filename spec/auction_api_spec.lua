@@ -23,14 +23,14 @@ end
 describe("AuctionAPI", function()
   it("builds the market key from ruleset and faction when the realm name is empty", function()
     local env, _, ns = setup()
-    assert.equal("|1|Horde", ns.AuctionAPI.currentMarket(env))
+    assert.equal("/1/Horde", ns.AuctionAPI.currentMarket(env))
   end)
 
   it("keeps the same key whatever realm sources answer (ADR 0005)", function()
     local env, _, ns = setup()
     env.UnitGUID = function() return "Player-4701-0ABC1234" end
     env.GetNormalizedRealmName = function() return "Firemaw" end
-    assert.equal("|1|Horde", ns.AuctionAPI.currentMarket(env))
+    assert.equal("/1/Horde", ns.AuctionAPI.currentMarket(env))
     local r = check(ns, env, "Realm sources")
     assert.equal("GetNormalizedRealmName=Firemaw, GetRealmName=(empty), UnitGUID server id=4701", r.detail)
   end)
@@ -38,18 +38,18 @@ describe("AuctionAPI", function()
   it("gives each ruleset its own market", function()
     local env, _, ns = setup()
     env.gameMode = 2
-    assert.equal("|2|Horde", ns.AuctionAPI.currentMarket(env))
+    assert.equal("/2/Horde", ns.AuctionAPI.currentMarket(env))
   end)
 
   it("treats Gadgetzan, Booty Bay and Everlook as the neutral market", function()
     local env, _, ns = setup()
     for map, house in pairs({ [1446] = "Gadgetzan", [1434] = "Booty Bay", [1452] = "Everlook" }) do
       env.C_Map = { GetBestMapForUnit = function() return map end }
-      assert.equal("|1|Neutral", ns.AuctionAPI.currentMarket(env))
+      assert.equal("/1/Neutral", ns.AuctionAPI.currentMarket(env))
       assert.equal("map " .. map .. ": " .. house, check(ns, env, "Neutral auction house").detail)
     end
     env.C_Map = { GetBestMapForUnit = function() return 1454 end }
-    assert.equal("|1|Horde", ns.AuctionAPI.currentMarket(env), "Orgrimmar is the Horde market")
+    assert.equal("/1/Horde", ns.AuctionAPI.currentMarket(env), "Orgrimmar is the Horde market")
   end)
 
   it("has no market while the faction is unknown", function()
@@ -72,11 +72,11 @@ describe("AuctionAPI", function()
     env.now = env.now + 7
     env.runTimers()
     assert.same({ true, "Scanned 3 listings of 2 items in 7 seconds." }, result)
-    local items = ns.prices:items("|1|Horde")
+    local items = ns.prices:items("/1/Horde")
     assert.equal(2, #items)
     assert.same({ "Linen Cloth", 80, 25 }, { items[2].name, items[2].lowest, items[2].quantity })
     assert.equal("i:2592", items[1].item)
-    assert.equal(env.now, ns.prices:lastScan("|1|Horde"))
+    assert.equal(env.now, ns.prices:lastScan("/1/Horde"))
   end)
 
   it("reports the scan in the self-test", function()
@@ -90,6 +90,7 @@ describe("AuctionAPI", function()
     assert.equal("1 listings, 1 items, 0 without full info, 0 unreadable, 0s; first: Linen Cloth x20 for 4000",
       r.detail)
     assert.equal("pass", check(ns, env, "Market key").status)
+    assert.equal("\"/1/Horde\" (ruleset 1, Horde)", check(ns, env, "Market key").detail)
     assert.equal("GetNormalizedRealmName=(empty), GetRealmName=(empty), UnitGUID server id=(empty)",
       check(ns, env, "Realm sources").detail)
   end)

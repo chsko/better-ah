@@ -178,7 +178,7 @@ describe("Commands", function()
     helper.load("BetterAH/Core/Commands.lua", ns)
     ns.Probes.suite().checks = {}
     ns.Probes.suite():add("Only", function() return "pass", "ran" end)
-    return printed
+    return printed, ns
   end
 
   after_each(function() _G.SlashCmdList, _G.DEFAULT_CHAT_FRAME, _G.SLASH_BETTERAH1 = nil, nil, nil end)
@@ -193,6 +193,14 @@ describe("Commands", function()
     local printed = setup()
     _G.SlashCmdList.BETTERAH("  SELFTEST ")
     assert.matches("%[PASS%] Only: ran", printed[1])
+  end)
+
+  it("escapes | in check details so chat prints them as written", function()
+    local printed, ns = setup()
+    ns.Probes.suite().checks = {}
+    ns.Probes.suite():add("Key", function() return "pass", "/1/Horde or |1|Horde" end)
+    _G.SlashCmdList.BETTERAH("selftest")
+    assert.equal("|cfff2c94cBetter AH|r [PASS] Key: /1/Horde or ||1||Horde", printed[1])
   end)
 
   it("shows help for an empty or unknown command", function()

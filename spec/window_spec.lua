@@ -245,7 +245,7 @@ describe("Window", function()
 
     it("shows only the current market's items", function()
       local env, w, ns = setup()
-      ns.prices:recordScan("|1|Alliance", env.now, { { item = "i:1", name = "Elsewhere", count = 1, buyout = 1 } })
+      ns.prices:recordScan("/1/Alliance", env.now, { { item = "i:1", name = "Elsewhere", count = 1, buyout = 1 } })
       env.openAuctionHouse()
       w:select("prices")
       assert.same({ "", "", "", "" }, rowText(w, 1))
@@ -253,7 +253,7 @@ describe("Window", function()
 
     it("shows the last scan time when coming back later", function()
       local env, w, ns = setup()
-      ns.prices:recordScan("|1|Horde", env.now - 600, { { item = "i:1", name = "Thing", count = 1, buyout = 1 } })
+      ns.prices:recordScan("/1/Horde", env.now - 600, { { item = "i:1", name = "Thing", count = 1, buyout = 1 } })
       env.openAuctionHouse()
       w:select("prices")
       assert.equal("1 items. Last scan of ruleset 1, Horde: 10 min ago.", w.scanStatus:GetText())
@@ -266,7 +266,7 @@ describe("Window", function()
       for i = 1, 20 do
         listings[i] = { item = "i:" .. i, name = string.format("Item %02d", i), count = 1, buyout = i }
       end
-      ns.prices:recordScan("|1|Horde", env.now, listings)
+      ns.prices:recordScan("/1/Horde", env.now, listings)
       env.openAuctionHouse()
       w:select("prices")
       w.pricesPanel.scripts.OnMouseWheel(w.pricesPanel, -1)

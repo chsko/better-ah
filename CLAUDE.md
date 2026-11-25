@@ -34,6 +34,17 @@ busted
 Things that need the real client (frames, events, AH queries) cannot be tested here. Say so in the
 issue or commit, and describe how to verify in game.
 
+## How we use the main flow
+
+`/grill-with-docs` -> `/prototype` (whenever a question needs a runnable answer) -> `/to-spec` -> `/to-tickets`
+-> `/implement` or `/implement-spec` -> `/retro`.
+
+- Take the `/prototype` detour whenever a question is hard to settle on paper, and always for new UI:
+  sketch the screen first (an HTML mockup is fine for layout, then a throwaway in-game frame on a
+  `prototype/<name>` branch to check it fits the WoW client), and link the prototype from the spec.
+- UI review: before a UI ticket is closed, review an in-game screenshot for hierarchy, consistency and
+  readability (design-critique), and check button labels, tooltips and error text (ux-copy).
+
 ## Agent skills
 
 ### Issue tracker

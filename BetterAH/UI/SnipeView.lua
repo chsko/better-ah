@@ -258,7 +258,7 @@ function SnipeView:start()
   SnipeView.file(db, self:now())
   db.session = {}
   self.session = ns.Sniper.Session.new(db.session, self:now())
-  self.running, self.message, self.lastCheck, self.near = true, nil, nil, {}
+  self.running, self.message, self.lastCheck, self.near, self.lastResults = true, nil, nil, {}, nil
   self.run = {} -- this run's identity: late answers from an earlier run are dropped
   self:refresh()
   self:tick(self.run)
@@ -336,8 +336,13 @@ function SnipeView:tick(run)
       end
       return maxOf[itemID] or nil
     end
+    local function level(itemID)
+      local info = self.addon.auctionAPI and self.addon.auctionAPI:itemInfo("i:" .. itemID)
+      return info and info.level
+    end
     local name = ns.DisenchantView.targetName(entry.target, entry.row)
-    local near = ns.Sniper.near(band, results, max)
+    self.lastResults = #results
+    local near = ns.Sniper.near(band, results, max, level)
     for _, e in ipairs(near) do
       local auctionAPI = self.addon.auctionAPI
       e.name = auctionAPI and auctionAPI:itemName("i:" .. e.itemKey.itemID) or ("item " .. e.itemKey.itemID)
@@ -345,7 +350,7 @@ function SnipeView:tick(run)
     end
     self.near[entry.target] = near
     local candidates = ns.Sniper.candidates(band, results, max,
-      function(key, minPrice) return self.session:fresh(key, minPrice, self:now()) end)
+      function(key, minPrice) return self.session:fresh(key, minPrice, self:now()) end, level)
     local left = #candidates
     if left == 0 then
       self:refresh()
@@ -439,7 +444,9 @@ function SnipeView:renderNear()
   end
   if self.running then
     local finds = self.session and self.session.finds or {}
-    self.hint:SetText(#near == 0 and "Nothing in your bands on the auction house yet."
+    self.hint:SetText(#near == 0 and (self.lastResults and string.format(
+      "Last check: %d green%s listed, none in the band with a known worth.", self.lastResults,
+      self.lastResults == 1 and "" or "s") or "Waiting for the first check.")
       or #finds > 0 and "Turn the mouse wheel over this tab to buy the next find."
       or "From the last check of each target.")
   else

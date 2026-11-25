@@ -44,6 +44,19 @@ describe("Sniper", function()
     assert.same({}, Sniper.candidates(band, nil, maxOf))
   end)
 
+  it("reads the item level from the item's details when the key has none", function()
+    local results = { { itemKey = { itemID = 1, itemLevel = 0 }, minPrice = 500 },
+      { itemKey = { itemID = 2, itemLevel = 0 }, minPrice = 600 }, { itemKey = { itemID = 3 }, minPrice = 700 } }
+    local maxOf = function() return 1000 end
+    local levels = { [1] = 28, [2] = 40 }
+    local function levelOf(id) return levels[id] end
+    assert.equal(0, #Sniper.candidates(band, results, maxOf), "no level, no guess")
+    local out = Sniper.candidates(band, results, maxOf, nil, levelOf)
+    assert.equal(1, #out)
+    assert.equal(1, out[1].itemKey.itemID)
+    assert.equal(1, #Sniper.near(band, results, maxOf, levelOf))
+  end)
+
   it("lists the results nearest their max price, buyable ones first", function()
     local function result(id, level, price)
       return { itemKey = { itemID = id, itemLevel = level }, minPrice = price }

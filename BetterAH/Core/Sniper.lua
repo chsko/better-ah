@@ -46,15 +46,25 @@ function Sniper.browseQuery(target, band)
     filters = { Sniper.UNCOMMON_FILTER }, itemClassFilters = filters, sorts = Sniper.PRICE_SORT }
 end
 
+-- A browse result's item level: from its item key, or, where the client leaves that 0 (Classic-style
+-- auction houses show required level instead), from levelOf(itemID), the item's own details.
+local function levelOf(key, fallback)
+  local level = key and tonumber(key.itemLevel)
+  if (not level or level <= 0) and key and fallback then level = tonumber(fallback(key.itemID)) end
+  if level and level > 0 then return level end
+  return nil
+end
+
 -- Browse results worth a closer look: in the target's item level band (required level only roughly
 -- follows it), with a cheapest price at or under the most to pay. maxOf(itemID) gives that most (nil:
 -- not worth anything known). skip(itemKey, minPrice), optional, leaves out results looked up lately
--- with nothing cheaper since. Cheapest first, at most LOOKUPS_PER_ROUND.
-function Sniper.candidates(band, results, maxOf, skip)
+-- with nothing cheaper since. levelFallback(itemID), optional, gives the item level when the key has
+-- none. Cheapest first, at most LOOKUPS_PER_ROUND.
+function Sniper.candidates(band, results, maxOf, skip, levelFallback)
   local out = {}
   for _, r in ipairs(results or {}) do
     local key = r.itemKey
-    local level = key and tonumber(key.itemLevel)
+    local level = levelOf(key, levelFallback)
     local max = key and maxOf(key.itemID)
     if level and level >= band.min and level <= band.max and max and max > 0 and (r.minPrice or 0) > 0
       and r.minPrice <= max and not (skip and skip(key, r.minPrice)) then
@@ -68,11 +78,11 @@ end
 
 -- Every browse result in the band with a known max price, as { itemKey, minPrice, max, delta }: delta is
 -- how far the cheapest is under the max (negative: over it). For the "closest to your max prices" list.
-function Sniper.near(band, results, maxOf)
+function Sniper.near(band, results, maxOf, levelFallback)
   local out = {}
   for _, r in ipairs(results or {}) do
     local key = r.itemKey
-    local level = key and tonumber(key.itemLevel)
+    local level = levelOf(key, levelFallback)
     local max = key and maxOf(key.itemID)
     if level and level >= band.min and level <= band.max and max and max > 0 and (r.minPrice or 0) > 0 then
       out[#out + 1] = { itemKey = key, minPrice = r.minPrice, max = max, delta = max - r.minPrice }

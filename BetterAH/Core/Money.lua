@@ -27,5 +27,28 @@ function Money.format(copper)
   return table.concat(parts, " ")
 end
 
+-- The most a typed amount may be: the auction house's own limit of 9,999,999g 99s 99c.
+Money.MAX = 99999999999
+
+-- Read what a player typed as a copper amount: "12g 3s 4c", "3s", "1g5s", or a bare number of copper.
+-- Returns nil for anything else.
+function Money.parse(text)
+  if type(text) ~= "string" then return nil end
+  text = text:lower():gsub("%s+", "")
+  if text == "" then return nil end
+  if text:match("^%d+$") then return tonumber(text) end
+  local total, rest = 0, text
+  for _, unit in ipairs({ { "g", COPPER_PER_GOLD }, { "s", COPPER_PER_SILVER }, { "c", 1 } }) do
+    local n, after = rest:match("^(%d+)" .. unit[1] .. "(.*)$")
+    if n then
+      total = total + tonumber(n) * unit[2]
+      rest = after
+    end
+  end
+  if rest ~= "" or total == 0 and not text:match("^0") then return nil end
+  if total > Money.MAX then return nil end
+  return total
+end
+
 ns.Money = Money
 return Money

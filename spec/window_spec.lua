@@ -4,15 +4,20 @@ local fake = require("spec.fake_client")
 local function setup(opts)
   local env = fake.new(opts)
   local ns = helper.load("BetterAH/Core/WindowModel.lua")
-  local core = { "Money", "Time", "MarketKey", "MarketValue", "PriceDB", "CharacterRecords", "SelfTest", "Probes" }
+  local core = { "Money", "Time", "MarketKey", "MarketValue", "PriceDB", "CharacterRecords", "Posting", "PostQueue",
+    "SelfTest", "Probes" }
   for _, file in ipairs(core) do
     helper.load("BetterAH/Core/" .. file .. ".lua", ns)
   end
   helper.load("BetterAH/Game/AuctionAPI.lua", ns)
+  helper.load("BetterAH/Game/PostingAPI.lua", ns)
+  helper.load("BetterAH/UI/PostView.lua", ns)
   helper.load("BetterAH/UI/Window.lua", ns)
   ns.prices = ns.PriceDB.new({})
   ns.characters = ns.CharacterRecords.new({})
+  ns.posting = ns.Posting.Settings.new({})
   ns.AuctionAPI.install(env, ns)
+  ns.PostingAPI.install(env, ns)
   if opts and opts.tracker then
     helper.load("BetterAH/Game/CharacterTracker.lua", ns)
     ns.CharacterTracker.install(env, ns)
@@ -73,7 +78,7 @@ describe("Window", function()
     env.openAuctionHouse()
     for id in pairs(w.buttons) do
       w:select(id)
-      if id ~= "prices" then assert.is_truthy((w.placeholder:GetText() or ""):find("%w"), id) end
+      if w.placeholder:IsShown() then assert.is_truthy((w.placeholder:GetText() or ""):find("%w"), id) end
     end
   end)
 
@@ -486,6 +491,216 @@ describe("Window", function()
       w:select("alts")
       env.fire("BAG_UPDATE_DELAYED")
       assert.same({ "Linen Cloth", "5", "1" }, altRow(w, 1))
+    end)
+  end)
+
+  describe("Post", function()
+    local linen = { itemID = 2589, count = 20, name = "Linen Cloth" }
+
+    local function cells(w, r)
+      local out = {}
+      for c, cell in ipairs(w.postView.rows[r]) do out[c] = cell:GetText() end
+      return out
+    end
+
+    local function postSetup()
+      local env, w, ns = setup()
+      env.containers[0] = { linen, { itemID = 2589, count = 20, name = "Linen Cloth" },
+        { itemID = 2592, count = 3, name = "Wool Cloth" }, { itemID = 4306, count = 10, name = "Silk Cloth" } }
+      env.listings[2589] = { { unitPrice = 950, quantity = 40 } }
+      env.listings[2592] = { { unitPrice = 500, quantity = 20 } }
+      env.listings[4306] = {}
+      ns.prices:importPrices("/1/Horde", env.now, { ["i:2589"] = { value = 1000 }, ["i:2592"] = { value = 1000 },
+        ["i:4306"] = { value = 2000 } })
+      ns.posting:setProfile("i:2589", 20, 2)
+      ns.posting:setProfile("i:2592", 20, 2)
+      return env, w, ns
+    end
+
+    it("is the first view, and checks the price of each item in the bags", function()
+      local env, w = postSetup()
+      env.openAuctionHouse()
+      assert.is_true(w.postPanel:IsShown())
+      assert.is_false(w.placeholder:IsShown())
+      assert.equal("3 items in your bags.", w.postView.status:GetText())
+      assert.same({ "Linen Cloth", "40", "9s 49c", "8s 0c", "Ready: 2 x 20" }, cells(w, 1))
+      assert.same({ "Silk Cloth", "10", "20s 0c", "16s 0c", "Needs setup" }, cells(w, 2))
+      assert.same({ "Wool Cloth", "3", "", "8s 0c", "Below floor" }, cells(w, 3))
+      assert.equal("Post next: Linen Cloth, 20 for 9s 49c each", w.postView.postButton:GetText())
+    end)
+
+    it("posts one auction per click and moves on as the bags empty", function()
+      local env, w = postSetup()
+      env.openAuctionHouse()
+      env.runTimers()
+      w.postView.postButton:Click()
+      assert.same({ kind = "commodity", loc = { bag = 0, slot = 1 }, duration = 2, quantity = 20, price = 949 },
+        env.posts[1])
+      assert.equal("Posting...", w.postView.postButton:GetText())
+      w.postView.postButton:Click()
+      assert.equal(1, #env.posts, "no second post before the game and the bags answer")
+      env.containers[0][1] = false
+      env.runTimers() -- the auction is created, and Linen Cloth is checked again
+      env.fire("BAG_UPDATE_DELAYED")
+      env.runTimers()
+      assert.equal(4, #env.searches, "Linen Cloth checked again before its next post")
+      assert.same({ "Linen Cloth", "20", "9s 49c", "8s 0c", "Ready: 1 x 20" }, cells(w, 1))
+      w.postView.postButton:Click()
+      assert.same({ bag = 0, slot = 2 }, env.posts[2].loc)
+      env.containers[0][2] = false
+      env.runTimers()
+      env.fire("BAG_UPDATE_DELAYED")
+      env.runTimers()
+      assert.equal("Nothing ready to post", w.postView.postButton:GetText())
+      assert.is_false(w.postView.postButton:IsEnabled())
+    end)
+
+    it("shows the price checks in progress", function()
+      local env, w = postSetup()
+      env.searchSilent = true
+      env.openAuctionHouse()
+      assert.equal("Checking prices: 0 of 3 items", w.postView.status:GetText())
+      assert.equal("Checking...", cells(w, 1)[5])
+      assert.equal("Checking prices...", w.postView.postButton:GetText())
+      env.runTimers(10)
+      assert.equal("Not checked", cells(w, 1)[5])
+      w.postView.rows[1].button:Click()
+      assert.equal("Couldn't check the price: no answer from the auction house.", w.detailBody:GetText())
+    end)
+
+    it("asks for a second click when the game wants the post confirmed", function()
+      local env, w = postSetup()
+      env.needsConfirmation = true
+      env.openAuctionHouse()
+      env.runTimers()
+      w.postView.postButton:Click()
+      assert.equal("Confirm post: Linen Cloth, 20 for 9s 49c each", w.postView.postButton:GetText())
+      w.postView.postButton:Click()
+      assert.equal("confirm commodity", env.posts[2].kind)
+    end)
+
+    it("skips an item for this visit", function()
+      local env, w = postSetup()
+      env.openAuctionHouse()
+      env.runTimers()
+      w.postView.skipButton:Click()
+      assert.equal("Skipped", cells(w, 1)[5])
+      assert.equal("Nothing ready to post", w.postView.postButton:GetText())
+      env.CloseAuctionHouse()
+      env.openAuctionHouse()
+      env.runTimers()
+      assert.equal("Ready: 2 x 20", cells(w, 1)[5], "a new visit forgets it")
+    end)
+
+    it("explains the price and saves a posting profile from the detail panel", function()
+      local env, w, ns = postSetup()
+      env.openAuctionHouse()
+      env.runTimers()
+      w.postView.rows[1].button:Click()
+      assert.equal("Linen Cloth", w.detailTitle:GetText())
+      assert.equal(table.concat({
+        "The cheapest other listing is 9s 50c each, so this posts at 9s 49c, 1 copper under it.",
+        "Your floor is 8s 0c (80% of the 10s 0c market value).", "", "2 stacks of 20 post.",
+      }, "\n"), w.detailBody:GetText())
+
+      w.postView.rows[2].button:Click()
+      assert.matches("first time you post this item", w.detailBody:GetText())
+      assert.is_true(w.postView.editor:IsShown())
+      assert.equal("10", w.postView.stackInput:GetText(), "all you have, with no competitors")
+      w.postView.stackInput:SetText("5")
+      w.postView.durationButtons[3]:Click()
+      w.postView.saveButton:Click()
+      assert.same({ stack = 5, duration = 3 }, ns.posting:profile("i:4306"))
+      assert.equal("Ready: 2 x 5", cells(w, 2)[5])
+      w.postView.stackInput:SetText("0")
+      w.postView.saveButton:Click()
+      assert.equal("Stack size must be a whole number of 1 or more.", w.postView.editorStatus:GetText())
+    end)
+
+    it("sets a floor price per market from the detail panel", function()
+      local env, w, ns = postSetup()
+      env.openAuctionHouse()
+      env.runTimers()
+      w.postView.rows[3].button:Click()
+      assert.matches("below your floor of 8s 0c", w.detailBody:GetText())
+      w.postView.floorInput:SetText("4s")
+      w.postView.floorButton:Click()
+      assert.equal(400, ns.posting:floor("/1/Horde", "i:2592"))
+      assert.same({ "Wool Cloth", "3", "4s 99c", "4s 0c", "Ready: 1 x 3" }, cells(w, 3))
+      w.postView.floorInput:SetText("lots")
+      w.postView.floorButton:Click()
+      assert.equal("Type a price like 20s or 1g 5s, or leave it empty.", w.postView.editorStatus:GetText())
+      w.postView.floorInput:SetText("")
+      w.postView.floorButton:Click()
+      assert.is_nil(ns.posting:floor("/1/Horde", "i:2592"))
+    end)
+
+    it("never draws over another view when a price check or post answers late", function()
+      local env, w = postSetup()
+      env.searchSilent = true
+      env.openAuctionHouse()
+      w.postView.rows[1].button:Click()
+      w:select("prices")
+      local before = w.detailBody:GetText()
+      env.runTimers(10)
+      env.fire("AUCTION_HOUSE_AUCTION_CREATED", 1)
+      assert.equal(before, w.detailBody:GetText())
+      assert.is_false(w.postView.editor:IsShown())
+    end)
+
+    it("explains a first post against other sellers, and fills in the stack once the price is known", function()
+      local env, w = postSetup()
+      env.listings[4306] = { { unitPrice = 2100, quantity = 5 } }
+      env.searchSilent = true
+      env.openAuctionHouse()
+      w.postView.rows[2].button:Click()
+      env.searchSilent = false
+      env.runTimers(10) -- the silent checks time out
+      env.fire("BAG_UPDATE_DELAYED") -- and are tried again
+      env.runTimers()
+      assert.equal("Needs setup", cells(w, 2)[5])
+      assert.matches("The cheapest other listing is 21s 0c each, so this posts at 20s 99c", w.detailBody:GetText())
+      assert.equal("5", w.postView.stackInput:GetText(), "the most common competing stack")
+    end)
+
+    it("drops a pending confirmation when the floor changes", function()
+      local env, w = postSetup()
+      env.needsConfirmation = true
+      env.openAuctionHouse()
+      env.runTimers()
+      w.postView.postButton:Click()
+      w.postView.rows[1].button:Click()
+      w.postView.floorInput:SetText("10s")
+      w.postView.floorButton:Click()
+      assert.equal("Floor set to 10s 0c.", w.postView.editorStatus:GetText())
+      assert.equal("Below floor", cells(w, 1)[5])
+      assert.equal("Nothing ready to post", w.postView.postButton:GetText())
+      w.postView.postButton:Click()
+      assert.equal(1, #env.posts, "nothing confirmed below the new floor")
+    end)
+
+    it("keeps the leftovers in the bags once the full stacks are posted", function()
+      local env, w = postSetup()
+      env.containers[0][2] = { itemID = 2589, count = 5, name = "Linen Cloth" }
+      env.openAuctionHouse()
+      env.runTimers()
+      assert.equal("Ready: 1 x 20", cells(w, 1)[5])
+      w.postView.postButton:Click()
+      env.containers[0][1] = false
+      env.runTimers()
+      env.fire("BAG_UPDATE_DELAYED")
+      env.runTimers()
+      assert.equal("Leftover", cells(w, 1)[5])
+      assert.equal(1, #env.posts)
+    end)
+
+    it("hides the editor on other views and says when nothing can be posted", function()
+      local env, w = setup()
+      env.openAuctionHouse()
+      assert.equal("Nothing in your bags can be posted.", w.postView.status:GetText())
+      w:select("prices")
+      assert.is_false(w.postPanel:IsShown())
+      assert.is_false(w.postView.editor:IsShown())
     end)
   end)
 end)

@@ -61,10 +61,11 @@ describe("Posting", function()
       { unit = 1000, count = 1, ownCount = 1 },
     }
     local p = plan({ have = 50, marketValue = 1000, profile = false, listings = listings })
-    assert.same({ action = "profile", price = 999, floor = 800, suggested = { stack = 20, duration = 2 } }, p,
+    assert.same({ action = "profile", price = 999, floor = 800, undercut = 1000,
+      suggested = { stack = 20, duration = 3 } }, p,
       "the most common competing stack (ties go to the bigger) and 24 hours")
     assert.equal("skip", plan({ have = 50, profile = false, listings = listings }).action)
-    assert.same({ stack = 7, duration = 2 },
+    assert.same({ stack = 7, duration = 3 },
       plan({ have = 7, marketValue = 1, profile = false, listings = {} }).suggested, "no competitors: all you have")
     assert.equal(10, plan({ have = 50, marketValue = 1, maxStack = 10, profile = false, listings = {} })
       .suggested.stack, "never more than a stack holds")

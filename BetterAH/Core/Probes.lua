@@ -103,7 +103,7 @@ local function build()
     return "fail", "neither QueryAuctionItems nor C_AuctionHouse.SendBrowseQuery exists"
   end)
 
-  -- Posting durations are indices 1-3 into these labels; Better AH assumes 2 is 24 hours.
+  -- Posting durations are indices 1-3 into these labels; Better AH assumes 3 is 24 hours (2/8/24 on Forever).
   suite:add("Auction durations", function(env)
     local labels = {}
     for i, name in ipairs({ "AUCTION_DURATION_ONE", "AUCTION_DURATION_TWO", "AUCTION_DURATION_THREE" }) do

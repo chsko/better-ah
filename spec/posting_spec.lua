@@ -85,6 +85,17 @@ describe("Posting", function()
     end
   end)
 
+  it("prices in whole silver on a client without copper values", function()
+    local p = plan({ have = 20, marketValue = 100000, step = 100, listings = { { unit = 95050, count = 1 } } })
+    assert.same({ "post", 95000 }, { p.action, p.price })
+    local even = plan({ have = 20, marketValue = 100000, step = 100, listings = { { unit = 95000, count = 1 } } })
+    assert.equal(94900, even.price, "a whole silver below an even price")
+    assert.equal("skip", plan({ have = 20, marketValue = 1000, step = 100, listings = { { unit = 790, count = 1 } } })
+      .action, "7s, the silver below 7s 90c, is under the 8s floor")
+    assert.equal(1100, plan({ have = 20, marketValue = 1000, floor = 1050, step = 100, listings = {} }).price,
+      "no competition: the floor rounded up to silver")
+  end)
+
   it("never posts for 0 copper and skips when nothing is left", function()
     assert.equal(1, plan({ have = 1, floor = 1, listings = { { unit = 1, count = 1 } } }).price)
     assert.same({ action = "skip", reason = "none-left" }, plan({ have = 0, listings = {} }))

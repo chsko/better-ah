@@ -65,7 +65,8 @@ function Posting.floor(marketValue, ownFloor)
 end
 
 -- args: { have = units in bags, listings = {...}, marketValue = copper or nil, floor = own floor or nil,
---         profile = { stack, duration } or nil, maxStack = the item's stack size or nil }
+--         profile = { stack, duration } or nil, maxStack = the item's stack size or nil,
+--         step = the smallest price step the client takes, 1 copper (default) or 100 (whole silver) }
 -- Returns a plan, one of
 --   { action = "skip", reason = why, price, floor }      stays in the bags, where why is
 --     "none-left", "no-floor" (no market value and no own floor) or "below-floor"
@@ -78,15 +79,17 @@ function Posting.plan(args)
   if have <= 0 then return { action = "skip", reason = "none-left" } end
   local listings = args.listings or {}
 
+  local step = math.max(1, math.floor(tonumber(args.step) or 1))
   local floor = Posting.floor(args.marketValue, args.floor)
   local other = Posting.cheapestOther(listings)
   local price
   if other then
-    price = math.max(1, math.ceil(other) - 1)
+    -- The highest price step strictly below the competitor.
+    price = math.max(step, (math.ceil(other / step) - 1) * step)
   elseif args.marketValue and args.marketValue > 0 then
-    price = math.max(math.floor(args.marketValue), floor or 0)
+    price = math.max(math.floor(args.marketValue / step) * step, floor and math.ceil(floor / step) * step or 0, step)
   else
-    price = floor
+    price = floor and math.ceil(floor / step) * step
   end
   if not floor then return { action = "skip", price = price, reason = "no-floor" } end
   if price < floor then return { action = "skip", price = price, floor = floor, reason = "below-floor" } end

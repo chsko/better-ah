@@ -13,7 +13,9 @@ read_globals = {
   "QueryAuctionItems", "GetNumAuctionItems", "GetAuctionItemInfo", "GetAuctionItemLink",
   "CanSendAuctionQuery", "PostAuction", "StartAuction", "CancelAuction", "PlaceAuctionBid",
   "ClickAuctionSellItemButton", "GetAuctionSellItemInfo", "CalculateAuctionDeposit", "GetOwnerAuctionItems",
-  "DEFAULT_CHAT_FRAME", "UIParent",
+  "DEFAULT_CHAT_FRAME", "UIParent", "UISpecialFrames",
+  "AuctionFrame", "AuctionHouseFrame", "CloseAuctionHouse",
 }
 
 files["spec/"] = { std = "+busted" }
+files["spec/fake_client.lua"] = { self = false } -- stub methods ignore self

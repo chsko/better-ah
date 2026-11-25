@@ -1,0 +1,200 @@
+-- The Better AH window: native Forever frame templates and fonts (ADR 0002),
+-- driven by WindowModel. Thin on purpose; game wiring is checked in game and
+-- with the fake client in spec/window_spec.lua.
+local _, ns = ...
+ns = ns or {}
+
+local Window = {}
+
+local WIDTH, HEIGHT, SIDEBAR = 820, 470, 180
+local BLIZZARD_FRAMES = { "AuctionFrame", "AuctionHouseFrame" }
+
+-- env is the game's global table (_G in the client, a fake in specs).
+function Window.new(env, model)
+  local self = setmetatable({ env = env, model = model, buttons = {}, concealed = {} }, { __index = Window })
+  return self
+end
+
+function Window:blizzardFrame()
+  for _, name in ipairs(BLIZZARD_FRAMES) do
+    if self.env[name] then return self.env[name] end
+  end
+end
+
+-- Hide Blizzard's window without calling Hide(): its OnHide closes the
+-- auction house. It stays loaded, just invisible and out of the way.
+function Window:concealBlizzard()
+  local frame = self:blizzardFrame()
+  if not frame or self.concealed[frame] then return end
+  self.concealed[frame] = { alpha = frame:GetAlpha(), scale = frame:GetScale(), mouse = frame:IsMouseEnabled() }
+  frame:SetAlpha(0)
+  frame:SetScale(0.001)
+  frame:EnableMouse(false)
+end
+
+function Window:revealBlizzard()
+  local frame = self:blizzardFrame()
+  local saved = frame and self.concealed[frame]
+  if not saved then return end
+  frame:SetAlpha(saved.alpha)
+  frame:SetScale(saved.scale)
+  frame:EnableMouse(saved.mouse)
+  self.concealed[frame] = nil
+end
+
+function Window:closeAuctionHouse()
+  local env = self.env
+  if env.C_AuctionHouse and env.C_AuctionHouse.CloseAuctionHouse then
+    env.C_AuctionHouse.CloseAuctionHouse()
+  elseif env.CloseAuctionHouse then
+    env.CloseAuctionHouse()
+  end
+end
+
+function Window:build()
+  if self.frame then return self.frame end
+  local env = self.env
+  local f = env.CreateFrame("Frame", "BetterAHFrame", env.UIParent, "BasicFrameTemplateWithInset")
+  -- Claim the frame at once so a later error can't lead to a second one.
+  self.frame = f
+  f:SetSize(WIDTH, HEIGHT)
+  f:SetPoint("TOPLEFT", env.UIParent, "TOPLEFT", 16, -116)
+  f:SetFrameStrata("MEDIUM")
+  f:SetClampedToScreen(true)
+  f:SetMovable(true)
+  f:EnableMouse(true)
+  f:RegisterForDrag("LeftButton")
+  f:SetScript("OnDragStart", f.StartMoving)
+  f:SetScript("OnDragStop", f.StopMovingOrSizing)
+  f:Hide()
+  -- Escape or the close button hides us; while we are the active window that
+  -- means the player wants the auction house closed.
+  f:SetScript("OnHide", function()
+    if self.model.mode == "better" and not self.switching then self:closeAuctionHouse() end
+  end)
+  if env.UISpecialFrames then table.insert(env.UISpecialFrames, "BetterAHFrame") end
+
+  local title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  title:SetPoint("TOP", f, "TOP", 0, -5)
+  title:SetText("Better AH")
+
+  local toggle = env.CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+  toggle:SetSize(100, 22)
+  toggle:SetPoint("TOPRIGHT", f, "TOPRIGHT", -30, -28)
+  toggle:SetText("Blizzard UI")
+  toggle:SetScript("OnClick", function() self:toggle() end)
+  self.toggleButton = toggle
+
+  local y = -32
+  for _, section in ipairs(self.model:sections()) do
+    local header = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    header:SetPoint("TOPLEFT", f, "TOPLEFT", 14, y)
+    header:SetText(section.title)
+    y = y - 18
+    for _, entry in ipairs(section.entries) do
+      local b = env.CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+      b:SetSize(SIDEBAR - 20, 22)
+      b:SetPoint("TOPLEFT", f, "TOPLEFT", 10, y)
+      b:SetText(entry.label)
+      b:SetScript("OnClick", function() self:select(entry.id) end)
+      self.buttons[entry.id] = b
+      y = y - 24
+    end
+    y = y - 6
+  end
+
+  local heading = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  heading:SetPoint("TOPLEFT", f, "TOPLEFT", SIDEBAR + 14, -60)
+  self.heading = heading
+
+  local placeholder = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  placeholder:SetPoint("TOPLEFT", heading, "BOTTOMLEFT", 0, -10)
+  placeholder:SetText("Coming soon.")
+  self.placeholder = placeholder
+
+  self:renderView()
+  return f
+end
+
+-- A small button on Blizzard's window to come back to Better AH.
+function Window:attachReturnButton()
+  local blizz = self:blizzardFrame()
+  if not blizz or self.returnButton then return end
+  local b = self.env.CreateFrame("Button", nil, blizz, "UIPanelButtonTemplate")
+  b:SetSize(100, 22)
+  b:SetPoint("TOPRIGHT", blizz, "TOPRIGHT", -60, -12)
+  b:SetText("Better AH")
+  b:SetScript("OnClick", function() self:toggle() end)
+  self.returnButton = b
+end
+
+function Window:renderView()
+  for id, b in pairs(self.buttons) do
+    if id == self.model.view then b:LockHighlight() else b:UnlockHighlight() end
+  end
+  self.heading:SetText(self.model:label(self.model.view))
+end
+
+function Window:render()
+  local mode = self.model.mode
+  self.switching = true
+  if mode == "better" then
+    self:build():Show()
+    self:concealBlizzard()
+  else
+    if self.frame then self.frame:Hide() end
+    self:revealBlizzard()
+  end
+  self.switching = false
+  if mode == "blizzard" then self:attachReturnButton() end
+end
+
+function Window:select(id)
+  if self.model:select(id) then self:renderView() end
+end
+
+function Window:toggle()
+  self.model:toggle()
+  self:render()
+end
+
+function Window:onEvent(event)
+  if event == "AUCTION_HOUSE_SHOW" then
+    self.model:auctionOpened()
+    -- Blizzard shows its own window on the same event; let it finish first.
+    if self.env.C_Timer then
+      self.env.C_Timer.After(0, function() self:render() end)
+    else
+      self:render()
+    end
+  elseif event == "AUCTION_HOUSE_CLOSED" then
+    self.model:auctionClosed()
+    self:render()
+  end
+end
+
+function Window.install(env, addon)
+  local w = Window.new(env, addon.WindowModel.new())
+  local events = env.CreateFrame("Frame")
+  events:RegisterEvent("AUCTION_HOUSE_SHOW")
+  events:RegisterEvent("AUCTION_HOUSE_CLOSED")
+  events:SetScript("OnEvent", function(_, event) w:onEvent(event) end)
+  addon.window = w
+  if addon.Probes then
+    addon.Probes.suite():add("Better AH window", function()
+      local ok, frame = pcall(w.build, w)
+      if not ok then return "fail", "could not create window: " .. tostring(frame) end
+      if not (frame.CloseButton and frame.Inset) then
+        return "fail", "BasicFrameTemplateWithInset parts missing (CloseButton/Inset)"
+      end
+      local count = 0
+      for _ in pairs(w.buttons) do count = count + 1 end
+      return "pass", "window created with " .. count .. " sidebar entries"
+    end)
+  end
+  return w
+end
+
+ns.Window = Window
+if ns.WindowModel and CreateFrame then Window.install(_G, ns) end
+return Window

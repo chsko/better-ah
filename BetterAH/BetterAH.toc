@@ -10,3 +10,5 @@ Core/Money.lua
 Core/SelfTest.lua
 Core/Probes.lua
 Core/Commands.lua
+Core/WindowModel.lua
+UI/Window.lua

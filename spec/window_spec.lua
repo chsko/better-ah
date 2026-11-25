@@ -1094,6 +1094,7 @@ describe("Window", function()
         s.startButton:Click()
         env.runTimers()
         assert.equal("[Ridgeback Bracers]", s.cardName:GetText(), "the level comes from the item's details")
+        assert.equal("item level 28", s.cardLevel:GetText())
         assert.equal("Ridgeback Bracers", s.nearRows[1][1]:GetText())
       end)
 
@@ -1102,7 +1103,7 @@ describe("Window", function()
         env.browseResults = { { itemKey = { itemID = 5003, itemLevel = 35 }, minPrice = 100 } }
         s.startButton:Click()
         env.runTimers()
-        assert.equal("Last check: 1 green listed, none in the band with a known worth.", s.hint:GetText())
+        assert.equal("Last checks: 1 green listed, none in a band with a known worth.", s.hint:GetText())
       end)
 
       it("judges items only once their details are loaded", function()

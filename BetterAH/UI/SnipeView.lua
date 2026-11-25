@@ -42,7 +42,7 @@ end
 
 function SnipeView.new(dview)
   return setmetatable({ dview = dview, window = dview.window, env = dview.env, addon = dview.addon,
-    round = 0, near = {} }, SnipeView)
+    round = 0, near = {}, seen = {} }, SnipeView)
 end
 
 -- Redraws the Disenchant view, but only while the window shows it: sniping runs on behind other views,
@@ -258,7 +258,7 @@ function SnipeView:start()
   SnipeView.file(db, self:now())
   db.session = {}
   self.session = ns.Sniper.Session.new(db.session, self:now())
-  self.running, self.message, self.lastCheck, self.near, self.lastResults = true, nil, nil, {}, nil
+  self.running, self.message, self.lastCheck, self.near, self.seen = true, nil, nil, {}, {}
   self.run = {} -- this run's identity: late answers from an earlier run are dropped
   self:refresh()
   self:tick(self.run)
@@ -341,7 +341,7 @@ function SnipeView:tick(run)
       return info and info.level
     end
     local name = ns.DisenchantView.targetName(entry.target, entry.row)
-    self.lastResults = #results
+    self.seen[entry.target] = #results
     local near = ns.Sniper.near(band, results, max, level)
     for _, e in ipairs(near) do
       local auctionAPI = self.addon.auctionAPI
@@ -367,7 +367,7 @@ function SnipeView:tick(run)
           found = self.session:add({ auctionID = l.auctionID, itemID = c.itemKey.itemID,
             name = itemName or ("item " .. c.itemKey.itemID),
             price = l.unit, worth = worthOf[c.itemKey.itemID], max = c.max, target = name,
-            level = c.itemKey.itemLevel }) or found
+            level = c.level }) or found
         end
         if found and SnipeView.settings(self.addon).sound then api:alert() end
         left = left - 1
@@ -417,9 +417,10 @@ function SnipeView:renderNear()
   local short = ns.Money.short
   -- Each target's last check, with its max price and name as the target is now (it may have been
   -- edited since).
-  local lists = {}
+  local lists, seen, checked = {}, 0, false
   if self.running then
     for _, entry in ipairs(self:runnable()) do
+      if self.seen[entry.target] then seen, checked = seen + self.seen[entry.target], true end
       local list, fresh = self.near[entry.target], {}
       local name = ns.DisenchantView.targetName(entry.target, entry.row)
       for _, e in ipairs(list or {}) do
@@ -444,9 +445,9 @@ function SnipeView:renderNear()
   end
   if self.running then
     local finds = self.session and self.session.finds or {}
-    self.hint:SetText(#near == 0 and (self.lastResults and string.format(
-      "Last check: %d green%s listed, none in the band with a known worth.", self.lastResults,
-      self.lastResults == 1 and "" or "s") or "Waiting for the first check.")
+    self.hint:SetText(#near == 0 and (checked and string.format(
+      "Last checks: %d green%s listed, none in a band with a known worth.", seen, seen == 1 and "" or "s")
+      or "Waiting for the first check.")
       or #finds > 0 and "Turn the mouse wheel over this tab to buy the next find."
       or "From the last check of each target.")
   else

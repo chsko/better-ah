@@ -68,7 +68,7 @@ function Sniper.candidates(band, results, maxOf, skip, levelFallback)
     local max = key and maxOf(key.itemID)
     if level and level >= band.min and level <= band.max and max and max > 0 and (r.minPrice or 0) > 0
       and r.minPrice <= max and not (skip and skip(key, r.minPrice)) then
-      out[#out + 1] = { itemKey = key, minPrice = r.minPrice, max = max }
+      out[#out + 1] = { itemKey = key, minPrice = r.minPrice, max = max, level = level }
     end
   end
   table.sort(out, function(a, b) return a.minPrice < b.minPrice end)

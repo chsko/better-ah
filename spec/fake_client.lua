@@ -74,7 +74,13 @@ function Frame:SetFontObject(font) self.font = font end
 function Frame:SetFontString(fs) self.fontString = fs end
 function Frame:GetFontString() return self.fontString end
 function Frame:SetShown(on) if on then self:Show() else self:Hide() end end
-function Frame:Click() if self.scripts.OnClick then self.scripts.OnClick(self) end end
+function Frame:SetChecked(on) self.checked = on and true or false end
+function Frame:GetChecked() return self.checked == true end
+-- Like the client, a click on a check button flips it before OnClick runs.
+function Frame:Click()
+  if self.kind == "CheckButton" then self.checked = not self.checked end
+  if self.scripts.OnClick then self.scripts.OnClick(self) end
+end
 
 -- Blizzard's ScrollBarMixin, as much as the lists use: setting the scroll percentage fires OnScroll
 -- (the client does that too, for the owner's own calls as well as the player's), and with

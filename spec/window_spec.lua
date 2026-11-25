@@ -12,6 +12,7 @@ local function setup(opts)
   helper.load("BetterAH/Game/AuctionAPI.lua", ns)
   helper.load("BetterAH/Game/PostingAPI.lua", ns)
   helper.load("BetterAH/UI/PostView.lua", ns)
+  helper.load("BetterAH/UI/DisenchantView.lua", ns)
   helper.load("BetterAH/UI/Window.lua", ns)
   ns.prices = ns.PriceDB.new({})
   ns.characters = ns.CharacterRecords.new({})
@@ -57,7 +58,8 @@ describe("Window", function()
     assert.equal("GameFontHighlightSmall", selected:GetFontString().font)
     assert.is_false(other.selectedTexture:IsShown())
     assert.equal("GameFontNormalSmall", other:GetFontString().font)
-    assert.equal("Green, blue and epic listings worth more disenchanted than their buyout will be listed here.",
+    sidebarButton(w, "deals"):Click()
+    assert.equal("Listings below 70% of market value and your shopping list hits will be listed here.",
       w.placeholder:GetText())
   end)
 
@@ -410,12 +412,18 @@ describe("Window", function()
         if w.rows[r][1]:GetText() == "Green Robe" then w.rows[r].button:Click() end
       end
       assert.matches(table.concat({
-        "Disenchant value: 5s 25c (4s 98c after the 5% auction house cut)",
-        "Illusion Dust (75%, 1-2): 2s 25c",
-        "Greater Eternal Essence (20%, 1-2): 3s 0c",
+        "Disenchant value: 7s 0c (6s 65c after the 5% auction house cut)",
+        "Illusion Dust (75%, 1-2): 3s 0c",
+        "Greater Eternal Essence (20%, 1-2): 4s 0c",
         "Large Brilliant Shard (5%, 1): no price",
         "Materials without a price count as nothing. Scan to price them.",
+        "Counts an Arcane Salvager (set in Disenchant snipe).",
       }, "\n"), w.detailBody:GetText(), 1, true)
+      ns.disenchant = { salvager = false }
+      w:renderPrices()
+      assert.matches("Disenchant value: 5s 25c (4s 98c after the 5% auction house cut)\n"
+        .. "Illusion Dust (75%, 1-2): 2s 25c", w.detailBody:GetText(), 1, true)
+      assert.is_nil(w.detailBody:GetText():find("Salvager", 1, true))
       env.GetItemInfo = function() return nil end
       w:renderPrices()
       assert.is_nil(w.detailBody:GetText():find("Disenchant", 1, true), "item details not loaded: no section")
@@ -585,6 +593,104 @@ describe("Window", function()
       w:select("alts")
       env.fire("BAG_UPDATE_DELAYED")
       assert.same({ "Linen Cloth", "5", "1" }, altRow(w, 1))
+    end)
+  end)
+
+  describe("Disenchant", function()
+    local function band(w, r)
+      local out = {}
+      for c, cell in ipairs(w.disenchantView.rows[r]) do out[c] = cell:GetText() end
+      return out
+    end
+    -- Christian's prices from his spreadsheet: Soul Dust, Greater Astral Essence, Large Glimmering Shard.
+    local function deSetup()
+      local env, w, ns = setup()
+      ns.prices:importPrices("/1/Horde", env.now, { ["i:11083"] = { value = 446 }, ["i:11082"] = { value = 1568 },
+        ["i:11084"] = { value = 3978 } })
+      env.openAuctionHouse()
+      w:select("disenchant")
+      return env, w, ns
+    end
+
+    it("lists every green band with what one is worth after the auction house cut", function()
+      local _, w = deSetup()
+      assert.is_true(w.disenchantPanel:IsShown())
+      assert.is_false(w.placeholder:IsShown())
+      assert.is_false(w.pricesPanel:IsShown())
+      assert.same({ "5-15", "1-10", "-", "-", "0 of 2 priced" }, band(w, 1))
+      local cells = band(w, 4)
+      assert.same({ "26-30", "21-25", "14s 20c", "3 of 4 priced" }, { cells[1], cells[2], cells[3], cells[5] })
+      assert.matches("^%d+s %d+c %*$", cells[4], "weapons miss Greater Magic Essence: marked as too low")
+      assert.equal("61+", band(w, 11)[1])
+      assert.equal("56+", band(w, 11)[2])
+      assert.is_false(w.disenchantView.rows[12].button:IsShown())
+      assert.equal("Prices from ruleset 1, Horde.", w.disenchantView.status:GetText())
+    end)
+
+    it("counts the Arcane Salvager unless it is turned off, and remembers the choice", function()
+      local _, w, ns = deSetup()
+      local box = w.disenchantView.salvagerButton
+      assert.is_true(box:GetChecked(), "on by default")
+      box:Click()
+      assert.is_false(box:GetChecked())
+      assert.is_false(ns.disenchant.salvager, "saved")
+      assert.equal("11s 12c", band(w, 4)[3])
+      box:Click()
+      assert.is_true(ns.disenchant.salvager)
+      assert.equal("14s 20c", band(w, 4)[3])
+    end)
+
+    it("explains a band's materials in the detail panel", function()
+      local _, w = deSetup()
+      assert.equal("Select a band to see what each material adds.", w.detailBody:GetText())
+      w.disenchantView.rows[4].button:Click()
+      assert.is_true(w.disenchantView.rows[4].button.selectedTexture:IsShown())
+      assert.equal("Greens of item level 26-30", w.detailTitle:GetText())
+      local text = w.detailBody:GetText()
+      assert.matches("Armor\nDisenchant value: 14s 95c (14s 20c after the 5% auction house cut)\n"
+        .. "Soul Dust (75%, 1-2): 6s 69c", text, 1, true)
+      assert.matches("Weapons\nDisenchant value:", text, 1, true)
+      assert.matches("Counts the Arcane Salvager's 50% chance of one extra dust or essence.", text, 1, true)
+      w:select("prices")
+      w:select("disenchant")
+      assert.equal("Greens of item level 26-30", w.detailTitle:GetText(), "the selection stays")
+    end)
+
+    it("redraws when a full scan finishes, and keeps the detail panel its own", function()
+      local env, w = setup()
+      env.auctions = { { name = "Soul Dust", count = 10, buyout = 5000, itemID = 11083 } }
+      env.openAuctionHouse()
+      w:select("prices")
+      w.scanButton:Click()
+      w:select("disenchant")
+      assert.is_false(w.disenchantView.materialsButton:IsEnabled(), "no materials scan during a full scan")
+      w.disenchantView.rows[4].button:Click()
+      env.runTimers()
+      assert.is_true(w.disenchantView.materialsButton:IsEnabled())
+      assert.equal("Greens of item level 26-30", w.detailTitle:GetText())
+      assert.matches("^%d+s %d+c %*$", band(w, 4)[3], "the scanned Soul Dust counts")
+    end)
+
+    it("drops the materials scan message once a full scan starts", function()
+      local env, w = deSetup()
+      w.disenchantView.materialsButton:Click()
+      env.runTimers()
+      assert.matches("Materials scanned", w.disenchantView.status:GetText(), 1, true)
+      w:startScan()
+      env.runTimers()
+      assert.equal("Prices from ruleset 1, Horde.", w.disenchantView.status:GetText())
+    end)
+
+    it("scans materials from the view and shows the new values", function()
+      local env, w = deSetup()
+      env.listings[11083] = { { unitPrice = 500, quantity = 50 } }
+      w.disenchantView.materialsButton:Click()
+      assert.is_false(w.disenchantView.materialsButton:IsEnabled())
+      assert.equal("Scanning materials: 0 of 24.", w.disenchantView.status:GetText())
+      env.runTimers()
+      assert.matches("Materials scanned: 1 of 24", w.disenchantView.status:GetText(), 1, true)
+      assert.is_true(w.disenchantView.materialsButton:IsEnabled())
+      assert.are_not.equal("14s 20c", band(w, 4)[3], "the new Soul Dust price counts")
     end)
   end)
 

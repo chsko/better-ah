@@ -150,6 +150,16 @@ describe("Probes", function()
     assert.matches("C_Seasons.GetActiveSeason=error", r.detail)
   end)
 
+  it("reports the other ruleset candidates the client answers", function()
+    local ns = load()
+    local env = fakeEnv()
+    env.C_GameRules.GetCurrentGameModeRecordID = function() return 12 end
+    env.GetRealmID = function() return 6946 end
+    local r = byName(ns.Probes.suite():run(env, { db = {} }))["Ruleset hints"]
+    assert.matches("C_GameRules.GetCurrentGameModeRecordID=12", r.detail)
+    assert.matches("GetRealmID=6946", r.detail)
+  end)
+
   it("copes with a client that returns nothing", function()
     local ns = load()
     local env = { GetBuildInfo = function() end, GetRealmName = function() end, UnitFactionGroup = function() end }

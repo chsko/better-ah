@@ -74,6 +74,10 @@ local function build()
     for _, path in ipairs({
       "C_GameRules.IsHardcoreActive", "C_GameRules.GetActiveGameMode", "C_Seasons.GetActiveSeason",
       "C_Seasons.HasActiveSeason", "C_Realm.GetCurrentRulesetID", "GetCurrentRegionName",
+      -- GetActiveGameMode said 1 on both a PvP and a non-PvP ruleset (#5), so try what else might differ.
+      "C_GameRules.GetCurrentGameModeRecordID", "C_GameRules.GetForeverExperiencePreset",
+      "C_GameRules.IsSelfFoundAllowed", "C_PvP.IsWarModeFeatureEnabled", "GetRealmID", "GetNativeRealmID",
+      "SelectedRealmName",
     }) do
       local ok, value = call(env, path)
       if ok then hints[#hints + 1] = path .. "=" .. tostring(value) end

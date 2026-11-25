@@ -129,6 +129,20 @@ function AuctionAPI:itemInfo(item)
     subclassID = r[14] }
 end
 
+-- An item's class, subclass and equip slot from GetItemInfoInstant, which answers without the item being
+-- in the client's cache: { id, classID, subclassID, equip }, or nil when the client has no such call.
+function AuctionAPI:itemType(item)
+  local id = type(item) == "string" and tonumber(item:match("^i:(%d+)$"))
+  if not id then return nil end
+  local get = self.env.GetItemInfoInstant
+  if type(get) ~= "function" then get = self.env.C_Item and self.env.C_Item.GetItemInfoInstant end
+  if type(get) ~= "function" then return nil end
+  local r = { pcall(get, id) }
+  if not r[1] or r[2] == nil then return nil end
+  -- itemID, type, subType, equipLoc, icon, classID, subclassID
+  return { id = id, equip = r[5], classID = r[7], subclassID = r[8] }
+end
+
 function AuctionAPI:now()
   return try(self.env.GetServerTime) or try(self.env.time) or 0
 end

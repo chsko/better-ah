@@ -17,7 +17,13 @@ function Frame:GetName() return self.name end
 function Frame:GetParent() return self.parent end
 -- The last point set. A TOPLEFT point on its parent's BOTTOMLEFT gives the frame a position, as
 -- GetLeft and GetTop report it (in the frame's own units, like the client); other points don't.
-function Frame:SetPoint(...) self.point = { ... } end
+-- Every point is kept by name too (points), so a spec can check any anchor.
+function Frame:SetPoint(...)
+  self.point = { ... }
+  local point, rel, relPoint, x, y = ...
+  self.points = self.points or {}
+  self.points[point] = { rel = rel, relPoint = relPoint, x = x, y = y }
+end
 function Frame:GetLeft()
   local p = self.point
   if p and p[1] == "TOPLEFT" and p[3] == "BOTTOMLEFT" then return p[4] end
@@ -30,7 +36,7 @@ function Frame:SetNormalTexture(path) self.normalTexture = path end
 function Frame:SetPushedTexture(path) self.pushedTexture = path end
 function Frame:SetHighlightTexture(path) self.highlightTexture = path end
 function Frame:RegisterForClicks(...) self.clicks = { ... } end
-function Frame:ClearAllPoints() self.point = nil end
+function Frame:ClearAllPoints() self.point, self.points = nil, {} end
 function Frame:SetFrameStrata() end
 function Frame:SetMovable() end
 function Frame:RegisterForDrag() end

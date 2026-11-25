@@ -10,9 +10,10 @@ local DisenchantView = {}
 DisenchantView.__index = DisenchantView
 
 DisenchantView.TABS = { { "values", "Values" }, { "targets", "Targets" }, { "snipe", "Snipe" } }
+-- Laid out to fit beside the scroll bar (518 px): the names keep their room, the money columns give it up.
 DisenchantView.TARGET_COLUMNS = {
-  { "", 4, 18 }, { "Target", 26, 140, "LEFT" }, { "Item types", 168, 100, "LEFT" }, { "Worth", 270, 85 },
-  { "Profit", 357, 80 }, { "Max price", 439, 97 },
+  { "", 4, 18 }, { "Target", 26, 140, "LEFT" }, { "Item types", 168, 100, "LEFT" }, { "Worth", 270, 76 },
+  { "Profit", 348, 72 }, { "Max price", 422, 92 },
 }
 local TAB_HEIGHT = 28 -- the tab row above each tab's own panel
 

@@ -31,6 +31,13 @@ function Frame:SetScale(s) self.scale = s end
 function Frame:GetScale() return self.scale end
 function Frame:SetScript(name, fn) self.scripts[name] = fn end
 function Frame:RegisterEvent(e) self.events[e] = true end
+function Frame:UnregisterEvent(e) self.events[e] = nil end
+function Frame:EnableMouseWheel() end
+function Frame:SetWidth() end
+function Frame:SetJustifyH() end
+function Frame:Enable() self.enabled = true end
+function Frame:Disable() self.enabled = false end
+function Frame:IsEnabled() return self.enabled ~= false end
 function Frame:SetText(t) self.text = t end
 function Frame:GetText() return self.text end
 function Frame:LockHighlight() self.highlighted = true end
@@ -111,6 +118,31 @@ function M.new(opts)
     env.AuctionFrame:Hide()
     for _, name in ipairs(env.UISpecialFrames) do env[name]:Hide() end
   end
+  -- Market identity, as the Forever client reported it (ADR 0004).
+  env.now = 1000000
+  env.GetServerTime = function() return env.now end
+  env.GetRealmName = function() return "" end
+  env.UnitFactionGroup = function() return env.faction or "Horde" end
+  env.C_GameRules = { GetActiveGameMode = function() return env.gameMode or 1 end }
+  -- Full scans: ReplicateItems answers on the next timer tick with env.auctions, unless
+  -- env.replicateSilent is set. Each auction is { name, count, buyout, itemID, owner, hasAllInfo }.
+  env.auctions = {}
+  env.replicateCalls = 0
+  env.C_AuctionHouse = {
+    ReplicateItems = function()
+      env.replicateCalls = env.replicateCalls + 1
+      if not env.replicateSilent then
+        env.C_Timer.After(0, function() env.fire("REPLICATE_ITEM_LIST_UPDATE") end)
+      end
+    end,
+    GetNumReplicateItems = function() return #env.auctions end,
+    GetReplicateItemInfo = function(i)
+      local a = env.auctions[i + 1]
+      if not a then return nil end
+      return a.name, nil, a.count, 1, true, 1, 0, 0, 0, a.buyout, 0, false, nil, a.owner, nil, 0, a.itemID,
+        a.hasAllInfo ~= false
+    end,
+  }
   -- Fire an event at every frame registered for it.
   env.fire = function(event)
     for _, f in ipairs(env.frames) do

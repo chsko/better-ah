@@ -5,7 +5,7 @@ An auction house addon for World of Warcraft: Forever that scans, prices, posts,
 ## Markets and prices
 
 **Market**:
-One auction house's listings, identified by realm, ruleset and faction. Prices from one market never mix with another's.
+One auction house's listings, identified by realm, ruleset and faction. In Forever the realm part is empty and the neutral auction houses count as faction "Neutral" (ADR 0005). Prices from one market never mix with another's.
 _Avoid_: server, realm (on their own)
 
 **Scan**:

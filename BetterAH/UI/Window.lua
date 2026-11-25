@@ -186,7 +186,8 @@ function Window:entryButton(style, parent, width)
       b.NormalTexture:SetPoint("TOPLEFT", -2, 0)
       for _, key in ipairs({ "SelectedTexture", "HighlightTexture" }) do
         local tex = b[key]
-        local atlas = key == "SelectedTexture" and "auctionhouse-nav-button-select" or "auctionhouse-nav-button-highlight"
+        local atlas = key == "SelectedTexture" and "auctionhouse-nav-button-select"
+          or "auctionhouse-nav-button-highlight"
         tex:SetAtlas(atlas, false)
         tex:SetSize(width, 21)
         tex:ClearAllPoints()

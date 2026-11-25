@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: Better AH
+## Notes: Auction house addon for World of Warcraft: Forever. TSM-style scanning, posting and pricing, with improvements.
+## Author: chsko
+## Version: @project-version@
+## SavedVariables: BetterAHDB
+
+Core/Init.lua
+Core/Money.lua

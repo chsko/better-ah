@@ -66,4 +66,37 @@ describe("PriceDB", function()
     PriceDB.new(store):recordScan(A, 100, { linen(1, 200) })
     assert.equal(200, PriceDB.new(store):items(A)[1].lowest)
   end)
+
+  it("sorts by name, naming unnamed items with the caller's lookup and putting the rest last", function()
+    local db = PriceDB.new({})
+    db:recordScan(A, 100, {
+      { item = "i:3", count = 1, buyout = 1 },
+      { item = "i:1", count = 1, buyout = 1 },
+      { item = "i:2", name = "wool Cloth", count = 1, buyout = 1 },
+      { item = "i:4", name = "Black Mageweave Robe", count = 1, buyout = 1 },
+      { item = "i:5", count = 1, buyout = 1 },
+    })
+    local names = { ["i:5"] = "Linen Cloth" }
+    local order = {}
+    for _, it in ipairs(db:items(A, function(item) return names[item] end)) do
+      order[#order + 1] = it.name or it.item
+    end
+    assert.same({ "Black Mageweave Robe", "Linen Cloth", "wool Cloth", "i:1", "i:3" }, order)
+  end)
+
+  it("keeps a stored name over the lookup and ignores empty or odd lookups", function()
+    local db = PriceDB.new({})
+    db:recordScan(A, 100, {
+      { item = "i:1", name = "Linen Cloth", count = 1, buyout = 1 },
+      { item = "i:2", count = 1, buyout = 1 },
+      { item = "i:3", count = 1, buyout = 1 },
+      { item = "i:4", name = "linen cloth", count = 1, buyout = 1 },
+    })
+    local lookup = { ["i:1"] = "Wrong", ["i:2"] = "", ["i:3"] = 42 }
+    local order = {}
+    for _, it in ipairs(db:items(A, function(item) return lookup[item] end)) do
+      order[#order + 1] = it.item .. "=" .. tostring(it.name)
+    end
+    assert.same({ "i:1=Linen Cloth", "i:4=linen cloth", "i:2=nil", "i:3=nil" }, order)
+  end)
 end)

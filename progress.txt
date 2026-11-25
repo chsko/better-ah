@@ -1,3 +1,0 @@
-# Ralph progress log
-
-Each loop iteration appends what it did here.

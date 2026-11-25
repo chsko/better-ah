@@ -9,7 +9,7 @@ Goal: everything TradeSkillMaster does for the auction house, with improvements.
 - `BetterAH/Core/` holds shared modules. Each file starts with `local addonName, ns = ...` and hangs
   its module on `ns` (for example `ns.Money`). No new globals except saved variables.
 - `spec/` holds busted tests. `spec/helper.lua` loads an addon file with `(addonName, ns)` like the client does.
-- `ralph/` holds the agent loop (see "Workflow").
+- `.claude/skills/` holds Matt Pocock's skills (installed with `npx skills@latest add mattpocock/skills`).
 
 ## Coding rules
 
@@ -34,15 +34,16 @@ busted
 Things that need the real client (frames, events, AH queries) cannot be tested here. Say so in the
 issue or commit, and describe how to verify in game.
 
-## Workflow
+## Agent skills
 
-We follow Matt Pocock's workflow (https://github.com/mattpocock/skills) with GitHub issues as the tracker.
+### Issue tracker
 
-1. Plan: `/grill-me` on an idea, `/to-spec` to publish it as a spec issue, `/to-tickets` to split it into
-   tracer-bullet issues with "Blocked by" edges. Issues ready for the loop get the `ready-for-agent` label.
-2. Build: `ralph/once.sh` (one iteration, watched) or `ralph/afk.sh <n>` (unattended). Each iteration
-   picks one unblocked `ready-for-agent` issue, implements it, runs the feedback loops, commits with
-   `Closes #n`, closes the issue and appends to `progress.txt`.
-3. Triage: `/triage` moves issues through the labels below.
+Issues and specs live in GitHub Issues on `chsko/better-ah`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
-Issue tracker config for the skills is in `docs/agents/issue-tracker.md`.
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root, created lazily. See `docs/agents/domain.md`.

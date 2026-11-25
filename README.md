@@ -17,10 +17,9 @@ luacheck . && busted
 
 ## How work gets done
 
-Planning happens in GitHub issues, and an agent loop ("Ralph") implements them one at a time.
+Work is planned and tracked in GitHub issues using [Matt Pocock's skills](https://github.com/mattpocock/skills),
+which are installed in `.claude/skills/`. Update them with `npx skills@latest update`.
 
-1. Install the skills once: `claude plugin install mattpocock-skills@claude-plugins-official`.
-2. Plan a feature: `/grill-me`, then `/to-spec`, then `/to-tickets`. Tickets get the `ready-for-agent` label.
-3. Run the loop: `ralph/once.sh` to watch one iteration, or `ralph/afk.sh 10` to run up to 10 unattended.
-
-See `CLAUDE.md` for the rules the agent follows.
+A typical feature: `/grill-me` to shape it, `/to-spec` to publish a spec issue, `/to-tickets` to split it
+into issues, then `/implement` (one ticket) or `/implement-spec` (the whole spec). `/triage` keeps the
+backlog labelled. See `CLAUDE.md` for the rules agents follow.

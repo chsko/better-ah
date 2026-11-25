@@ -12,6 +12,7 @@ Core/MarketKey.lua
 Core/MarketValue.lua
 Core/PriceDB.lua
 Core/CharacterRecords.lua
+Core/Posting.lua
 Core/SelfTest.lua
 Core/Probes.lua
 Core/Commands.lua

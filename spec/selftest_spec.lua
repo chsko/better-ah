@@ -133,6 +133,14 @@ describe("Probes", function()
     end
   end)
 
+  it("lists the client's auction duration labels", function()
+    local ns = load()
+    local env = fakeEnv()
+    env.AUCTION_DURATION_ONE, env.AUCTION_DURATION_TWO = "12 Hours", "24 Hours"
+    local r = byName(ns.Probes.suite():run(env, { db = {} }))["Auction durations"]
+    assert.same({ "info", "1=12 Hours, 2=24 Hours, 3=(missing)" }, { r.status, r.detail })
+  end)
+
   it("says which browse API exists when the AH check passes", function()
     local ns = load()
     local r = byName(ns.Probes.suite():run(fakeEnv(), { db = {} }))["Auction house API available"]

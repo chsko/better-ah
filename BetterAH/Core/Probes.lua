@@ -103,6 +103,15 @@ local function build()
     return "fail", "neither QueryAuctionItems nor C_AuctionHouse.SendBrowseQuery exists"
   end)
 
+  -- Posting durations are indices 1-3 into these labels; Better AH assumes 2 is 24 hours.
+  suite:add("Auction durations", function(env)
+    local labels = {}
+    for i, name in ipairs({ "AUCTION_DURATION_ONE", "AUCTION_DURATION_TWO", "AUCTION_DURATION_THREE" }) do
+      labels[i] = i .. "=" .. tostring(env[name] or "(missing)")
+    end
+    return "info", table.concat(labels, ", ")
+  end)
+
   suite:add("Saved variables", function(env, addon)
     if not (addon and addon.db) then return "fail", "BetterAHDB not loaded yet" end
     if env.BetterAHDB ~= addon.db then return "fail", "BetterAHDB global is not the addon's database" end

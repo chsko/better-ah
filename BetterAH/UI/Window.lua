@@ -12,6 +12,7 @@ local COLUMNS = {
   { "Item", 4, 190 }, { "Lowest buyout", 196, 95 }, { "Market value", 293, 95 }, { "Quantity", 390, 55 },
   { "Seen", 447, 90 },
 }
+local ALT_COLUMNS = { { "Item", 4, 300 }, { "Total", 310, 90 }, { "Characters", 405, 90 } }
 local HISTORY_LINES = 7
 local BLIZZARD_FRAMES = { "AuctionFrame", "AuctionHouseFrame" }
 local TOP = -60 -- where the panels start, below the title bar and the toggle button
@@ -163,6 +164,7 @@ function Window:build()
 
   self:buildDetail(f)
   self:buildPrices(f)
+  self:buildAlts(f)
   self:renderView()
   return f
 end
@@ -260,7 +262,13 @@ function Window:buildPrices(f)
   status:SetPoint("LEFT", scan, "RIGHT", 10, 0)
   self.scanStatus = status
 
-  self.rows = {}
+  self.rows = self:buildRows(panel, COLUMNS, function(index) self:selectRow(index) end)
+end
+
+-- A header row and ROWS selectable item rows under it, starting 32px below the panel's top.
+-- Returns the item rows; each is an array of cells (font strings) plus .button.
+function Window:buildRows(panel, columns, onClick)
+  local env, rows = self.env, {}
   for r = 0, ROWS do
     -- Item rows are buttons, so they can be selected; the header is plain text on the panel.
     local parent = panel
@@ -279,10 +287,10 @@ function Window:buildPrices(f)
       selected:Hide()
       parent.selectedTexture = selected
       local index = r
-      parent:SetScript("OnClick", function() self:selectRow(index) end)
+      parent:SetScript("OnClick", function() onClick(index) end)
     end
     local row = { button = r > 0 and parent or nil }
-    for c, col in ipairs(COLUMNS) do
+    for c, col in ipairs(columns) do
       local font = r == 0 and "GameFontNormalSmall" or "GameFontHighlightSmall"
       local cell = parent:CreateFontString(nil, "OVERLAY", font)
       if r == 0 then
@@ -291,11 +299,104 @@ function Window:buildPrices(f)
         cell:SetPoint("LEFT", parent, "LEFT", col[2], 0)
       end
       cell:SetWidth(col[3])
-      cell:SetJustifyH(c == 1 and "LEFT" or "RIGHT")
+      cell:SetJustifyH(col[4] or (c == 1 and "LEFT" or "RIGHT"))
       if r == 0 then cell:SetText(col[1]) end
       row[c] = cell
     end
-    if r > 0 then self.rows[r] = row end
+    if r > 0 then rows[r] = row end
+  end
+  return rows
+end
+
+-- Alts and inventory: every item the player's characters own, with totals.
+function Window:buildAlts(f)
+  local env = self.env
+  local panel = env.CreateFrame("Frame", nil, f)
+  panel:SetPoint("TOPLEFT", f, "TOPLEFT", SIDEBAR + 16, TOP - 42)
+  panel:SetSize(LIST_WIDTH, HEIGHT + TOP - 42 - 8)
+  panel:EnableMouseWheel(true)
+  panel:SetScript("OnMouseWheel", function(_, delta) self:scrollAlts(-delta * 3) end)
+  self.altsPanel = panel
+  local status = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  status:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -6)
+  status:SetWidth(LIST_WIDTH)
+  status:SetJustifyH("LEFT")
+  self.altsStatus = status
+  self.altsRows = self:buildRows(panel, ALT_COLUMNS, function(index) self:selectAlt(index) end)
+  self.altsOffset = 0
+end
+
+function Window:scrollAlts(by)
+  self.altsOffset = self.altsOffset + by
+  self:renderAlts()
+end
+
+function Window:selectAlt(r)
+  local item = self.altsItems and self.altsItems[r + self.altsOffset]
+  if not item then return end
+  self.altSelected = item.item
+  self:renderAlts()
+end
+
+-- Who has how many of an item, for the detail panel. by is CharacterRecords:count's second value.
+function Window.altsDetailText(total, by)
+  local lines = { "Total: " .. total, "" }
+  for _, c in ipairs(by) do
+    local parts = {}
+    for _, place in ipairs({ "bags", "bank", "auctions" }) do
+      if c[place] > 0 then parts[#parts + 1] = place .. " " .. c[place] end
+    end
+    lines[#lines + 1] = string.format("%s: %d (%s)", c.name, c.total, table.concat(parts, ", "))
+  end
+  return table.concat(lines, "\n")
+end
+
+function Window:renderAlts()
+  if not self.altsPanel then return end
+  local records = self.addon.characters
+  local api = self.addon.auctionAPI
+  local nameOf = api and function(item) return api:itemName(item) end
+  local items = records and records:items(nameOf) or {}
+  self.altsItems = items
+  local chars = records and records:characters() or {}
+  self.altsOffset = math.max(0, math.min(self.altsOffset, math.max(0, #items - ROWS)))
+  if #chars == 0 then
+    self.altsStatus:SetText("Nothing recorded yet. Your bags are read as you play, your bank when you open it.")
+  else
+    local unread = {}
+    for _, c in ipairs(chars) do
+      if not (c.seen and c.seen.bank) then unread[#unread + 1] = c.name end
+    end
+    local text = string.format("%d items across %d %s.", #items, #chars, #chars == 1 and "character" or "characters")
+    if #unread > 0 then
+      text = text .. " Bank not read yet for " .. table.concat(unread, ", ") .. ": open it once to include it."
+    end
+    self.altsStatus:SetText(text)
+  end
+  local selected
+  for r, row in ipairs(self.altsRows) do
+    local item = items[r + self.altsOffset]
+    if item then
+      row[1]:SetText(item.name or item.item)
+      row[2]:SetText(tostring(item.total))
+      row[3]:SetText(tostring(item.characters))
+      row.button:Show()
+    else
+      for _, cell in ipairs(row) do cell:SetText("") end
+      row.button:Hide()
+    end
+    row.button.selectedTexture:SetShown(item ~= nil and item.item == self.altSelected)
+  end
+  for _, it in ipairs(items) do
+    if it.item == self.altSelected then selected = it break end
+  end
+  if selected then
+    self.detailTitle:SetText(selected.name or selected.item)
+    self.detailBody:SetText(Window.altsDetailText(records:count(selected.item)))
+  else
+    self.altSelected = nil
+    self.detailTitle:SetText("")
+    self.detailBody:SetText(#items > 0 and "Select an item to see which characters have it, and where." or "")
   end
 end
 
@@ -478,14 +579,15 @@ function Window:renderView()
   for id, b in pairs(self.buttons) do Window.markSelected(b, id == self.model.view) end
   self.heading:SetText(self.model:label(self.model.view))
   self.placeholder:SetText(Window.EMPTY[self.model.view] or "")
-  local prices = self.model.view == "prices"
-  if prices then
-    self.placeholder:Hide()
-    self.pricesPanel:Show()
+  local view = self.model.view
+  self.placeholder:SetShown(view ~= "prices" and view ~= "alts")
+  self.pricesPanel:SetShown(view == "prices")
+  self.altsPanel:SetShown(view == "alts")
+  if view == "prices" then
     self:renderPrices()
+  elseif view == "alts" then
+    self:renderAlts()
   else
-    self.placeholder:Show()
-    self.pricesPanel:Hide()
     self.detailTitle:SetText("")
     self.detailBody:SetText("")
   end
@@ -568,6 +670,12 @@ function Window.install(env, addon)
   events:RegisterEvent("AUCTION_HOUSE_CLOSED")
   events:SetScript("OnEvent", function(_, event) w:onEvent(event) end)
   addon.window = w
+  -- Redraw the Alts view when the tracker reads bags, bank or auctions while it is on screen.
+  if addon.tracker then
+    addon.tracker.onChange = function()
+      if w.frame and w.frame:IsShown() and w.model.view == "alts" then w:renderAlts() end
+    end
+  end
   if addon.Probes then
     addon.Probes.suite():add("Better AH window", function()
       local ok, frame = pcall(w.build, w)

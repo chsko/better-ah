@@ -11,9 +11,11 @@ Core/Time.lua
 Core/MarketKey.lua
 Core/MarketValue.lua
 Core/PriceDB.lua
+Core/CharacterRecords.lua
 Core/SelfTest.lua
 Core/Probes.lua
 Core/Commands.lua
 Core/WindowModel.lua
 Game/AuctionAPI.lua
+Game/CharacterTracker.lua
 UI/Window.lua

@@ -93,6 +93,9 @@ describe("AuctionAPI", function()
       r.detail)
     assert.equal("pass", check(ns, env, "Market key").status)
     assert.equal("\"/1/Horde\" (ruleset 1, Horde)", check(ns, env, "Market key").detail)
+    assert.equal("GetNormalizedRealmName=(empty), GetRealmName=(empty), UnitGUID server id=6841",
+      check(ns, env, "Realm sources").detail)
+    env.guid = nil
     assert.equal("GetNormalizedRealmName=(empty), GetRealmName=(empty), UnitGUID server id=(empty)",
       check(ns, env, "Realm sources").detail)
   end)

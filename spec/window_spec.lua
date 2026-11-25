@@ -4,13 +4,19 @@ local fake = require("spec.fake_client")
 local function setup(opts)
   local env = fake.new(opts)
   local ns = helper.load("BetterAH/Core/WindowModel.lua")
-  for _, file in ipairs({ "Money", "Time", "MarketKey", "MarketValue", "PriceDB", "SelfTest", "Probes" }) do
+  local core = { "Money", "Time", "MarketKey", "MarketValue", "PriceDB", "CharacterRecords", "SelfTest", "Probes" }
+  for _, file in ipairs(core) do
     helper.load("BetterAH/Core/" .. file .. ".lua", ns)
   end
   helper.load("BetterAH/Game/AuctionAPI.lua", ns)
   helper.load("BetterAH/UI/Window.lua", ns)
   ns.prices = ns.PriceDB.new({})
+  ns.characters = ns.CharacterRecords.new({})
   ns.AuctionAPI.install(env, ns)
+  if opts and opts.tracker then
+    helper.load("BetterAH/Game/CharacterTracker.lua", ns)
+    ns.CharacterTracker.install(env, ns)
+  end
   local w = ns.Window.install(env, ns)
   return env, w, ns
 end
@@ -412,6 +418,74 @@ describe("Window", function()
       for _ = 1, 10 do w.pricesPanel.scripts.OnMouseWheel(w.pricesPanel, -1) end
       assert.equal("Item 07", rowText(w, 1)[1], "stops at the last full page")
       assert.equal("Item 20", rowText(w, 14)[1])
+    end)
+  end)
+
+  describe("Alts and inventory", function()
+    local function altRow(w, r)
+      local out = {}
+      for c, cell in ipairs(w.altsRows[r]) do out[c] = cell:GetText() end
+      return out
+    end
+
+    it("says nothing is recorded before any character has been read", function()
+      local env, w = setup()
+      env.openAuctionHouse()
+      w:select("alts")
+      assert.is_true(w.altsPanel:IsShown())
+      assert.is_false(w.pricesPanel:IsShown())
+      assert.is_false(w.placeholder:IsShown())
+      assert.equal("Nothing recorded yet. Your bags are read as you play, your bank when you open it.",
+        w.altsStatus:GetText())
+      assert.equal("", w.detailBody:GetText())
+    end)
+
+    it("lists every item with its total and how many characters have it", function()
+      local env, w, ns = setup()
+      ns.characters:setCharacter("Thrall-6841", { name = "Thrall" })
+      ns.characters:setCharacter("Jaina-6946", { name = "Jaina" })
+      ns.characters:setPlace("Thrall-6841", "bags", { { item = "i:2589", count = 25, name = "Linen Cloth" },
+        { item = "i:2592", count = 3, name = "Wool Cloth" } }, 1)
+      ns.characters:setPlace("Thrall-6841", "bank", { { item = "i:2589", count = 40 } }, 1)
+      ns.characters:setPlace("Jaina-6946", "auctions", { { item = "i:2589", count = 10 } }, 1)
+      env.openAuctionHouse()
+      w:select("alts")
+      assert.equal("2 items across 2 characters. Bank not read yet for Jaina: open it once to include it.",
+        w.altsStatus:GetText())
+      assert.same({ "Linen Cloth", "75", "2" }, altRow(w, 1))
+      assert.same({ "Wool Cloth", "3", "1" }, altRow(w, 2))
+      assert.is_false(w.altsRows[3].button:IsShown())
+      assert.equal("Select an item to see which characters have it, and where.", w.detailBody:GetText())
+
+      w.altsRows[1].button:Click()
+      assert.is_true(w.altsRows[1].button.selectedTexture:IsShown())
+      assert.equal("Linen Cloth", w.detailTitle:GetText())
+      assert.equal("Total: 75\n\nJaina: 10 (auctions 10)\nThrall: 65 (bags 25, bank 40)", w.detailBody:GetText())
+    end)
+
+    it("scrolls through more items than fit", function()
+      local env, w, ns = setup()
+      local items = {}
+      for i = 1, 20 do items[i] = { item = "i:" .. i, count = i, name = string.format("Item %02d", i) } end
+      ns.characters:setPlace("Me-1", "bags", items, 1)
+      env.openAuctionHouse()
+      w:select("alts")
+      for _ = 1, 10 do w.altsPanel.scripts.OnMouseWheel(w.altsPanel, -1) end
+      assert.equal("Item 07", altRow(w, 1)[1], "stops at the last full page")
+      assert.equal("20 items across 1 character. Bank not read yet for Me-1: open it once to include it.",
+        w.altsStatus:GetText())
+      ns.characters:setPlace("Me-1", "bank", {}, 2)
+      w:renderAlts()
+      assert.equal("20 items across 1 character.", w.altsStatus:GetText())
+    end)
+
+    it("updates while open when the bags change", function()
+      local env, w = setup({ tracker = true })
+      env.containers = { [0] = { { itemID = 2589, count = 5, name = "Linen Cloth" } } }
+      env.openAuctionHouse()
+      w:select("alts")
+      env.fire("BAG_UPDATE_DELAYED")
+      assert.same({ "Linen Cloth", "5", "1" }, altRow(w, 1))
     end)
   end)
 end)

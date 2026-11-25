@@ -1,26 +1,30 @@
 local helper = require("spec.helper")
 local fake = require("spec.fake_client")
 
+-- The files that need the real client at load time.
+local CLIENT_ONLY = { ["Core/Init.lua"] = true, ["Core/Commands.lua"] = true }
+
+-- Loads every addon file the .toc lists (but those), so this spec keeps up with
+-- new views, and installs the game adapters on the fake client.
 local function setup(db)
   local env = fake.new()
-  local ns = helper.load("BetterAH/Core/WindowModel.lua")
-  local core = { "WindowScale", "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "Targets", "PriceDB",
-    "CharacterRecords", "Posting", "PostQueue", "SelfTest", "Probes" }
-  for _, file in ipairs(core) do
-    helper.load("BetterAH/Core/" .. file .. ".lua", ns)
+  local ns = {}
+  local adapters = {}
+  for raw in io.lines("BetterAH/BetterAH.toc") do
+    local line = raw:gsub("%s+$", "")
+    if line:match("%.lua$") and not CLIENT_ONLY[line] then
+      helper.load("BetterAH/" .. line, ns)
+      local adapter = line:match("^Game/(%w+)%.lua$")
+      if adapter then adapters[#adapters + 1] = adapter end
+    end
   end
-  helper.load("BetterAH/Game/AuctionAPI.lua", ns)
-  helper.load("BetterAH/Game/PostingAPI.lua", ns)
-  helper.load("BetterAH/UI/PostView.lua", ns)
-  helper.load("BetterAH/UI/DisenchantView.lua", ns)
-  helper.load("BetterAH/UI/WindowResize.lua", ns)
-  helper.load("BetterAH/UI/Window.lua", ns)
   ns.db = db or {}
   ns.prices = ns.PriceDB.new({})
   ns.characters = ns.CharacterRecords.new({})
   ns.posting = ns.Posting.Settings.new({})
-  ns.AuctionAPI.install(env, ns)
-  ns.PostingAPI.install(env, ns)
+  for _, adapter in ipairs(adapters) do
+    if adapter ~= "CharacterTracker" then ns[adapter].install(env, ns) end
+  end
   local w = ns.Window.install(env, ns)
   env.openAuctionHouse()
   return env, w, ns

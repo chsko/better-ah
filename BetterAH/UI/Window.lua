@@ -259,8 +259,19 @@ function Window:buildPrices(f)
   scan:SetScript("OnClick", function() self:startScan() end)
   self.scanButton = scan
 
+  local mats = env.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+  mats:SetSize(120, 22)
+  mats:SetPoint("LEFT", scan, "RIGHT", 6, 0)
+  mats:SetText("Scan materials")
+  mats:SetScript("OnClick", function() self:scanMaterials() end)
+  Window.tooltip(env, mats, "Scan materials",
+    "Look up the 24 disenchant materials only, so disenchant values use fresh prices without a full scan.")
+  self.materialsButton = mats
+
   local status = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  status:SetPoint("LEFT", scan, "RIGHT", 10, 0)
+  status:SetPoint("LEFT", mats, "RIGHT", 10, 0)
+  status:SetPoint("RIGHT", panel, "RIGHT", 0, 0)
+  status:SetJustifyH("LEFT")
   self.scanStatus = status
 
   self.rows = self:buildRows(panel, COLUMNS, function(index) self:selectRow(index) end,
@@ -595,6 +606,61 @@ function Window:market()
   return ns.AuctionAPI and ns.AuctionAPI.currentMarket(self.env)
 end
 
+-- Looks up each disenchant material's listings (one search each, in the same queue as the Post view's
+-- checks) and records other sellers' listings like a full scan of those items, without counting as a
+-- full scan of the market.
+function Window:scanMaterials()
+  local addon = self.addon
+  local api, key = addon.postingAPI, self:market()
+  if self.materialScan then return end
+  self.statusMarket = key
+  if not (api and api.open and addon.prices and key) then
+    self.statusText = "Open the auction house to scan materials."
+    return self:renderPrices()
+  end
+  local mats = ns.Disenchant.MATERIALS
+  local scan = { done = 0, found = 0, failed = 0, total = #mats }
+  self.materialScan = scan
+  self.statusText = string.format("Scanning materials: 0 of %d.", scan.total)
+  for _, m in ipairs(mats) do
+    local entry = ns.PostingAPI.commodityEntry(self.env, m.id, m.name)
+    api:search(entry, function(listings, complete)
+      if self.materialScan ~= scan then return end
+      scan.done = scan.done + 1
+      local rows = {}
+      for _, l in ipairs(listings or {}) do
+        -- Only other sellers' units: own listings would feed the value that sets their own floor.
+        local count = (l.count or 0) - math.min(l.count or 0, l.ownCount or 0)
+        if count > 0 and (l.unit or 0) > 0 then
+          rows[#rows + 1] = { item = entry.item, name = m.name, count = count,
+            buyout = math.floor(l.unit * count + 0.5) }
+        end
+      end
+      if not listings then
+        scan.failed, scan.why = scan.failed + 1, complete
+      elseif complete ~= true then
+        scan.failed, scan.why = scan.failed + 1, "the auction house didn't send every listing"
+      elseif #rows > 0 then
+        addon.prices:recordScan(key, addon.auctionAPI and addon.auctionAPI:now() or 0, rows, true)
+        scan.found = scan.found + 1
+      end
+      if scan.done < scan.total then
+        self.statusText = string.format("Scanning materials: %d of %d.", scan.done, scan.total)
+      else
+        self.materialScan = nil
+        self.statusText = string.format("Materials scanned: %d of %d listed by other sellers.", scan.found,
+          scan.total)
+        if scan.failed > 0 then
+          self.statusText = self.statusText .. string.format(" %d couldn't be checked: %s.", scan.failed,
+            tostring(scan.why))
+        end
+      end
+      self:renderPrices()
+    end)
+  end
+  self:renderPrices()
+end
+
 function Window:startScan()
   local addon = self.addon
   if not (addon.auctionAPI and addon.prices) then
@@ -637,7 +703,8 @@ function Window:renderPrices()
   self.offset = math.max(0, math.min(self.offset, maxOffset))
   Window.syncScrollBar(self.rows.scrollBar, self.offset, #items)
   local scanning = addon.auctionAPI and addon.auctionAPI.pending
-  if scanning then self.scanButton:Disable() else self.scanButton:Enable() end
+  if scanning or self.materialScan then self.scanButton:Disable() else self.scanButton:Enable() end
+  if scanning or self.materialScan then self.materialsButton:Disable() else self.materialsButton:Enable() end
 
   -- A scan message belongs to the market it was about; on another market, show that one's state.
   if self.statusText and self.statusMarket ~= key then self.statusText = nil end

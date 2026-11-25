@@ -422,6 +422,48 @@ describe("Window", function()
       assert.matches("Market value", w.detailBody:GetText(), 1, true)
     end)
 
+    it("scans only the disenchant materials, without counting as a full scan", function()
+      local env, w, ns = setup()
+      env.listings[16204] = { { unitPrice = 150, quantity = 20, numOwnerItems = 20 },
+        { unitPrice = 200, quantity = 50 }, { unitPrice = 210, quantity = 30 } }
+      env.listings[16203] = { { unitPrice = 1000, quantity = 5 } }
+      env.openAuctionHouse()
+      w:select("prices")
+      w.materialsButton:Click()
+      assert.is_false(w.materialsButton:IsEnabled(), "one materials scan at a time")
+      assert.is_false(w.scanButton:IsEnabled(), "and no full scan during it")
+      assert.matches("Scanning materials: 0 of 24.", w.scanStatus:GetText(), 1, true)
+      env.runTimers()
+      assert.equal("Materials scanned: 2 of 24 listed by other sellers.", w.scanStatus:GetText())
+      assert.is_true(w.materialsButton:IsEnabled())
+      assert.equal(24, #env.searches)
+      assert.equal(200, (ns.prices:marketValue("/1/Horde", "i:16204", env.now)), "your own listings don't count")
+      assert.equal(1000, (ns.prices:marketValue("/1/Horde", "i:16203", env.now)))
+      assert.is_nil(ns.prices:lastScan("/1/Horde"), "not a full scan")
+      assert.equal("Illusion Dust", rowText(w, 2)[1])
+    end)
+
+    it("says when the auction house closes during a materials scan", function()
+      local env, w, ns = setup()
+      env.listings[16204] = { { unitPrice = 200, quantity = 50 } }
+      env.openAuctionHouse()
+      w:select("prices")
+      w:scanMaterials()
+      env.CloseAuctionHouse()
+      assert.is_nil(w.materialScan, "the scan ends")
+      assert.matches("couldn't be checked: the auction house closed", w.scanStatus:GetText(), 1, true)
+      assert.is_nil(ns.prices:marketValue("/1/Horde", "i:16204", env.now))
+    end)
+
+    it("asks for the auction house before scanning materials", function()
+      local env, w, ns = setup()
+      env.openAuctionHouse()
+      w:select("prices")
+      ns.postingAPI.open = false
+      w:scanMaterials()
+      assert.equal("Open the auction house to scan materials.", w.scanStatus:GetText())
+    end)
+
     it("explains an item known only from imported prices", function()
       local env, w, ns = setup()
       ns.prices:importPrices("/1/Horde", env.now, { ["i:5"] = { value = 777, name = "Imported" } })

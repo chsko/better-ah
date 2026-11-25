@@ -179,6 +179,16 @@ describe("PriceDB", function()
       assert.equal(5000, (db:marketValue(A, "i:2", t0)), "a cheap listing can't set the floor that undercuts it")
     end)
 
+    it("records a scan of some items like a scan of them, without being the market's last scan", function()
+      local db = PriceDB.new({})
+      db:recordScan(A, t0, wool(250), true)
+      assert.is_nil(db:lastScan(A))
+      assert.equal(250, (db:marketValue(A, "i:2592", t0)))
+      assert.is_not_nil(db:items(A)[1].lowest)
+      assert.is_false(db:recordSearch(A, t0 + 60, "i:2592", { { unit = 1, count = 5 }, { unit = 2, count = 5 } }),
+        "the same day as a materials scan")
+    end)
+
     it("leaves a day a full scan saw alone", function()
       local db = PriceDB.new({})
       db:recordScan(A, t0, wool(250))

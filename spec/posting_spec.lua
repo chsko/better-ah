@@ -122,6 +122,17 @@ describe("Posting", function()
       assert.is_nil(s:floor("/1/Horde", "i:2589"), "0 goes back to the default floor")
     end)
 
+    it("moves floors from an old market key to a new one that has none", function()
+      local store = { floors = { ["/1/Horde"] = { ["i:1"] = 500 }, ["/PvP/Horde"] = { ["i:2"] = 7 } } }
+      local s = Posting.Settings.new(store)
+      assert.is_true(s:adoptFloors("/1/Horde", "/Normal/Horde"))
+      assert.equal(500, s:floor("/Normal/Horde", "i:1"))
+      assert.is_nil(s:floor("/1/Horde", "i:1"))
+      assert.is_false(s:adoptFloors("/Normal/Horde", "/PvP/Horde"), "never over floors already set")
+      assert.equal(500, s:floor("/Normal/Horde", "i:1"))
+      assert.is_false(s:adoptFloors("/1/Alliance", "/PvP/Alliance"), "nothing to move")
+    end)
+
     it("refuses bad stacks, unknown durations and floors that aren't a copper amount", function()
       local s = Posting.Settings.new({})
       assert.is_false(s:setProfile("i:1", 0, 2))

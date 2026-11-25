@@ -62,16 +62,43 @@ function AuctionAPI.neutralHouse(env)
   return map and AuctionAPI.NEUTRAL_MAPS[map]
 end
 
+-- The ruleset the character plays on (ADR 0005): "Normal", "PvP", "Roleplay", "Roleplay PvP" or
+-- "Hardcore", from the game rules that are on, the way TSM reads it on Forever. GetActiveGameMode and
+-- GetForeverExperiencePreset say 1 on both Normal and PvP, so they can't tell rulesets apart. A client
+-- without these rules, or whose rules can't be read, falls back to GetActiveGameMode.
+function AuctionAPI.ruleset(env)
+  local rules, enum = env.C_GameRules, env.Enum and env.Enum.GameRule
+  if rules and rules.IsGameRuleActive and enum and enum.PvPRuleset ~= nil then
+    -- A rule that can't be read must not quietly count as off: that would file a PvP character
+    -- under Normal. Then the whole rules path is skipped.
+    local readable = true
+    local function on(name)
+      if enum[name] == nil then return false end
+      local value = try(rules.IsGameRuleActive, enum[name])
+      if type(value) ~= "boolean" then readable = false end
+      return value == true
+    end
+    local hardcore, pvp, rp = on("HardcoreRuleset"), on("PvPRuleset"), on("RPRuleset")
+    if readable then
+      if hardcore then return "Hardcore" end
+      if rp and pvp then return "Roleplay PvP" end
+      if rp then return "Roleplay" end
+      if pvp then return "PvP" end
+      return "Normal"
+    end
+  end
+  local mode = rules and try(rules.GetActiveGameMode)
+  return mode ~= nil and tostring(mode) or "default"
+end
+
 -- The market the player is on now: key, parts, or nil and a reason.
 -- Realm is pinned empty (ADR 0005): Forever has rulesets instead of realms and its
 -- GetRealmName() is empty, so the market is ruleset plus faction. Realm sources are only
 -- reported by the self-test. Neutral auction houses are their own faction, "Neutral".
 function AuctionAPI.currentMarket(env)
-  local rules = env.C_GameRules
-  local mode = rules and try(rules.GetActiveGameMode)
   local faction = AuctionAPI.neutralHouse(env) and "Neutral" or nonEmpty(try(env.UnitFactionGroup, "player"))
   if not faction then return nil, "Your faction isn't known yet." end
-  local parts = { realm = "", ruleset = mode ~= nil and tostring(mode) or "default", faction = faction }
+  local parts = { realm = "", ruleset = AuctionAPI.ruleset(env), faction = faction }
   local ok, key = pcall(ns.MarketKey.build, parts)
   if not ok then return nil, tostring(key) end
   return key, parts

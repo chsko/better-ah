@@ -42,6 +42,31 @@ describe("AuctionAPI", function()
     assert.equal("/2/Horde", ns.AuctionAPI.currentMarket(env))
   end)
 
+  it("names Forever's rulesets from the game rules that are on, like TSM", function()
+    local env, _, ns = setup()
+    local active = {}
+    env.Enum = { GameRule = { HardcoreRuleset = 101, PvPRuleset = 102, RPRuleset = 103 } }
+    env.C_GameRules.IsGameRuleActive = function(rule) return active[rule] == true end
+    assert.equal("/Normal/Horde", ns.AuctionAPI.currentMarket(env), "GetActiveGameMode is 1 on Normal and PvP")
+    active[102] = true
+    assert.equal("/PvP/Horde", ns.AuctionAPI.currentMarket(env))
+    active[103] = true
+    assert.equal("Roleplay PvP", ns.AuctionAPI.ruleset(env))
+    active[102] = nil
+    assert.equal("Roleplay", ns.AuctionAPI.ruleset(env))
+    active[101] = true
+    assert.equal("Hardcore", ns.AuctionAPI.ruleset(env))
+    env.C_GameRules.IsGameRuleActive = function() error("not on this client") end
+    assert.equal("1", ns.AuctionAPI.ruleset(env), "rules that can't be read fall back, never to Normal")
+    env.C_GameRules.IsGameRuleActive = function() return nil end
+    assert.equal("1", ns.AuctionAPI.ruleset(env), "nor a rule that answers nothing")
+    env.C_GameRules.IsGameRuleActive = nil
+    assert.equal("1", ns.AuctionAPI.ruleset(env))
+    env.C_GameRules.IsGameRuleActive = function() return false end
+    env.Enum = { GameRule = {} }
+    assert.equal("1", ns.AuctionAPI.ruleset(env), "no ruleset rules in the enum")
+  end)
+
   it("treats Gadgetzan, Booty Bay and Everlook as the neutral market", function()
     local env, _, ns = setup()
     for map, house in pairs({ [1446] = "Gadgetzan", [1434] = "Booty Bay", [1452] = "Everlook" }) do

@@ -517,6 +517,17 @@ describe("Window", function()
       return env, w, ns
     end
 
+    it("keeps floors set before rulesets had names (ADR 0005)", function()
+      local env, w, ns = postSetup()
+      ns.posting:setFloor("/1/Horde", "i:2592", 400)
+      env.Enum = { GameRule = { HardcoreRuleset = 1, PvPRuleset = 2, RPRuleset = 3 } }
+      env.C_GameRules.IsGameRuleActive = function() return false end
+      env.openAuctionHouse()
+      assert.equal("/Normal/Horde", w.postView.key)
+      assert.equal(400, ns.posting:floor("/Normal/Horde", "i:2592"))
+      assert.is_nil(ns.posting:floor("/1/Horde", "i:2592"))
+    end)
+
     it("is the first view, and checks the price of each item in the bags", function()
       local env, w = postSetup()
       env.openAuctionHouse()

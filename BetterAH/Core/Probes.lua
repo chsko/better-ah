@@ -82,6 +82,17 @@ local function build()
       local ok, value = call(env, path)
       if ok then hints[#hints + 1] = path .. "=" .. tostring(value) end
     end
+    -- The rules the market key reads (ADR 0005), so a wrong key shows whether the enum or the rule is off.
+    local rules, enum = env.C_GameRules, env.Enum and env.Enum.GameRule
+    for _, name in ipairs(enum and { "HardcoreRuleset", "PvPRuleset", "RPRuleset" } or {}) do
+      local id = enum[name]
+      local active = "?"
+      if id ~= nil and rules and rules.IsGameRuleActive then
+        local ok, value = pcall(rules.IsGameRuleActive, id)
+        active = ok and tostring(value) or "error"
+      end
+      hints[#hints + 1] = string.format("Enum.GameRule.%s=%s active=%s", name, tostring(id), active)
+    end
     return "info", #hints > 0 and table.concat(hints, ", ") or "no ruleset API found"
   end)
 

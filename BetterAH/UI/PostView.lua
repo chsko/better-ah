@@ -106,7 +106,8 @@ function PostView:build(f, x, y, width, height)
   status:SetWidth(width)
   status:SetJustifyH("LEFT")
   self.status = status
-  self.rows = self.window:buildRows(panel, PostView.COLUMNS, function(index) self:selectRow(index) end)
+  self.rows = self.window:buildRows(panel, PostView.COLUMNS, function(index) self:selectRow(index) end,
+    function(offset) self.offset = offset; self:render() end)
 
   local post = env.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
   post:SetSize(width - 96, 26)
@@ -433,6 +434,7 @@ function PostView:render()
   end
   local ROWS = #self.rows
   self.offset = math.max(0, math.min(self.offset, math.max(0, #rows - ROWS)))
+  ns.Window.syncScrollBar(self.rows.scrollBar, self.offset, #rows)
   for r, cells in ipairs(self.rows) do
     local row = rows[r + self.offset]
     if row then

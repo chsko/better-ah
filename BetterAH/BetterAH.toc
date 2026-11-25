@@ -11,6 +11,7 @@ Core/Time.lua
 Core/MarketKey.lua
 Core/MarketValue.lua
 Core/Disenchant.lua
+Core/Targets.lua
 Core/PriceDB.lua
 Core/CharacterRecords.lua
 Core/Posting.lua

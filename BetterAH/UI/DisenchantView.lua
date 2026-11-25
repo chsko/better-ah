@@ -1,12 +1,20 @@
--- The Disenchant view (issue #45): what one green of each item level band is worth disenchanted on this
--- market, after the auction house cut, worked out live from the materials' market values. It replaces
--- the spreadsheet step of disenchant sniping; targets and the sniper (#12) build on the same numbers.
--- The rules live in Core/Disenchant.lua; this file only draws them.
+-- The Disenchant view, in tabs. Values (issue #45): what one green of each item level band is worth
+-- disenchanted on this market, after the auction house cut, worked out live from the materials' market
+-- values; it replaces the spreadsheet step of disenchant sniping. Targets (#47): the greens to buy and
+-- the most to pay for each. Snipe (#12) comes next. The rules live in Core/Disenchant.lua and
+-- Core/Targets.lua; this file only draws them. Layout follows the mockup linked from #47.
 local _, ns = ...
 ns = ns or {}
 
 local DisenchantView = {}
 DisenchantView.__index = DisenchantView
+
+DisenchantView.TABS = { { "values", "Values" }, { "targets", "Targets" }, { "snipe", "Snipe" } }
+DisenchantView.TARGET_COLUMNS = {
+  { "", 4, 18 }, { "Target", 26, 140, "LEFT" }, { "Item types", 168, 100, "LEFT" }, { "Worth", 270, 85 },
+  { "Profit", 357, 80 }, { "Max price", 439, 97 },
+}
+local TAB_HEIGHT = 28 -- the tab row above each tab's own panel
 
 DisenchantView.COLUMNS = {
   { "Item level", 4, 90 }, { "Required level", 100, 100, "LEFT" }, { "Armor", 205, 105 }, { "Weapon", 315, 105 },
@@ -69,8 +77,35 @@ function DisenchantView.detailText(row, opts)
   return table.concat(lines, "\n")
 end
 
+-- What a target's items are worth after the cut, from its band's row: the lower of its classes' values
+-- (armor and weapons differ), and whether a material price was missing.
+function DisenchantView.targetWorth(target, row)
+  if not row then return nil, false end
+  local worth, missing
+  for class in pairs(ns.Targets.classes(target)) do
+    local v = row[class]
+    if v.net and (not worth or v.net < worth) then worth = v.net end
+    if (v.missing or 0) > 0 then missing = true end
+  end
+  return worth, missing == true
+end
+
+-- A target's name: its types and the band's usual required level, like "Armor, req. 21-25".
+function DisenchantView.targetName(target, row)
+  local band = row and row.band
+  if not band then return ns.Targets.typesText(target) end
+  return ns.Targets.typesText(target) .. ", req. " .. range(band.required.min, band.required.max, band.max)
+end
+
 function DisenchantView.new(window, addon)
-  return setmetatable({ window = window, env = window.env, addon = addon }, DisenchantView)
+  return setmetatable({ window = window, env = window.env, addon = addon, tab = "values" }, DisenchantView)
+end
+
+local function subPanel(env, parent, width, height)
+  local p = env.CreateFrame("Frame", nil, parent)
+  p:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -TAB_HEIGHT)
+  p:SetSize(width, height - TAB_HEIGHT)
+  return p
 end
 
 function DisenchantView:build(f, x, y, width, height)
@@ -80,18 +115,20 @@ function DisenchantView:build(f, x, y, width, height)
   panel:SetSize(width, height)
   self.panel = panel
 
-  local mats = env.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-  mats:SetSize(120, 22)
-  mats:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
-  mats:SetText("Scan materials")
-  mats:SetScript("OnClick", function() self.window:scanMaterials() end)
-  ns.Window.tooltip(env, mats, "Scan materials",
-    "Look up the 24 disenchant materials only, so these values use fresh prices without a full scan.")
-  self.materialsButton = mats
+  self.tabButtons = {}
+  for i, tab in ipairs(DisenchantView.TABS) do
+    local b = ns.Window.entryButton(env, panel, 90)
+    b:SetPoint("TOPLEFT", panel, "TOPLEFT", (i - 1) * 94, 0)
+    b:SetText(tab[2])
+    b:SetScript("OnClick", function() self:selectTab(tab[1]) end)
+    self.tabButtons[tab[1]] = b
+  end
+  self.tabButtons.snipe:Disable()
+  ns.Window.tooltip(env, self.tabButtons.snipe, "Snipe", "Not available yet: sniping your targets comes next.")
 
   local salvager = env.CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
   salvager:SetSize(24, 24)
-  salvager:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -112, 1)
+  salvager:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -112, 2)
   salvager:SetScript("OnClick", function(b) self:setSalvager(b:GetChecked() and true or false) end)
   ns.Window.tooltip(env, salvager, "Arcane Salvager",
     "Count the Arcane Salvager's 50% chance of one extra dust or essence per disenchant.")
@@ -105,24 +142,209 @@ function DisenchantView:build(f, x, y, width, height)
   if salvager.SetHitRectInsets then salvager:SetHitRectInsets(0, -84, 0, 0) end
   self.salvagerButton, self.salvagerLabel = salvager, label
 
-  local status = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  self:buildValues(subPanel(env, panel, width, height), width)
+  self:buildTargets(subPanel(env, panel, width, height), width)
+  self:buildEditors()
+  return panel
+end
+
+function DisenchantView:buildValues(p, width)
+  local env = self.env
+  self.valuesPanel = p
+  local mats = env.CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
+  mats:SetSize(120, 22)
+  mats:SetPoint("TOPLEFT", p, "TOPLEFT", 0, 0)
+  mats:SetText("Scan materials")
+  mats:SetScript("OnClick", function() self.window:scanMaterials() end)
+  ns.Window.tooltip(env, mats, "Scan materials",
+    "Look up the 24 disenchant materials only, so these values use fresh prices without a full scan.")
+  self.materialsButton = mats
+
+  local status = p:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   status:SetPoint("LEFT", mats, "RIGHT", 10, 0)
-  status:SetPoint("RIGHT", salvager, "LEFT", -8, 0)
+  status:SetPoint("RIGHT", p, "RIGHT", 0, 0)
   status:SetJustifyH("LEFT")
   if status.SetMaxLines then status:SetMaxLines(2) end -- clear of the column headers below
   self.status = status
 
-  self.rows = self.window:buildRows(panel, DisenchantView.COLUMNS, function(index) self:selectRow(index) end)
+  self.rows = self.window:buildRows(p, DisenchantView.COLUMNS, function(index) self:selectRow(index) end)
 
-  local note = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  note:SetPoint("TOPLEFT", panel, "TOPLEFT", 4, -32 - (#ns.Disenchant.greenBands() + 1) * 18 - 8)
+  local note = p:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  note:SetPoint("TOPLEFT", p, "TOPLEFT", 4, -32 - (#ns.Disenchant.greenBands() + 1) * 18 - 8)
   note:SetWidth(width - 8)
   note:SetJustifyH("LEFT")
   note:SetText("What one green of each band is worth disenchanted, after the 5% auction house cut. "
     .. "Required level is usually 5 below item level. * Some of its materials have no price yet, so the "
     .. "value is too low. Scan materials to price them.")
   self.note = note
-  return panel
+end
+
+function DisenchantView:buildTargets(p, width)
+  local env = self.env
+  self.targetsPanel = p
+  local new = env.CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
+  new:SetSize(100, 22)
+  new:SetPoint("TOPLEFT", p, "TOPLEFT", 0, 0)
+  new:SetText("New target")
+  new:SetScript("OnClick", function() self:newTarget(self.selected or 26) end)
+  ns.Window.tooltip(env, new, "New target", "Add a target for green armor, in the band selected on Values "
+    .. "(item level 26-30 if none). Change its item types, band and profit on the right.")
+  self.newButton = new
+  local hint = p:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  hint:SetPoint("LEFT", new, "RIGHT", 10, 0)
+  hint:SetPoint("RIGHT", p, "RIGHT", 0, 0)
+  hint:SetJustifyH("LEFT")
+  if hint.SetMaxLines then hint:SetMaxLines(2) end
+  hint:SetText("Greens to buy for disenchanting. A target's max price is what its band is worth after the "
+    .. "cut, minus your profit.")
+  self.targetsHint = hint
+
+  self.targetOffset = 0
+  self.targetRows = self.window:buildRows(p, DisenchantView.TARGET_COLUMNS,
+    function(index) self:selectTarget(index + self.targetOffset) end,
+    function(offset) self.targetOffset = offset; self:render() end)
+  p:EnableMouseWheel(true)
+  p:SetScript("OnMouseWheel", function(_, delta) self.targetOffset = self.targetOffset - delta * 3; self:render() end)
+  for r, cells in ipairs(self.targetRows) do
+    local box = env.CreateFrame("CheckButton", nil, cells.button, "UICheckButtonTemplate")
+    box:SetSize(18, 18)
+    box:SetPoint("LEFT", cells.button, "LEFT", 2, 0)
+    box:SetScript("OnClick", function(b) self:setEnabled(r + self.targetOffset, b:GetChecked()) end)
+    ns.Window.tooltip(env, box, "Snipe this target", "Untick to keep the target without sniping it.")
+    cells.check = box
+  end
+  self.targetsEmpty = p:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  self.targetsEmpty:SetPoint("TOPLEFT", p, "TOPLEFT", 4, -56)
+  self.targetsEmpty:SetWidth(width - 8)
+  self.targetsEmpty:SetJustifyH("LEFT")
+  self.targetsEmpty:SetText("No targets yet. Press New target, or pick a band on Values and make one from it.")
+end
+
+-- Controls on the detail panel: the Values tab's "make a target" button and the target editor.
+function DisenchantView:buildEditors()
+  local env, w = self.env, self.window
+  local make = env.CreateFrame("Button", nil, w.detailLayer, "UIPanelButtonTemplate")
+  make:SetSize(196, 22)
+  make:SetPoint("BOTTOMLEFT", w.detailLayer, "BOTTOMLEFT", 12, 12)
+  make:SetText("Make a target")
+  ns.Window.tooltip(env, make, "Make a target", "Add a target for green armor in this band, then change it "
+    .. "on Targets.")
+  make:SetScript("OnClick", function() if self.selected then self:newTarget(self.selected) end end)
+  make:Hide()
+  self.makeButton = make
+
+  local box = env.CreateFrame("Frame", nil, w.detailLayer)
+  -- Under the title, which can take two lines.
+  box:SetPoint("TOPLEFT", w.detailTitle, "BOTTOMLEFT", 0, -8)
+  box:SetSize(196, 350)
+  box:Hide()
+  self.editor = box
+  local function label(text, y)
+    local l = box:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    l:SetPoint("TOPLEFT", box, "TOPLEFT", 0, y)
+    l:SetText(text)
+    return l
+  end
+  local function button(text, width, y, x, onClick)
+    local b = env.CreateFrame("Button", nil, box, "UIPanelButtonTemplate")
+    b:SetSize(width, 20)
+    b:SetPoint("TOPLEFT", box, "TOPLEFT", x, y)
+    b:SetText(text)
+    b:SetScript("OnClick", onClick)
+    return b
+  end
+
+  label("Item types", 0)
+  self.typeBoxes = {}
+  for i, t in ipairs(ns.Targets.TYPES) do
+    local c = env.CreateFrame("CheckButton", nil, box, "UICheckButtonTemplate")
+    c:SetSize(20, 20)
+    c:SetPoint("TOPLEFT", box, "TOPLEFT", ((i - 1) % 2) * 98, -14 - math.floor((i - 1) / 2) * 20)
+    local text = c.Text
+    if not text then
+      text = box:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+      text:SetPoint("LEFT", c, "RIGHT", 1, 0)
+    end
+    text:SetText(t.label)
+    if c.SetHitRectInsets then c:SetHitRectInsets(0, -70, 0, 0) end
+    c:SetScript("OnClick", function(b) self:setType(t.id, b:GetChecked()) end)
+    self.typeBoxes[t.id] = c
+  end
+
+  label("Level band", -122)
+  self.bandDown = button("<", 24, -138, 0, function() self:stepBand(-1) end)
+  self.bandUp = button(">", 24, -138, 172, function() self:stepBand(1) end)
+  self.bandText = box:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  self.bandText:SetPoint("TOPLEFT", box, "TOPLEFT", 28, -142)
+  self.bandText:SetWidth(140)
+
+  label("Profit you want", -168)
+  local profit = env.CreateFrame("EditBox", nil, box, "InputBoxTemplate")
+  profit:SetSize(70, 20)
+  profit:SetPoint("TOPLEFT", box, "TOPLEFT", 6, -184)
+  profit:SetAutoFocus(false)
+  -- What is typed belongs to the target (and unit) that had the box when typing started, whatever is
+  -- selected by the time focus goes. Escape drops it.
+  profit:SetScript("OnEditFocusGained", function()
+    local t = self:current()
+    self.editing = t and { target = t, kind = t.profit and t.profit.kind or "percent" } or nil
+  end)
+  profit:SetScript("OnEscapePressed", function(e)
+    self.editing = nil
+    e:ClearFocus()
+    self:render() -- back to the saved profit
+  end)
+  profit:SetScript("OnEnterPressed", function(e) e:ClearFocus() end)
+  profit:SetScript("OnEditFocusLost", function(e)
+    if type(env.EditBox_ClearHighlight) == "function" then pcall(env.EditBox_ClearHighlight, e) end
+    self:saveProfit()
+  end)
+  self.profitInput = profit
+  self.goldButton = button("Gold", 50, -184, 84, function() self:setProfitKind("gold") end)
+  self.percentButton = button("%", 40, -184, 136, function() self:setProfitKind("percent") end)
+  ns.Window.tooltip(env, self.percentButton, "Profit as a percent",
+    "The share of what the item is worth disenchanted that you want to keep.")
+
+  self.worthText = box:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  self.worthText:SetPoint("TOPLEFT", box, "TOPLEFT", 0, -214)
+  self.worthText:SetWidth(196)
+  self.worthText:SetJustifyH("LEFT")
+  label("Most it buys at", -240)
+  self.maxText = box:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  self.maxText:SetPoint("TOPLEFT", box, "TOPLEFT", 0, -256)
+  self.editorStatus = box:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  self.editorStatus:SetPoint("TOPLEFT", box, "TOPLEFT", 0, -276)
+  self.editorStatus:SetWidth(196)
+  self.editorStatus:SetJustifyH("LEFT")
+  self.deleteButton = button("Delete target", 110, -326, 0, function() self:deleteTarget() end)
+end
+
+-- The saved targets.
+function DisenchantView:targets()
+  local addon = self.addon
+  addon.disenchant = addon.disenchant or {}
+  addon.disenchant.targets = addon.disenchant.targets or {}
+  return ns.Targets.new(addon.disenchant.targets)
+end
+
+-- Ends typing in the profit box (saving it for its target) before the selection moves on.
+function DisenchantView:dropFocus()
+  local box = self.profitInput
+  if box and box.HasFocus and box:HasFocus() then box:ClearFocus() end
+end
+
+function DisenchantView:hideEditors()
+  self:dropFocus()
+  if self.editor then self.editor:Hide() end
+  if self.makeButton then self.makeButton:Hide() end
+end
+
+function DisenchantView:selectTab(tab)
+  self:dropFocus()
+  if tab == "snipe" then return end
+  self.tab = tab
+  self.message = nil
+  self:render()
 end
 
 function DisenchantView:setSalvager(on)
@@ -139,6 +361,121 @@ function DisenchantView:selectRow(index)
   self:render()
 end
 
+function DisenchantView:selectTarget(index)
+  self:dropFocus()
+  if not self:targets():list()[index] then return end
+  self.target, self.message = index, nil
+  self:render()
+end
+
+function DisenchantView:current()
+  return self.target and self:targets():list()[self.target]
+end
+
+function DisenchantView:newTarget(band)
+  self:dropFocus()
+  local _, index = self:targets():add(band)
+  self.tab, self.target, self.message = "targets", index, nil
+  self:render()
+end
+
+function DisenchantView:deleteTarget()
+  self:dropFocus()
+  if not self:current() then return end
+  self:targets():remove(self.target)
+  self.target = nil
+  self:render()
+end
+
+function DisenchantView:setEnabled(index, on)
+  local t = self:targets():list()[index]
+  if t then t.enabled = on and true or false end
+  self:render()
+end
+
+function DisenchantView:setType(id, on)
+  local t = self:current()
+  if not t then return end
+  t.types = t.types or {}
+  t.types[id] = on and true or nil
+  self.message = nil
+  self:render()
+end
+
+-- Moves the target to the next or previous green band.
+function DisenchantView:stepBand(by)
+  local t = self:current()
+  if not t then return end
+  local bands = ns.Disenchant.greenBands()
+  local found = false
+  for i, band in ipairs(bands) do
+    if band.min == t.band then
+      local other = bands[i + by]
+      if other then t.band = other.min end
+      found = true
+      break
+    end
+  end
+  if not found then t.band = bands[1].min end -- a band no longer in the table: start again at the bottom
+  self.message = nil
+  self:render()
+end
+
+function DisenchantView:rowFor(band)
+  for _, row in ipairs(self.list or {}) do
+    if row.band.min == band then return row end
+  end
+  return nil
+end
+
+-- Switching between gold and percent keeps the max price where it was when the target has a worth
+-- (a gold profit above the worth becomes 99%). Without a worth it starts from 10% or 2s.
+function DisenchantView:setProfitKind(kind)
+  local t = self:current()
+  if not t or (t.profit and t.profit.kind == kind) then return end
+  local worth = DisenchantView.targetWorth(t, self:rowFor(t.band))
+  local profit = ns.Targets.profitOf(t, worth or 0)
+  if kind == "percent" then
+    t.profit = { kind = "percent", amount = worth and worth > 0 and math.min(99, math.floor(profit * 100 / worth
+      + 0.5)) or 10 }
+  else
+    t.profit = { kind = "gold", amount = worth and profit or 200 }
+  end
+  self.message = nil
+  self:render()
+end
+
+function DisenchantView:saveProfit()
+  local editing = self.editing
+  self.editing = nil
+  if not editing then return end
+  local t, kind = editing.target, editing.kind
+  local still = false
+  for _, other in ipairs(self:targets():list()) do still = still or other == t end
+  if not still then return end
+  local text = self.profitInput:GetText() or ""
+  if text == (kind == "percent" and tostring(t.profit and t.profit.amount) or ns.Targets.profitText(t)) then
+    return -- unchanged
+  end
+  local amount
+  if kind == "percent" then
+    amount = tonumber((text:gsub("%%", ""):gsub("%s", "")))
+    if not (amount and amount >= 0 and amount < 100) then
+      self.message = "Type a percent from 0 to 99, like 20."
+      return self:render()
+    end
+  else
+    amount = ns.Money.parse(text)
+    if not amount then
+      self.message = "Type an amount like 3s or 1g 5s."
+      return self:render()
+    end
+  end
+  t.profit = { kind = kind, amount = amount }
+  self.message = nil
+  self:render()
+end
+
 function DisenchantView:render()
   if not self.panel then return end
   local addon, w = self.addon, self.window
@@ -151,7 +488,22 @@ function DisenchantView:render()
   end
   self.list = DisenchantView.rows(priceOf, opts)
   self.salvagerButton:SetChecked(opts.salvager)
+  for id, b in pairs(self.tabButtons) do ns.Window.markSelected(b, id == self.tab) end
+  self.tabButtons.snipe:GetFontString():SetFontObject("GameFontDisableSmall") -- not available yet
+  self.valuesPanel:SetShown(self.tab == "values")
+  self.targetsPanel:SetShown(self.tab == "targets")
+  -- Only hidden when it goes away: hiding the editor would take focus from the profit box.
+  if self.tab ~= "targets" then self.editor:Hide() end
+  if self.tab ~= "values" then self.makeButton:Hide() end
+  if self.tab == "targets" then
+    self:renderTargets()
+  else
+    self:renderValues(key, opts)
+  end
+end
 
+function DisenchantView:renderValues(key, opts)
+  local addon, w = self.addon, self.window
   local scanning = (addon.auctionAPI and addon.auctionAPI.pending) or w.materialScan
   if scanning then self.materialsButton:Disable() else self.materialsButton:Enable() end
   local text
@@ -185,10 +537,79 @@ function DisenchantView:render()
   if chosen then
     w.detailTitle:SetText(string.format("Greens of item level %s", range(chosen.band.min, chosen.band.max)))
     w.detailBody:SetText(DisenchantView.detailText(chosen, opts))
+    self.makeButton:Show()
   else
     w.detailTitle:SetText("")
     w.detailBody:SetText("Select a band to see what each material adds.")
   end
+end
+
+function DisenchantView:renderTargets()
+  local w = self.window
+  local list = self:targets():list()
+  if self.target and not list[self.target] then self.target = nil end
+  local money = ns.Money.format
+  self.targetOffset = math.max(0, math.min(self.targetOffset, #list - #self.targetRows))
+  ns.Window.syncScrollBar(self.targetRows.scrollBar, self.targetOffset, #list)
+  for r, cells in ipairs(self.targetRows) do
+    local index = r + self.targetOffset
+    local t = list[index]
+    if t then
+      local row = self:rowFor(t.band)
+      local worth, missing = DisenchantView.targetWorth(t, row)
+      local max = ns.Targets.maxPrice(t, worth)
+      cells[2]:SetText(DisenchantView.targetName(t, row))
+      cells[3]:SetText(ns.Targets.typesText(t))
+      cells[4]:SetText(worth and (money(worth) .. (missing and " *" or "")) or "-")
+      cells[5]:SetText(ns.Targets.profitText(t))
+      cells[6]:SetText(max and money(max) or "-")
+      cells.check:SetChecked(t.enabled)
+      cells.button:Show()
+    else
+      for _, cell in ipairs(cells) do cell:SetText("") end
+      cells.button:Hide()
+    end
+    cells.button.selectedTexture:SetShown(t ~= nil and index == self.target)
+  end
+  self.targetsEmpty:SetShown(#list == 0)
+
+  local t = self:current()
+  if not t then
+    self.editor:Hide()
+    w.detailTitle:SetText("")
+    w.detailBody:SetText(#list > 0 and "Select a target to change it." or "")
+    return
+  end
+  local row = self:rowFor(t.band)
+  w.detailTitle:SetText(DisenchantView.targetName(t, row))
+  w.detailBody:SetText("")
+  self.editor:Show()
+  for id, c in pairs(self.typeBoxes) do c:SetChecked(t.types and t.types[id] == true) end
+  self.bandText:SetText(row and string.format("Req. %s, item level %s",
+    range(row.band.required.min, row.band.required.max, row.band.max), range(row.band.min, row.band.max)) or "-")
+  local bands = ns.Disenchant.greenBands()
+  if not row or row.band.min == bands[1].min then self.bandDown:Disable() else self.bandDown:Enable() end
+  if row and row.band.min == bands[#bands].min then self.bandUp:Disable() else self.bandUp:Enable() end
+  local percent = t.profit and t.profit.kind == "percent"
+  if percent then
+    self.percentButton:LockHighlight(); self.goldButton:UnlockHighlight()
+  else
+    self.goldButton:LockHighlight(); self.percentButton:UnlockHighlight()
+  end
+  -- Never rewrite the box while the player is typing in it.
+  if not (self.profitInput.HasFocus and self.profitInput:HasFocus()) then
+    self.profitInput:SetText(percent and tostring(t.profit.amount) or ns.Targets.profitText(t))
+  end
+  local worth, missing = DisenchantView.targetWorth(t, row)
+  local max = ns.Targets.maxPrice(t, worth)
+  self.worthText:SetText(worth and ("Worth " .. money(worth) .. " after the cut")
+    or "No worth yet: scan materials on Values.")
+  self.maxText:SetText(max and money(max) or "-")
+  local note = self.message
+  if not note and not next(ns.Targets.classes(t)) then note = "Pick at least one item type to snipe." end
+  if not note and missing then note = "A material has no price yet, so this is too low. Scan materials on Values." end
+  if not note and max == 0 then note = "The profit is more than the item is worth, so nothing would be bought." end
+  self.editorStatus:SetText(note or "Updates as material prices change.")
 end
 
 ns.DisenchantView = DisenchantView

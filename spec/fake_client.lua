@@ -43,7 +43,18 @@ function Frame:GetText() return self.text end
 function Frame:LockHighlight() self.highlighted = true end
 function Frame:SetAutoFocus() end
 function Frame:SetNumeric(on) self.numeric = on end
-function Frame:ClearFocus() self.focused = false end
+-- Focus, like the client: gaining and losing it run the box's scripts.
+function Frame:SetFocus()
+  if self.focused then return end
+  self.focused = true
+  if self.scripts.OnEditFocusGained then self.scripts.OnEditFocusGained(self) end
+end
+function Frame:HasFocus() return self.focused == true end
+function Frame:ClearFocus()
+  if not self.focused then return end
+  self.focused = false
+  if self.scripts.OnEditFocusLost then self.scripts.OnEditFocusLost(self) end
+end
 function Frame:UnlockHighlight() self.highlighted = false end
 function Frame:IsShown() return self.shown end
 function Frame:Show()

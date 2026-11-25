@@ -4,8 +4,8 @@ local fake = require("spec.fake_client")
 local function setup(opts)
   local env = fake.new(opts)
   local ns = helper.load("BetterAH/Core/WindowModel.lua")
-  local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "PriceDB", "CharacterRecords", "Posting",
-    "PostQueue", "SelfTest", "Probes" }
+  local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "Targets", "PriceDB", "CharacterRecords",
+    "Posting", "PostQueue", "SelfTest", "Probes" }
   for _, file in ipairs(core) do
     helper.load("BetterAH/Core/" .. file .. ".lua", ns)
   end
@@ -679,6 +679,132 @@ describe("Window", function()
       w:startScan()
       env.runTimers()
       assert.equal("Prices from ruleset 1, Horde.", w.disenchantView.status:GetText())
+    end)
+
+    local function typeIn(box, text)
+      box:SetFocus()
+      box:SetText(text)
+      box.scripts.OnEnterPressed(box)
+    end
+
+    local function target(w, r)
+      local out = {}
+      for c, cell in ipairs(w.disenchantView.targetRows[r]) do out[c] = cell:GetText() end
+      return out
+    end
+
+    it("opens on Values, with Targets beside it and Snipe still to come", function()
+      local _, w = deSetup()
+      local v = w.disenchantView
+      assert.is_true(v.valuesPanel:IsShown())
+      assert.is_false(v.targetsPanel:IsShown())
+      assert.is_true(v.tabButtons.values.selectedTexture:IsShown())
+      assert.is_false(v.tabButtons.snipe:IsEnabled())
+      v.tabButtons.targets:Click()
+      assert.is_true(v.targetsPanel:IsShown())
+      assert.is_false(v.valuesPanel:IsShown())
+      assert.is_true(v.targetsEmpty:IsShown())
+      assert.is_false(v.targetRows[1].button:IsShown())
+      assert.is_true(v.salvagerButton:IsShown(), "the Salvager counts on every tab")
+    end)
+
+    it("adds a target and shows its max price from the band's worth", function()
+      local _, w, ns = deSetup()
+      local v = w.disenchantView
+      v.tabButtons.targets:Click()
+      v.newButton:Click()
+      assert.same({ "", "Armor, req. 21-25", "Armor", "14s 20c", "10%", "12s 78c" }, target(w, 1))
+      assert.is_true(v.targetRows[1].check:GetChecked())
+      assert.equal(1, #ns.disenchant.targets, "saved")
+      assert.is_true(v.editor:IsShown())
+      assert.equal("Armor, req. 21-25", w.detailTitle:GetText())
+      assert.equal("12s 78c", v.maxText:GetText())
+      assert.equal("Worth 14s 20c after the cut", v.worthText:GetText())
+      v.targetRows[1].check:Click()
+      assert.is_false(ns.disenchant.targets[1].enabled, "kept but not sniped")
+    end)
+
+    it("edits a target's types, band and profit", function()
+      local _, w, ns = deSetup()
+      local v = w.disenchantView
+      v.tabButtons.targets:Click()
+      v.newButton:Click()
+      v.typeBoxes.plate:Click()
+      v.typeBoxes.mail:Click()
+      assert.equal("Cloth, Leather, req. 21-25", target(w, 1)[2])
+      v.goldButton:Click()
+      assert.same({ kind = "gold", amount = 142 }, ns.disenchant.targets[1].profit, "the max price stays put")
+      typeIn(v.profitInput, "3s")
+      assert.equal("11s 20c", v.maxText:GetText())
+      assert.equal("3s 0c", target(w, 1)[5])
+      typeIn(v.profitInput, "lots")
+      assert.equal("Type an amount like 3s or 1g 5s.", v.editorStatus:GetText())
+      v.percentButton:Click()
+      assert.same({ kind = "percent", amount = 21 }, ns.disenchant.targets[1].profit)
+      typeIn(v.profitInput, "150")
+      assert.equal("Type a percent from 0 to 99, like 20.", v.editorStatus:GetText())
+      v.bandUp:Click()
+      assert.equal(31, ns.disenchant.targets[1].band)
+      assert.equal("Cloth, Leather, req. 26-30", w.detailTitle:GetText())
+      assert.matches("%*$", target(w, 1)[4], "only Soul Dust is priced for that band")
+      assert.equal("A material has no price yet, so this is too low. Scan materials on Values.",
+        v.editorStatus:GetText())
+      v.deleteButton:Click()
+      assert.equal(0, #ns.disenchant.targets)
+      assert.is_false(v.editor:IsShown())
+    end)
+
+    it("saves what was typed to the target it was typed for, and drops it on Escape", function()
+      local _, w, ns = deSetup()
+      local v = w.disenchantView
+      v.tabButtons.targets:Click()
+      v.newButton:Click()
+      v.newButton:Click()
+      v.selectTarget(v, 1)
+      v.profitInput:SetFocus()
+      v.profitInput:SetText("30")
+      v.render(v) -- a materials scan step while typing
+      assert.equal("30", v.profitInput:GetText(), "the box keeps what is being typed")
+      v.targetRows[2].button:Click()
+      v.profitInput:ClearFocus() -- the click takes the focus
+      assert.same({ kind = "percent", amount = 30 }, ns.disenchant.targets[1].profit)
+      assert.same({ kind = "percent", amount = 10 }, ns.disenchant.targets[2].profit)
+      v.profitInput:SetFocus()
+      v.profitInput:SetText("50")
+      v.profitInput.scripts.OnEscapePressed(v.profitInput)
+      assert.same({ kind = "percent", amount = 10 }, ns.disenchant.targets[2].profit, "Escape drops it")
+      assert.equal("10", v.profitInput:GetText())
+    end)
+
+    it("scrolls through more targets than fit", function()
+      local _, w, ns = deSetup()
+      local v = w.disenchantView
+      v.tabButtons.targets:Click()
+      for _ = 1, 16 do v.newButton:Click() end
+      assert.is_true(v.targetRows.scrollBar:IsShown())
+      v.targetRows.scrollBar:drag(1)
+      assert.equal(2, v.targetOffset)
+      v.targetRows[14].button:Click()
+      assert.equal(16, v.target)
+      v.targetRows[14].check:Click()
+      assert.is_false(ns.disenchant.targets[16].enabled)
+      v.deleteButton:Click()
+      assert.equal(15, #ns.disenchant.targets)
+    end)
+
+    it("makes a target from a band on Values", function()
+      local _, w, ns = deSetup()
+      local v = w.disenchantView
+      assert.is_false(v.makeButton:IsShown())
+      v.rows[3].button:Click()
+      assert.is_true(v.makeButton:IsShown())
+      v.makeButton:Click()
+      assert.equal("targets", v.tab)
+      assert.equal(21, ns.disenchant.targets[1].band)
+      assert.equal("Armor, req. 16-20", w.detailTitle:GetText())
+      w:select("prices")
+      assert.is_false(v.editor:IsShown(), "no editor over other views")
+      assert.is_false(v.makeButton:IsShown())
     end)
 
     it("scans materials from the view and shows the new values", function()

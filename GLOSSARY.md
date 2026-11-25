@@ -21,7 +21,7 @@ The stored history of scans per market, and everything derived from it. It can a
 _Avoid_: AuctionDB, cache
 
 **Market value**:
-An item's typical price on a market: the average of the cheapest part of each scan's listings, smoothed over 14 days.
+An item's typical price on a market: the average of the cheapest part of each scan's listings, leaving out troll prices far below the rest, smoothed over 14 days (UTC days).
 _Avoid_: DBMarket, average price, AH price
 
 ## Selling

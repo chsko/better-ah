@@ -9,6 +9,7 @@ Core/Init.lua
 Core/Money.lua
 Core/Time.lua
 Core/MarketKey.lua
+Core/MarketValue.lua
 Core/PriceDB.lua
 Core/SelfTest.lua
 Core/Probes.lua

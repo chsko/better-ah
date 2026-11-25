@@ -6,9 +6,13 @@ ns = ns or {}
 
 local Window = {}
 
-local WIDTH, HEIGHT, SIDEBAR = 820, 470, 180
-local ROWS, ROW_HEIGHT = 14, 18
-local COLUMNS = { { "Item", 0, 260 }, { "Lowest buyout", 270, 130 }, { "Quantity", 410, 70 }, { "Seen", 490, 110 } }
+local WIDTH, HEIGHT, SIDEBAR, DETAIL = 980, 470, 180, 220
+local ROWS, ROW_HEIGHT, LIST_WIDTH = 14, 18, 540
+local COLUMNS = {
+  { "Item", 4, 190 }, { "Lowest buyout", 196, 95 }, { "Market value", 293, 95 }, { "Quantity", 390, 55 },
+  { "Seen", 447, 90 },
+}
+local HISTORY_LINES = 7
 local BLIZZARD_FRAMES = { "AuctionFrame", "AuctionHouseFrame" }
 local TOP = -60 -- where the panels start, below the title bar and the toggle button
 
@@ -21,6 +25,9 @@ Window.ART = {
   entry = "auctionhouse-nav-button",
   entrySelected = "auctionhouse-nav-button-select",
   entryHighlight = "auctionhouse-nav-button-highlight",
+  rowHighlight = "auctionhouse-ui-row-highlight",
+  rowSelected = "auctionhouse-ui-row-select",
+  detail = "auctionhouse-background-sell-right",
 }
 
 -- What each placeholder view will show, until it is built.
@@ -110,7 +117,7 @@ function Window:build()
   self.sidebarPanel:SetWidth(SIDEBAR - 2)
   self.mainPanel = Window.panel(env, f, Window.ART.main)
   self.mainPanel:SetPoint("TOPLEFT", f, "TOPLEFT", SIDEBAR + 6, TOP)
-  self.mainPanel:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -6, 6)
+  self.mainPanel:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -(DETAIL + 10), 6)
   -- InsetFrameTemplate uses its parent's frame level, so text drawn on f could end up under the panel
   -- art. Texts live on this layer, one level up.
   local text = env.CreateFrame("Frame", nil, f)
@@ -150,10 +157,11 @@ function Window:build()
 
   local placeholder = text:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
   placeholder:SetPoint("TOPLEFT", heading, "BOTTOMLEFT", 0, -10)
-  placeholder:SetWidth(WIDTH - SIDEBAR - 40)
+  placeholder:SetWidth(WIDTH - SIDEBAR - DETAIL - 50)
   placeholder:SetJustifyH("LEFT")
   self.placeholder = placeholder
 
+  self:buildDetail(f)
   self:buildPrices(f)
   self:renderView()
   return f
@@ -236,7 +244,7 @@ function Window:buildPrices(f)
   local env = self.env
   local panel = env.CreateFrame("Frame", nil, f)
   panel:SetPoint("TOPLEFT", f, "TOPLEFT", SIDEBAR + 16, TOP - 42)
-  panel:SetSize(WIDTH - SIDEBAR - 30, HEIGHT + TOP - 42 - 8) -- down to the main panel's inner bottom
+  panel:SetSize(LIST_WIDTH, HEIGHT + TOP - 42 - 8) -- down to the main panel's inner bottom
   panel:EnableMouseWheel(true)
   panel:SetScript("OnMouseWheel", function(_, delta) self:scrollPrices(-delta * 3) end)
   self.pricesPanel = panel
@@ -254,11 +262,34 @@ function Window:buildPrices(f)
 
   self.rows = {}
   for r = 0, ROWS do
-    local row = {}
+    -- Item rows are buttons, so they can be selected; the header is plain text on the panel.
+    local parent = panel
+    if r > 0 then
+      parent = env.CreateFrame("Button", nil, panel)
+      parent:SetSize(LIST_WIDTH, ROW_HEIGHT)
+      parent:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -32 - r * ROW_HEIGHT + 3)
+      local highlight = parent:CreateTexture(nil, "HIGHLIGHT")
+      highlight:SetAtlas(Window.ART.rowHighlight, false)
+      highlight:SetAllPoints(parent)
+      highlight:SetBlendMode("ADD")
+      local selected = parent:CreateTexture(nil, "ARTWORK")
+      selected:SetAtlas(Window.ART.rowSelected, false)
+      selected:SetAllPoints(parent)
+      selected:SetBlendMode("ADD")
+      selected:Hide()
+      parent.selectedTexture = selected
+      local index = r
+      parent:SetScript("OnClick", function() self:selectRow(index) end)
+    end
+    local row = { button = r > 0 and parent or nil }
     for c, col in ipairs(COLUMNS) do
       local font = r == 0 and "GameFontNormalSmall" or "GameFontHighlightSmall"
-      local cell = panel:CreateFontString(nil, "OVERLAY", font)
-      cell:SetPoint("TOPLEFT", panel, "TOPLEFT", col[2], -32 - r * ROW_HEIGHT)
+      local cell = parent:CreateFontString(nil, "OVERLAY", font)
+      if r == 0 then
+        cell:SetPoint("TOPLEFT", panel, "TOPLEFT", col[2], -32)
+      else
+        cell:SetPoint("LEFT", parent, "LEFT", col[2], 0)
+      end
       cell:SetWidth(col[3])
       cell:SetJustifyH(c == 1 and "LEFT" or "RIGHT")
       if r == 0 then cell:SetText(col[1]) end
@@ -266,6 +297,102 @@ function Window:buildPrices(f)
     end
     if r > 0 then self.rows[r] = row end
   end
+end
+
+-- The detail panel on the right of the window, beside the main panel: it explains the selected
+-- thing, such as how an item's market value was worked out. Its art is the panel Blizzard's auction
+-- house uses beside its sell form.
+function Window:buildDetail(f)
+  local env = self.env
+  local detail = Window.panel(env, f, Window.ART.detail)
+  detail:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, TOP)
+  detail:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -6, 6)
+  detail:SetWidth(DETAIL)
+  -- Text one level above the panel art (InsetFrameTemplate uses its parent's level).
+  local text = env.CreateFrame("Frame", nil, detail)
+  text:SetAllPoints(detail)
+  text:SetFrameLevel(detail:GetFrameLevel() + 1)
+  local title = text:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  title:SetPoint("TOPLEFT", text, "TOPLEFT", 12, -12)
+  title:SetWidth(DETAIL - 24)
+  title:SetJustifyH("LEFT")
+  local body = text:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  body:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+  body:SetWidth(DETAIL - 24)
+  body:SetJustifyH("LEFT")
+  body:SetSpacing(3)
+  self.detailPanel, self.detailTitle, self.detailBody = detail, title, body
+end
+
+-- The detail text for one item: its market value and how it was worked out, then its history.
+-- Pure apart from formatting; value/info come from PriceDB:marketValue and history from PriceDB:history.
+function Window.detailText(item, value, info, history, now)
+  local money = ns.Money.format
+  local today = ns.MarketValue.day(now)
+  local function when(day)
+    local age = today - day
+    return age <= 0 and "today" or age == 1 and "yesterday" or (age .. " days ago")
+  end
+  local lines = {}
+  local function add(text) lines[#lines + 1] = text end
+  add("Market value: " .. (value and money(value) or "none yet"))
+  if not item.seen then
+    add("Lowest buyout: not scanned yet")
+  else
+    add("Lowest buyout: " .. (item.lowest and money(item.lowest) or "none (bid only)"))
+    add("Quantity listed: " .. tostring(item.quantity or 0))
+  end
+  add("")
+  if value then
+    local scan = info.scan
+    if scan and today - scan.day < ns.MarketValue.DAYS then
+      add(string.format("Scan %s: the average of the cheapest %d of %d listed, %s.", when(scan.day), scan.used,
+        scan.units - scan.dropped, scan.dropped == 0 and "none left out"
+        or string.format("leaving out %d priced far below the rest", scan.dropped)))
+    end
+    if info.imported and today - info.imported < ns.MarketValue.DAYS then
+      add("Includes imported prices from " .. when(info.imported) .. ".")
+    end
+    add(string.format("Smoothed over %d %s of the last 14, with recent days counting most.", info.days,
+      info.days == 1 and "day" or "days"))
+  else
+    add("No buyouts seen in the last 14 days, so there's no market value yet.")
+  end
+  if #history > 0 then
+    add("")
+    add("Daily value (average of each day's scans)")
+    for i = #history, math.max(1, #history - HISTORY_LINES + 1), -1 do
+      local h = history[i]
+      local label = when(h.day)
+      add(label:sub(1, 1):upper() .. label:sub(2) .. ": " .. money(h.value))
+    end
+  end
+  return table.concat(lines, "\n")
+end
+
+function Window:selectRow(r)
+  local item = self.cache and self.cache.items[r + self.offset]
+  if not item then return end
+  self.selected = item.item
+  self:renderPrices()
+end
+
+function Window:renderDetail(items, now)
+  local addon, key = self.addon, self.cache and self.cache.key
+  local item
+  for _, it in ipairs(items) do
+    if it.item == self.selected then item = it break end
+  end
+  if not (item and addon.prices) then
+    self.selected = nil
+    self.detailTitle:SetText("")
+    self.detailBody:SetText(#items > 0 and "Select an item to see its market value and how it was worked out."
+      or "")
+    return
+  end
+  local value, info = addon.prices:marketValue(key, item.item, now)
+  self.detailTitle:SetText(item.name or item.item)
+  self.detailBody:SetText(Window.detailText(item, value, info, addon.prices:history(key, item.item), now))
 end
 
 function Window:market()
@@ -300,16 +427,16 @@ function Window:renderPrices()
   if not self.pricesPanel then return end
   local addon = self.addon
   local key = self:market()
-  -- Sorting every item is only redone when the market or its last scan changes, not per scroll.
-  -- recordScan is the only writer today; a later writer (imports) must also bump lastScan.
-  local stamp = key and addon.prices and addon.prices:lastScan(key)
+  local now = addon.auctionAPI and addon.auctionAPI:now() or 0
+  -- Sorting every item is only redone when the market's prices or the day change, not per scroll.
+  local stamp = key and addon.prices and (addon.prices:version(key) .. "/" .. ns.MarketValue.day(now))
   if not (self.cache and self.cache.key == key and self.cache.stamp == stamp) then
     -- Names the item cache has loaded since the scan are picked up here, so they sort in place.
     local nameOf = addon.auctionAPI and function(item) return addon.auctionAPI:itemName(item) end
-    self.cache = { key = key, stamp = stamp, items = (key and addon.prices) and addon.prices:items(key, nameOf) or {} }
+    self.cache = { key = key, stamp = stamp,
+      items = (key and addon.prices) and addon.prices:items(key, nameOf, now) or {} }
   end
   local items = self.cache.items
-  local now = addon.auctionAPI and addon.auctionAPI:now() or 0
   local maxOffset = math.max(0, #items - ROWS)
   self.offset = math.max(0, math.min(self.offset, maxOffset))
   local scanning = addon.auctionAPI and addon.auctionAPI.pending
@@ -333,13 +460,18 @@ function Window:renderPrices()
     if item then
       -- Only the sorted name: a name looked up now would show out of order until the list is rebuilt.
       row[1]:SetText(item.name or item.item)
-      row[2]:SetText(item.lowest and ns.Money.format(item.lowest) or "bid only")
-      row[3]:SetText(tostring(item.quantity))
-      row[4]:SetText(ns.Time.ago(item.seen, now))
+      row[2]:SetText(not item.seen and "-" or item.lowest and ns.Money.format(item.lowest) or "bid only")
+      row[3]:SetText(item.value and ns.Money.format(item.value) or "-")
+      row[4]:SetText(item.seen and tostring(item.quantity) or "-")
+      row[5]:SetText(ns.Time.ago(item.seen, now))
+      row.button:Show()
     else
       for _, cell in ipairs(row) do cell:SetText("") end
+      row.button:Hide()
     end
+    row.button.selectedTexture:SetShown(item ~= nil and item.item == self.selected)
   end
+  self:renderDetail(items, now)
 end
 
 function Window:renderView()
@@ -354,6 +486,8 @@ function Window:renderView()
   else
     self.placeholder:Show()
     self.pricesPanel:Hide()
+    self.detailTitle:SetText("")
+    self.detailBody:SetText("")
   end
 end
 

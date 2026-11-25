@@ -503,23 +503,29 @@ function Window.detailText(item, value, info, history, now)
   end
   add("")
   if value then
-    local scan = info.scan
+    local scan, search = info.scan, info.search
     if scan and today - scan.day < ns.MarketValue.DAYS then
       add(string.format("Scan %s: the average of the cheapest %d of %d listed, %s.", when(scan.day), scan.used,
         scan.units - scan.dropped, scan.dropped == 0 and "none left out"
         or string.format("leaving out %d priced far below the rest", scan.dropped)))
+    end
+    if search and today - search.day < ns.MarketValue.DAYS then
+      add(string.format("Post view check %s: the middle price of the %d units other sellers have listed.", when(search.day),
+        search.units))
     end
     if info.imported and today - info.imported < ns.MarketValue.DAYS then
       add("Includes imported prices from " .. when(info.imported) .. ".")
     end
     add(string.format("Smoothed over %d %s of the last 14, with recent days counting most.", info.days,
       info.days == 1 and "day" or "days"))
+  elseif item.lowest and #history == 0 then
+    add("Scanned before Better AH kept price history, so there's no market value yet. Scan again to get one.")
   else
     add("No buyouts seen in the last 14 days, so there's no market value yet.")
   end
   if #history > 0 then
     add("")
-    add("Daily value (average of each day's scans)")
+    add("Daily value (average of each day's scans and checks)")
     for i = #history, math.max(1, #history - HISTORY_LINES + 1), -1 do
       local h = history[i]
       local label = when(h.day)

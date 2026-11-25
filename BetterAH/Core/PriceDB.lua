@@ -59,6 +59,46 @@ function PriceDB:recordScan(key, time, listings)
   return #order
 end
 
+-- Records what one item's search found right now (the Post view looks up each item it posts), as
+-- a market value point for today. listings is an array of { unit = copper per unit, count = units,
+-- ownCount = how many of them are the player's }; only other sellers' units count, so the player's own
+-- listings can't move the value their floor comes from. Because that value also sets the floor of
+-- the post that undercuts these listings, it is the median unit price (not the cheapest band a scan
+-- averages), so the one cheap listing being undercut can't set its own floor; it needs at least
+-- MIN_SEARCH_UNITS units over at least two listings, is taken at most once per item per day, and never
+-- on a day a full scan already saw the item. It is not a scan: lastScan, lowest,
+-- quantity and seen stay as the last scan left them. Returns true when it recorded a value.
+PriceDB.MIN_SEARCH_UNITS = 3
+
+function PriceDB:recordSearch(key, time, item, listings, name)
+  local stacks, units = {}, 0
+  for _, l in ipairs(listings or {}) do
+    local count, unit = tonumber(l.count) or 0, tonumber(l.unit) or 0
+    count = count - math.min(count, tonumber(l.ownCount) or 0)
+    if count > 0 and unit > 0 then
+      units = units + count
+      stacks[#stacks + 1] = { count = count, unit = unit }
+    end
+  end
+  if units < PriceDB.MIN_SEARCH_UNITS or #stacks < 2 then return false end
+  local data = marketData(self, key)
+  local e = data and data.items[item]
+  local today = MarketValue().day(time)
+  for _, field in ipairs({ "scan", "search" }) do
+    local day = e and e[field] and tonumber(string.match(e[field], "^(%-?%d+):"))
+    if day == today then return false end
+  end
+  table.sort(stacks, function(a, b) return a.unit < b.unit end)
+  local middle, seen, value = math.ceil(units / 2), 0, nil
+  for _, s in ipairs(stacks) do
+    seen = seen + s.count
+    if seen >= middle then value = math.floor(s.unit + 0.5) break end
+  end
+  if not value or value < 1 then return false end
+  self:recordPoints(key, time, { [item] = { name = name, value = value, units = units } }, "search")
+  return true
+end
+
 -- Records imported prices (ADR 0001): prices maps item to { value = copper, name = optional }.
 -- They go through recordPoints like a scan, so market value and history treat them the same way.
 -- Returns the number of items taken.
@@ -118,7 +158,8 @@ end
 --   { value, name, lowest, quantity, listings, units, used, dropped } (all optional but value)
 -- and each value is added to the item's history point for that day (averaged with earlier points
 -- of the same day). A scan also updates the item's lowest buyout, quantity and seen time, and keeps
--- how its value was worked out; an import only notes the day it came in.
+-- how its value was worked out; a search (recordSearch) keeps only how its value was worked out; an
+-- import only notes the day it came in.
 function PriceDB:recordPoints(key, time, points, source)
   local data = marketData(self, key, true)
   local day = MarketValue().day(time)
@@ -132,6 +173,8 @@ function PriceDB:recordPoints(key, time, points, source)
     if source == "scan" then
       e.lowest, e.quantity, e.listings, e.seen = p.lowest, p.quantity, p.listings, time
       if p.value then e.scan = string.format("%d:%d:%d:%d", day, p.units or 0, p.used or 0, p.dropped or 0) end
+    elseif source == "search" then
+      if p.value then e.search = string.format("%d:%d:%d:%d", day, p.units or 0, p.used or 0, p.dropped or 0) end
     elseif p.value and (not e.imported or day > e.imported) then
       e.imported = day
     end
@@ -149,7 +192,8 @@ end
 
 -- An item's market value on a market at time now, or nil. The second value explains it:
 --   { days, oldest } from MarketValue.smooth, plus
---   scan = { day, units, used, dropped } for the item's latest scan with buyouts, if any, and
+--   scan = { day, units, used, dropped } for the item's latest scan with buyouts, if any,
+--   search = the same for its latest search in the Post view (recordSearch), if any, and
 --   imported = the day of its latest imported price, if any.
 function PriceDB:marketValue(key, item, now)
   local data = marketData(self, key)
@@ -157,10 +201,10 @@ function PriceDB:marketValue(key, item, now)
   if not (e and e.hist) then return nil end
   local value, info = MarketValue().smooth(decodeHistory(e.hist), now)
   if not value then return nil end
-  if e.scan then
-    local day, units, used, dropped = string.match(e.scan, "^(%-?%d+):(%d+):(%d+):(%d+)$")
+  for _, field in ipairs({ "scan", "search" }) do
+    local day, units, used, dropped = string.match(e[field] or "", "^(%-?%d+):(%d+):(%d+):(%d+)$")
     if day then
-      info.scan = { day = tonumber(day), units = tonumber(units), used = tonumber(used), dropped = tonumber(dropped) }
+      info[field] = { day = tonumber(day), units = tonumber(units), used = tonumber(used), dropped = tonumber(dropped) }
     end
   end
   info.imported = e.imported

@@ -251,6 +251,26 @@ describe("Window", function()
     assert.equal("window has no close button (looked for CloseButton and BetterAHFrameCloseButton)", last.detail)
   end)
 
+  it("gives every list's scroll bar room from the rows and the panel's edge", function()
+    local env, w = setup()
+    env.openAuctionHouse()
+    local lists = { w.rows, w.altsRows, w.postView.rows, w.disenchantView.targetRows }
+    -- Lists start 10 px into the main panel, which is 564 px wide: 554 px to its edge. The bar is 8 px.
+    for i, rows in ipairs(lists) do
+      local bar = rows.scrollBar
+      assert.is_not_nil(bar, "list " .. i)
+      local x = bar.points.TOPLEFT.x
+      assert.is_true(x >= rows.width + 8, "list " .. i .. ": room from the rows")
+      assert.is_true(x + 8 <= 554 - 16, "list " .. i .. ": room from the panel's edge")
+      local cells = rows[1]
+      local lastCell = cells[#cells]
+      assert.is_true(lastCell.points.LEFT.x + lastCell.width <= rows.width, "list " .. i .. ": columns fit the rows")
+    end
+    assert.equal(140, w.disenchantView.targetRows[1][2].width, "target names keep their room")
+    assert.is_nil(w.disenchantView.rows.scrollBar, "the band table doesn't scroll")
+    assert.equal(540, w.disenchantView.rows.width, "and keeps the full width")
+  end)
+
   describe("Prices and history", function()
     local function rowText(w, r)
       local out = {}

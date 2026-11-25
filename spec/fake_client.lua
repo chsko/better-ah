@@ -15,8 +15,11 @@ end
 function Frame:SetSize() end
 function Frame:GetName() return self.name end
 function Frame:GetParent() return self.parent end
-function Frame:SetPoint() end
-function Frame:ClearAllPoints() end
+function Frame:SetPoint(point, rel, relPoint, x, y)
+  self.points = self.points or {}
+  self.points[point] = { rel = rel, relPoint = relPoint, x = x, y = y }
+end
+function Frame:ClearAllPoints() self.points = {} end
 function Frame:SetFrameStrata() end
 function Frame:SetMovable() end
 function Frame:RegisterForDrag() end

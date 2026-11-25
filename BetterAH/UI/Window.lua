@@ -8,6 +8,9 @@ local Window = {}
 
 local WIDTH, HEIGHT, SIDEBAR, DETAIL = 980, 470, 180, 220
 local ROWS, ROW_HEIGHT, LIST_WIDTH = 14, 18, 540
+-- A list with a scroll bar gives up this much width on its right, so the bar has room from the rows and
+-- from the panel's edge (#53).
+local SCROLL_ROOM, SCROLL_GAP = 22, 8
 local COLUMNS = {
   { "Item", 4, 190 }, { "Lowest buyout", 196, 95 }, { "Market value", 293, 95 }, { "Quantity", 390, 55 },
   { "Seen", 447, 90 },
@@ -284,12 +287,18 @@ end
 -- also get a scroll bar (rows.scrollBar, see buildScrollBar).
 function Window:buildRows(panel, columns, onClick, onScroll)
   local env, rows = self.env, {}
+  -- With a scroll bar the rows give up room for it. Columns laid out for the full width are narrowed
+  -- to fit; a list can instead lay its columns out to fit the narrower rows and keep their widths.
+  local width = onScroll and (LIST_WIDTH - SCROLL_ROOM) or LIST_WIDTH
+  local last = columns[#columns]
+  local scale = (last[2] + last[3] > width) and width / LIST_WIDTH or 1
+  rows.width = width
   for r = 0, ROWS do
     -- Item rows are buttons, so they can be selected; the header is plain text on the panel.
     local parent = panel
     if r > 0 then
       parent = env.CreateFrame("Button", nil, panel)
-      parent:SetSize(LIST_WIDTH, ROW_HEIGHT)
+      parent:SetSize(width, ROW_HEIGHT)
       parent:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -32 - r * ROW_HEIGHT + 3)
       local highlight = parent:CreateTexture(nil, "HIGHLIGHT")
       highlight:SetAtlas(Window.ART.rowHighlight, false)
@@ -309,19 +318,20 @@ function Window:buildRows(panel, columns, onClick, onScroll)
     for c, col in ipairs(columns) do
       local font = r == 0 and "GameFontNormalSmall" or "GameFontHighlightSmall"
       local cell = parent:CreateFontString(nil, "OVERLAY", font)
+      local x, w = math.floor(col[2] * scale + 0.5), math.floor(col[3] * scale)
       if r == 0 then
-        cell:SetPoint("TOPLEFT", panel, "TOPLEFT", col[2], -32)
+        cell:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -32)
       else
-        cell:SetPoint("LEFT", parent, "LEFT", col[2], 0)
+        cell:SetPoint("LEFT", parent, "LEFT", x, 0)
       end
-      cell:SetWidth(col[3])
+      cell:SetWidth(w)
       cell:SetJustifyH(col[4] or (c == 1 and "LEFT" or "RIGHT"))
       if r == 0 then cell:SetText(col[1]) end
       row[c] = cell
     end
     if r > 0 then rows[r] = row end
   end
-  if onScroll then rows.scrollBar = self:buildScrollBar(panel, onScroll) end
+  if onScroll then rows.scrollBar = self:buildScrollBar(panel, onScroll, width + SCROLL_GAP) end
   return rows
 end
 
@@ -329,10 +339,11 @@ end
 -- 25px, too wide for this layout). It hides itself while every item fits. Dragging it, clicking its
 -- track or arrows, or wheeling over it calls onScroll(offset) with the first item to show (0-based);
 -- Window.syncScrollBar keeps it in step with a list scrolled any other way.
-function Window:buildScrollBar(panel, onScroll)
+function Window:buildScrollBar(panel, onScroll, x)
   local bar = self.env.CreateFrame("EventFrame", nil, panel, "MinimalScrollBar")
-  bar:SetPoint("TOPLEFT", panel, "TOPLEFT", LIST_WIDTH + 1, -32 - ROW_HEIGHT + 3)
-  bar:SetPoint("BOTTOMLEFT", panel, "TOPLEFT", LIST_WIDTH + 1, -32 - (ROWS + 1) * ROW_HEIGHT + 3)
+  bar:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -32 - ROW_HEIGHT + 3)
+  bar:SetPoint("BOTTOMLEFT", panel, "TOPLEFT", x, -32 - (ROWS + 1) * ROW_HEIGHT + 3)
+  bar.x = x
   bar:SetHideIfUnscrollable(true)
   bar.wheelPanScalar = 3 -- 3 rows per wheel notch, as over the list
   bar.total = 0

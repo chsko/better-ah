@@ -65,11 +65,30 @@ function M.new(opts)
   local shape = (opts and opts.template) or "forever"
   local env = { frames = {}, closed = 0, UISpecialFrames = {}, timers = {} }
   env.UIParent = newFrame("Frame", "UIParent")
-  env.C_Timer = { After = function(_, fn) env.timers[#env.timers + 1] = fn end }
-  env.runTimers = function()
-    local due = env.timers
-    env.timers = {}
-    for _, fn in ipairs(due) do fn() end
+  -- Timers run once due. runTimers(seconds) moves the clock (env.now) forward
+  -- by that many seconds, one second at a time, and runs every timer that is due.
+  env.now = 1000000
+  env.C_Timer = { After = function(delay, fn) env.timers[#env.timers + 1] = { at = env.now + delay, fn = fn } end }
+  local function runDue()
+    local ran = true
+    while ran do
+      ran = false
+      for i, t in ipairs(env.timers) do
+        if t.at <= env.now then
+          table.remove(env.timers, i)
+          t.fn()
+          ran = true
+          break
+        end
+      end
+    end
+  end
+  env.runTimers = function(seconds)
+    runDue()
+    for _ = 1, seconds or 0 do
+      env.now = env.now + 1
+      runDue()
+    end
   end
   env.CreateFrame = function(kind, name, parent, template)
     local f = newFrame(kind, name, parent, template)
@@ -119,7 +138,6 @@ function M.new(opts)
     for _, name in ipairs(env.UISpecialFrames) do env[name]:Hide() end
   end
   -- Market identity, as the Forever client reported it (ADR 0004).
-  env.now = 1000000
   env.GetServerTime = function() return env.now end
   env.GetRealmName = function() return "" end
   env.UnitFactionGroup = function() return env.faction or "Horde" end
@@ -131,11 +149,12 @@ function M.new(opts)
   env.C_AuctionHouse = {
     ReplicateItems = function()
       env.replicateCalls = env.replicateCalls + 1
+      env.replicateReady = true
       if not env.replicateSilent then
         env.C_Timer.After(0, function() env.fire("REPLICATE_ITEM_LIST_UPDATE") end)
       end
     end,
-    GetNumReplicateItems = function() return #env.auctions end,
+    GetNumReplicateItems = function() return env.replicateReady and #env.auctions or 0 end,
     GetReplicateItemInfo = function(i)
       local a = env.auctions[i + 1]
       if not a then return nil end
@@ -144,9 +163,9 @@ function M.new(opts)
     end,
   }
   -- Fire an event at every frame registered for it.
-  env.fire = function(event)
+  env.fire = function(event, ...)
     for _, f in ipairs(env.frames) do
-      if f.events[event] and f.scripts.OnEvent then f.scripts.OnEvent(f, event) end
+      if f.events[event] and f.scripts.OnEvent then f.scripts.OnEvent(f, event, ...) end
     end
   end
   return env

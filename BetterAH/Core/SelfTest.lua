@@ -22,7 +22,11 @@ function SelfTest:run(env, addon)
     if not ok then
       status, detail = "fail", "error: " .. tostring(status)
     end
-    results[#results + 1] = { name = check.name, status = status or "fail", detail = detail or "" }
+    if status ~= "pass" and status ~= "fail" and status ~= "info" then
+      detail = "check returned unknown status " .. tostring(status) .. (detail and (": " .. tostring(detail)) or "")
+      status = "fail"
+    end
+    results[#results + 1] = { name = check.name, status = status, detail = tostring(detail or "") }
   end
   return results
 end

@@ -9,13 +9,16 @@ local Probes = {}
 local LEGACY_AH = {
   "QueryAuctionItems", "GetNumAuctionItems", "GetAuctionItemInfo", "GetAuctionItemLink",
   "CanSendAuctionQuery", "PostAuction", "StartAuction", "CancelAuction", "PlaceAuctionBid",
-  "GetOwnerAuctionItems",
+  "GetOwnerAuctionItems", "ClickAuctionSellItemButton", "GetAuctionSellItemInfo",
+  "CalculateAuctionDeposit", "GetAuctionItemTimeLeft", "SortAuctionItems",
 }
 
 local MODERN_AH = {
   "SendBrowseQuery", "GetBrowseResults", "ReplicateItems", "GetNumReplicateItems",
   "GetReplicateItemInfo", "PostItem", "PostCommodity", "CancelAuction", "PlaceBid",
-  "StartCommoditiesPurchase", "QueryOwnedAuctions",
+  "StartCommoditiesPurchase", "QueryOwnedAuctions", "SendSearchQuery", "GetItemSearchResultInfo",
+  "GetCommoditySearchResultInfo", "ConfirmCommoditiesPurchase", "CalculateItemDeposit",
+  "CalculateCommodityDeposit", "GetNumOwnedAuctions", "GetOwnedAuctionInfo", "GetAvailablePostCount",
 }
 
 local function presence(container, names)
@@ -43,7 +46,9 @@ local function call(env, path, ...)
     fn = fn[part]
   end
   if type(fn) ~= "function" then return nil end
-  return true, fn(...)
+  local ok, value = pcall(fn, ...)
+  if not ok then return true, "error" end
+  return true, value
 end
 
 local function build()
@@ -85,17 +90,21 @@ local function build()
   end)
 
   suite:add("Auction house API available", function(env)
-    local legacy = presence(env, { "QueryAuctionItems" })
-    local modern = presence(env.C_AuctionHouse, { "SendBrowseQuery" })
-    if #legacy > 0 or #modern > 0 then
-      return "pass", (#modern > 0 and "C_AuctionHouse" or "legacy") .. " browse query present"
+    local legacy = #presence(env, { "QueryAuctionItems" }) > 0
+    local modern = #presence(env.C_AuctionHouse, { "SendBrowseQuery" }) > 0
+    if legacy or modern then
+      return "pass", string.format("legacy QueryAuctionItems: %s; C_AuctionHouse.SendBrowseQuery: %s",
+        legacy and "yes" or "no", modern and "yes" or "no")
     end
     return "fail", "neither QueryAuctionItems nor C_AuctionHouse.SendBrowseQuery exists"
   end)
 
-  suite:add("Saved variables", function(_, addon)
-    if addon and addon.db then return "pass", "BetterAHDB loaded" end
-    return "fail", "BetterAHDB not loaded yet"
+  suite:add("Saved variables", function(env, addon)
+    if not (addon and addon.db) then return "fail", "BetterAHDB not loaded yet" end
+    if env.BetterAHDB ~= addon.db then return "fail", "BetterAHDB global is not the addon's database" end
+    local keys = 0
+    for _ in pairs(addon.db) do keys = keys + 1 end
+    return "pass", keys == 0 and "BetterAHDB fresh (empty)" or ("BetterAHDB loaded (" .. keys .. " keys)")
   end)
 
   return suite

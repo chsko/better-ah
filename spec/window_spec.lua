@@ -22,7 +22,12 @@ describe("Window", function()
     local env, w = setup()
     env.openAuctionHouse()
     assert.is_true(env.BetterAHFrame:IsShown())
-    assert.equal("BasicFrameTemplateWithInset", env.BetterAHFrame.template)
+    assert.equal("PortraitFrameTemplate", env.BetterAHFrame.template, "the same frame as Blizzard's auction house")
+    assert.equal("Better AH", env.BetterAHFrame.title)
+    assert.equal("Interface\\Icons\\INV_Misc_Coin_02", env.BetterAHFrame.portrait)
+    assert.equal(2, w.textLayer:GetFrameLevel(), "texts draw above the panel art")
+    assert.equal("auctionhouse-background-categories", w.sidebarPanel.Background.atlas)
+    assert.equal("auctionhouse-background-index", w.mainPanel.Background.atlas)
     assert.equal(0, env.AuctionFrame.alpha)
     assert.is_false(env.AuctionFrame.mouse)
     assert.is_true(env.AuctionFrame:IsShown(), "Blizzard's window must not be hidden, or the AH closes")
@@ -35,8 +40,56 @@ describe("Window", function()
     env.openAuctionHouse()
     sidebarButton(w, "disenchant"):Click()
     assert.equal("Disenchant snipe", w.heading:GetText())
-    assert.is_true(sidebarButton(w, "disenchant").highlighted)
-    assert.is_false(sidebarButton(w, "post").highlighted)
+    local selected, other = sidebarButton(w, "disenchant"), sidebarButton(w, "post")
+    assert.is_true(selected.selectedTexture:IsShown())
+    assert.equal("auctionhouse-nav-button-select", selected.selectedTexture.atlas)
+    assert.equal("GameFontHighlightSmall", selected:GetFontString().font)
+    assert.is_false(other.selectedTexture:IsShown())
+    assert.equal("GameFontNormalSmall", other:GetFontString().font)
+    assert.equal("Green, blue and epic listings worth more disenchanted than their buyout will be listed here.",
+      w.placeholder:GetText())
+  end)
+
+  it("draws sidebar entries with Blizzard's category list art, not action buttons", function()
+    local env, w = setup()
+    env.openAuctionHouse()
+    local b = sidebarButton(w, "post")
+    assert.is_nil(b.template)
+    assert.equal("Post", b:GetText())
+    local atlases = {}
+    for _, t in ipairs(b.textures) do atlases[t.layer] = t.atlas end
+    assert.same({ BACKGROUND = "auctionhouse-nav-button", ARTWORK = "auctionhouse-nav-button-select",
+      HIGHLIGHT = "auctionhouse-nav-button-highlight" }, atlases)
+  end)
+
+  it("describes every placeholder view", function()
+    local env, w = setup()
+    env.openAuctionHouse()
+    for id in pairs(w.buttons) do
+      w:select(id)
+      if id ~= "prices" then assert.is_truthy((w.placeholder:GetText() or ""):find("%w"), id) end
+    end
+  end)
+
+  it("explains both toggle buttons with tooltips", function()
+    local env, w = setup()
+    local tip = { lines = {} }
+    function tip.SetOwner() end
+    function tip.SetText(_, t) tip.title = t end
+    function tip.AddLine(_, t) tip.lines[#tip.lines + 1] = t end
+    function tip.Show() tip.shown = true end
+    function tip.Hide() tip.shown = false end
+    env.GameTooltip = tip
+    env.openAuctionHouse()
+    w.toggleButton.scripts.OnEnter(w.toggleButton)
+    assert.equal("Blizzard UI", tip.title)
+    assert.equal("Switch to Blizzard's auction house window. Use the Better AH button there to come back.",
+      tip.lines[1])
+    w.toggleButton.scripts.OnLeave(w.toggleButton)
+    assert.is_false(tip.shown)
+    w.toggleButton:Click()
+    w.returnButton.scripts.OnEnter(w.returnButton)
+    assert.equal("Better AH", tip.title)
   end)
 
   it("toggles to Blizzard's window and back without closing the auction house", function()
@@ -127,26 +180,35 @@ describe("Window", function()
     local last = results[#results]
     assert.equal("Better AH window", last.name)
     assert.equal("pass", last.status)
-    assert.equal("window created with 8 sidebar entries; close button BetterAHFrameCloseButton; inset InsetBg",
+    assert.equal("window created with 8 sidebar entries; close button CloseButton; auction house art found",
       last.detail)
   end)
 
-  it("passes the window check with the modern template shape", function()
-    local env, _, ns = setup({ template = "modern" })
-    local last = ns.Probes.suite():run(env, { db = {} })
-    last = last[#last]
-    assert.equal("pass", last.status)
-    assert.equal("window created with 8 sidebar entries; close button CloseButton; inset Inset", last.detail)
-  end)
-
-  it("finds the inset by its global name when it has no parent key", function()
+  it("finds the close button by its global name when it has no parent key", function()
     local env, _, ns = setup({ template = "named" })
     local last = ns.Probes.suite():run(env, { db = {} })
     last = last[#last]
     assert.equal("pass", last.status)
     assert.equal("window created with 8 sidebar entries; close button BetterAHFrameCloseButton; "
-      .. "inset BetterAHFrameInsetBg",
-      last.detail)
+      .. "auction house art found", last.detail)
+  end)
+
+  it("fails the window check when the client lacks the auction house art", function()
+    local env, _, ns = setup({ missingArt = { "auctionhouse-nav-button-select", "auctionhouse-background-index" } })
+    local last = ns.Probes.suite():run(env, { db = {} })
+    last = last[#last]
+    assert.equal("fail", last.status)
+    assert.equal("auction house art missing from this client: auctionhouse-background-index, "
+      .. "auctionhouse-nav-button-select", last.detail)
+  end)
+
+  it("says when it can't check the art", function()
+    local env, _, ns = setup({ noAtlasInfo = true })
+    local last = ns.Probes.suite():run(env, { db = {} })
+    last = last[#last]
+    assert.equal("pass", last.status)
+    assert.equal("window created with 8 sidebar entries; close button CloseButton; "
+      .. "art not checked (no C_Texture.GetAtlasInfo)", last.detail)
   end)
 
   it("ignores a global with the close button's name that belongs to another frame", function()
@@ -157,11 +219,12 @@ describe("Window", function()
     assert.equal("fail", last.status)
   end)
 
-  it("closes the window from the modern template's close button", function()
-    local env = setup({ template = "modern" })
+  it("closes the window from the template's close button", function()
+    local env = setup()
     env.openAuctionHouse()
     env.BetterAHFrame.CloseButton:Click()
     assert.is_false(env.BetterAHFrame:IsShown())
+    assert.is_false(env.open)
   end)
 
   it("fails the window check when the window has no close button", function()
@@ -169,8 +232,7 @@ describe("Window", function()
     local last = ns.Probes.suite():run(env, { db = {} })
     last = last[#last]
     assert.equal("fail", last.status)
-    assert.equal("window has no close button (looked for CloseButton and BetterAHFrameCloseButton); inset none",
-      last.detail)
+    assert.equal("window has no close button (looked for CloseButton and BetterAHFrameCloseButton)", last.detail)
   end)
 
   describe("Prices and history", function()

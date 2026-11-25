@@ -4,7 +4,7 @@ local fake = require("spec.fake_client")
 local function setup(opts)
   local env = fake.new(opts)
   local ns = helper.load("BetterAH/Core/WindowModel.lua")
-  for _, file in ipairs({ "Money", "Time", "MarketKey", "PriceDB", "SelfTest", "Probes" }) do
+  for _, file in ipairs({ "Money", "Time", "MarketKey", "MarketValue", "PriceDB", "SelfTest", "Probes" }) do
     helper.load("BetterAH/Core/" .. file .. ".lua", ns)
   end
   helper.load("BetterAH/Game/AuctionAPI.lua", ns)
@@ -265,9 +265,9 @@ describe("Window", function()
       env.runTimers()
       assert.equal("Scanned 2 listings of 2 items in 0 seconds.", w.scanStatus:GetText())
       assert.is_true(w.scanButton:IsEnabled())
-      assert.same({ "Linen Cloth", "2s 0c", "20", "just now" }, rowText(w, 1))
-      assert.same({ "Wool Cloth", "30s 50c", "10", "just now" }, rowText(w, 2))
-      assert.same({ "", "", "", "" }, rowText(w, 3))
+      assert.same({ "Linen Cloth", "2s 0c", "2s 0c", "20", "just now" }, rowText(w, 1))
+      assert.same({ "Wool Cloth", "30s 50c", "30s 50c", "10", "just now" }, rowText(w, 2))
+      assert.same({ "", "", "", "", "" }, rowText(w, 3))
     end)
 
     it("shows the result when the auction house replies before the scan call returns", function()
@@ -310,7 +310,7 @@ describe("Window", function()
       ns.prices:recordScan("/1/Alliance", env.now, { { item = "i:1", name = "Elsewhere", count = 1, buyout = 1 } })
       env.openAuctionHouse()
       w:select("prices")
-      assert.same({ "", "", "", "" }, rowText(w, 1))
+      assert.same({ "", "", "", "", "" }, rowText(w, 1))
     end)
 
     it("shows the last scan time when coming back later", function()
@@ -319,7 +319,83 @@ describe("Window", function()
       env.openAuctionHouse()
       w:select("prices")
       assert.equal("1 items. Last scan of ruleset 1, Horde: 10 min ago.", w.scanStatus:GetText())
-      assert.same({ "Thing", "1c", "1", "10 min ago" }, rowText(w, 1))
+      assert.same({ "Thing", "1c", "1c", "1", "10 min ago" }, rowText(w, 1))
+    end)
+
+    it("explains the selected item's market value in the detail panel", function()
+      local env, w, ns = setup()
+      local listings = { { item = "i:1", name = "Troll Target", count = 1, buyout = 1 } }
+      for i = 2, 11 do listings[i] = { item = "i:1", name = "Troll Target", count = 10, buyout = 10 * 5000 } end
+      ns.prices:recordScan("/1/Horde", env.now - 86400, { { item = "i:1", count = 1, buyout = 3000 } })
+      ns.prices:recordScan("/1/Horde", env.now, listings)
+      env.openAuctionHouse()
+      w:select("prices")
+      assert.equal("Select an item to see its market value and how it was worked out.", w.detailBody:GetText())
+      w.rows[1].button:Click()
+      assert.is_true(w.rows[1].button.selectedTexture:IsShown())
+      assert.equal("Troll Target", w.detailTitle:GetText())
+      assert.equal(table.concat({
+        "Market value: 40s 37c",
+        "Lowest buyout: 1c",
+        "Quantity listed: 101",
+        "",
+        "Scan today: the average of the cheapest 30 of 100 listed, leaving out 1 priced far below the rest.",
+        "Smoothed over 2 days of the last 14, with recent days counting most.",
+        "",
+        "Daily value (average of each day's scans)",
+        "Today: 50s 0c",
+        "Yesterday: 30s 0c",
+      }, "\n"), w.detailBody:GetText())
+      assert.same({ "Troll Target", "1c", "40s 37c", "101", "just now" }, rowText(w, 1))
+    end)
+
+    it("shows a dash for items with no market value and says why in the detail", function()
+      local env, w, ns = setup()
+      ns.prices:recordScan("/1/Horde", env.now, { { item = "i:9", name = "Bid Only", count = 1, buyout = 0 } })
+      env.openAuctionHouse()
+      w:select("prices")
+      assert.same({ "Bid Only", "bid only", "-", "1", "just now" }, rowText(w, 1))
+      w.rows[1].button:Click()
+      assert.matches("Market value: none yet", w.detailBody:GetText(), 1, true)
+      assert.matches("No buyouts seen in the last 14 days", w.detailBody:GetText(), 1, true)
+    end)
+
+    it("clears the detail when the selected item is gone and ignores clicks on empty rows", function()
+      local env, w, ns = setup()
+      ns.prices:recordScan("/1/Horde", env.now, { { item = "i:1", name = "Thing", count = 1, buyout = 5 } })
+      env.openAuctionHouse()
+      w:select("prices")
+      w.rows[2].button:Click()
+      assert.is_nil(w.selected)
+      w.pricesPanel.scripts.OnMouseWheel(w.pricesPanel, -1)
+      w.rows[1].button:Click()
+      assert.equal("i:1", w.selected)
+      env.C_Map = { GetBestMapForUnit = function() return 1446 end }
+      w:renderPrices()
+      assert.is_nil(w.selected)
+      assert.equal("", w.detailTitle:GetText())
+      assert.is_false(w.rows[1].button:IsShown())
+      w:select("post")
+      assert.equal("", w.detailBody:GetText(), "other views clear the detail panel")
+    end)
+
+    it("explains an item known only from imported prices", function()
+      local env, w, ns = setup()
+      ns.prices:importPrices("/1/Horde", env.now, { ["i:5"] = { value = 777, name = "Imported" } })
+      env.openAuctionHouse()
+      w:select("prices")
+      w.rows[1].button:Click()
+      assert.equal(table.concat({
+        "Market value: 7s 77c",
+        "Lowest buyout: not scanned yet",
+        "",
+        "Includes imported prices from today.",
+        "Smoothed over 1 day of the last 14, with recent days counting most.",
+        "",
+        "Daily value (average of each day's scans)",
+        "Today: 7s 77c",
+      }, "\n"), w.detailBody:GetText())
+      assert.same({ "Imported", "-", "7s 77c", "-", "never" }, rowText(w, 1))
     end)
 
     it("scrolls through more items than fit", function()

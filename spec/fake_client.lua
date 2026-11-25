@@ -63,6 +63,7 @@ function Frame:CreateTexture(_, layer)
 end
 function Frame:SetAtlas(atlas) self.atlas = atlas end
 function Frame:SetAllPoints() end
+function Frame:SetSpacing() end
 function Frame:SetFrameLevel(level) self.level = level end
 function Frame:GetFrameLevel() return self.level or 1 end
 function Frame:SetBlendMode() end

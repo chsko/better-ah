@@ -1,7 +1,7 @@
 local helper = require("spec.helper")
 
 describe("PriceDB", function()
-  local PriceDB = helper.load("BetterAH/Core/PriceDB.lua").PriceDB
+  local PriceDB = helper.load("BetterAH/Core/PriceDB.lua", helper.load("BetterAH/Core/MarketValue.lua")).PriceDB
   local A, B = "/1/Horde", "/1/Alliance"
 
   local function linen(count, buyout)
@@ -98,5 +98,99 @@ describe("PriceDB", function()
       order[#order + 1] = it.item .. "=" .. tostring(it.name)
     end
     assert.same({ "i:1=Linen Cloth", "i:4=linen cloth", "i:2=nil", "i:3=nil" }, order)
+  end)
+
+  describe("market value and history", function()
+    local DAY = 86400
+    local t0 = 200 * DAY
+
+    local function wool(unit, n)
+      local out = {}
+      for i = 1, n or 5 do out[i] = { item = "i:2592", name = "Wool Cloth", count = 1, buyout = unit } end
+      return out
+    end
+
+    it("keeps one history point per day per market, averaging scans on the same day", function()
+      local db = PriceDB.new({})
+      db:recordScan(A, t0, wool(100))
+      db:recordScan(A, t0 + 3600, wool(300))
+      db:recordScan(A, t0 + DAY, wool(200))
+      db:recordScan(B, t0, wool(999))
+      assert.same({ { day = 200, value = 200, points = 2 }, { day = 201, value = 200, points = 1 } },
+        db:history(A, "i:2592"))
+      assert.equal(999, db:history(B, "i:2592")[1].value, "the other market has its own history")
+    end)
+
+    it("stores history compactly in the saved variables", function()
+      local store = {}
+      local db = PriceDB.new(store)
+      db:recordScan(A, t0, wool(100))
+      db:recordScan(A, t0 + DAY, wool(200))
+      assert.equal("200:100:1;201:200:1", store[A].items["i:2592"].hist)
+      assert.equal("201:5:1:0", store[A].items["i:2592"].scan)
+    end)
+
+    it("gives a smoothed market value with what it was based on", function()
+      local db = PriceDB.new({})
+      db:recordScan(A, t0, wool(100))
+      db:recordScan(A, t0 + DAY, wool(200))
+      local value, info = db:marketValue(A, "i:2592", t0 + DAY)
+      assert.equal(152, value) -- (200 * 14 + 100 * 13) / 27
+      assert.same({ days = 2, oldest = 1, scan = { day = 201, units = 5, used = 1, dropped = 0 } }, info)
+      assert.is_nil(db:marketValue(A, "i:2592", t0 + 20 * DAY), "too old to say")
+      assert.is_nil(db:marketValue(A, "i:1", t0))
+      assert.equal(152, db:items(A, nil, t0 + DAY)[1].value)
+    end)
+
+    it("keeps 30 days of history", function()
+      local db = PriceDB.new({})
+      db:recordScan(A, t0, wool(100))
+      db:recordScan(A, t0 + 29 * DAY, wool(150))
+      assert.equal(2, #db:history(A, "i:2592"))
+      db:recordScan(A, t0 + 30 * DAY, wool(200))
+      local h = db:history(A, "i:2592")
+      assert.same({ 229, 230 }, { h[1].day, h[2].day })
+    end)
+
+    it("takes imported prices through the same path as scans", function()
+      local db = PriceDB.new({})
+      local before = db:version(A)
+      assert.equal(2, db:importPrices(A, t0, {
+        ["i:2592"] = { value = 150, name = "Wool Cloth" }, ["i:2589"] = { value = 40 }, ["i:1"] = { value = 0 },
+        ["i:3"] = { value = 1e15 },
+      }))
+      assert.is_true(db:version(A) > before)
+      assert.is_nil(db:lastScan(A), "an import is not a scan")
+      local value, info = db:marketValue(A, "i:2592", t0)
+      assert.equal(150, value)
+      assert.same({ days = 1, oldest = 0, imported = 200 }, info)
+      db:recordScan(A, t0 + 60, wool(250))
+      value, info = db:marketValue(A, "i:2592", t0)
+      assert.equal(200, value, "a scan on the same day averages with the import")
+      assert.same({ 200, 200 }, { info.scan.day, info.imported }, "the detail can mention both")
+      local item = db:items(A, nil, t0)[1]
+      assert.same({ "Wool Cloth", 250, 5 }, { item.name, item.lowest, item.quantity })
+    end)
+
+    it("files a backdated import under its own day, in order", function()
+      local db = PriceDB.new({})
+      db:recordScan(A, t0 + 5 * DAY, wool(200))
+      db:importPrices(A, t0, { ["i:2592"] = { value = 100 } })
+      db:importPrices(A, t0 + 3 * DAY, { ["i:2592"] = { value = 150 } })
+      local days = {}
+      for i, h in ipairs(db:history(A, "i:2592")) do days[i] = h.day end
+      assert.same({ 200, 203, 205 }, days)
+      local _, info = db:marketValue(A, "i:2592", t0 + 5 * DAY)
+      assert.equal(203, info.imported)
+      db:importPrices(A, t0 - 40 * DAY, { ["i:2592"] = { value = 1 } })
+      assert.equal(3, #db:history(A, "i:2592"), "an import older than the kept history is dropped")
+    end)
+
+    it("leaves bid-only items without a market value", function()
+      local db = PriceDB.new({})
+      db:recordScan(A, t0, { { item = "i:7", count = 1, buyout = 0 } })
+      assert.is_nil(db:marketValue(A, "i:7", t0))
+      assert.same({}, db:history(A, "i:7"))
+    end)
   end)
 end)

@@ -89,4 +89,15 @@ describe("Targets", function()
     assert.equal("jewelry", Targets.typeOf({ classID = 4, subclassID = 0, equip = "INVTYPE_NECK" }))
     assert.equal("jewelry", Targets.typeOf({ classID = 4, subclassID = 0, equip = "INVTYPE_TRINKET" }))
   end)
+
+  it("reads item details from C_Item.GetItemInfo where the global is missing", function()
+    local fake = require("spec.fake_client")
+    local env = fake.new()
+    helper.load("BetterAH/Game/AuctionAPI.lua", ns)
+    env.GetItemInfo = nil
+    env.C_Item.GetItemInfo = function()
+      return "Ridgeback Bracers", "link", 2, 28, 23, "Armor", "Leather", 1, "INVTYPE_WRIST", 0, 100, 4, 2
+    end
+    assert.equal("leather", Targets.typeOf(ns.AuctionAPI.new(env):itemInfo("i:1234")))
+  end)
 end)

@@ -42,7 +42,7 @@ end
 
 function SnipeView.new(dview)
   return setmetatable({ dview = dview, window = dview.window, env = dview.env, addon = dview.addon,
-    round = 0, near = {}, seen = {} }, SnipeView)
+    round = 0, near = {}, seen = {}, why = {} }, SnipeView)
 end
 
 -- Redraws the Disenchant view, but only while the window shows it: sniping runs on behind other views,
@@ -156,6 +156,11 @@ function SnipeView:build(p, width)
     return t
   end
   for _, col in ipairs(SnipeView.NEAR_COLUMNS) do cell("GameFontDisableSmall", col, top - 16):SetText(col[1]) end
+  -- Shown in place of the rows when nothing is close: what the last checks saw, and why none fit.
+  self.nearEmpty = p:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  self.nearEmpty:SetPoint("TOPLEFT", p, "TOPLEFT", 4, top - 16 - SnipeView.NEAR_ROW)
+  self.nearEmpty:SetWidth(width - 8)
+  self.nearEmpty:SetJustifyH("LEFT")
   self.nearRows = {}
   for i = 1, ns.Sniper.CLOSEST do
     local y = top - 16 - i * SnipeView.NEAR_ROW
@@ -258,7 +263,7 @@ function SnipeView:start()
   SnipeView.file(db, self:now())
   db.session = {}
   self.session = ns.Sniper.Session.new(db.session, self:now())
-  self.running, self.message, self.lastCheck, self.near, self.seen = true, nil, nil, {}, {}
+  self.running, self.message, self.lastCheck, self.near, self.seen, self.why = true, nil, nil, {}, {}, {}
   self.run = {} -- this run's identity: late answers from an earlier run are dropped
   self:refresh()
   self:tick(self.run)
@@ -289,18 +294,47 @@ end
 -- The most to pay for an item of a target, by the item's class (armor and weapons are worth different
 -- amounts), and its worth. nil when it isn't one of the target's types, has no worth, or its details
 -- aren't loaded yet: those are asked for, and the item is judged on a later round.
+-- The third value says why there is no max: "loading", "type" (not one of the target's types, or not
+-- green) or "worth" (no material prices for its class).
 function SnipeView:maxFor(entry, itemID)
   local t, row = entry.target, entry.row
   local info = self.addon.auctionAPI and self.addon.auctionAPI:itemInfo("i:" .. itemID)
   if not (info and info.classID) then
     local load = self.env.C_Item and self.env.C_Item.RequestLoadItemDataByID
     if type(load) == "function" then pcall(load, itemID) end
-    return nil
+    return nil, nil, "loading"
   end
   local typeID = ns.Targets.typeOf(info)
-  if not (typeID and t.types[typeID] and tonumber(info.quality) == 2) then return nil end
+  if not (typeID and t.types[typeID] and tonumber(info.quality) == 2) then return nil, nil, "type" end
   local worth = row[ns.Targets.BY_ID[typeID].class].net
+  if not worth then return nil, nil, "worth" end
   return ns.Targets.maxPrice(t, worth), worth
+end
+
+SnipeView.WHY = { { "loading", "not loaded yet" }, { "type", "other types" }, { "band", "outside the band" },
+  { "worth", "no worth known" } }
+
+-- Why the results of a check came to nothing, counted by reason (see WHY), for the hint.
+function SnipeView:whyNot(entry, band, results, level)
+  local why = {}
+  for _, r in ipairs(results or {}) do
+    local id = r.itemKey and r.itemKey.itemID
+    local reason
+    if id then
+      local _, _, no = self:maxFor(entry, id)
+      local l = tonumber(level(id))
+      if not l or l <= 0 then l = tonumber(r.itemKey.itemLevel) end
+      if no == "loading" or no == "type" then
+        reason = no
+      elseif not l or l < band.min or l > band.max then
+        reason = "band"
+      else
+        reason = no
+      end
+    end
+    if reason then why[reason] = (why[reason] or 0) + 1 end
+  end
+  return why
 end
 
 -- One round: browse the next target, then look up the auctions of the browse results under its max
@@ -342,6 +376,7 @@ function SnipeView:tick(run)
     end
     local name = ns.DisenchantView.targetName(entry.target, entry.row)
     self.seen[entry.target] = #results
+    self.why[entry.target] = self:whyNot(entry, band, results, level)
     local near = ns.Sniper.near(band, results, max, level)
     for _, e in ipairs(near) do
       local auctionAPI = self.addon.auctionAPI
@@ -417,10 +452,11 @@ function SnipeView:renderNear()
   local short = ns.Money.short
   -- Each target's last check, with its max price and name as the target is now (it may have been
   -- edited since).
-  local lists, seen, checked = {}, 0, false
+  local lists, seen, checked, why = {}, 0, false, {}
   if self.running then
     for _, entry in ipairs(self:runnable()) do
       if self.seen[entry.target] then seen, checked = seen + self.seen[entry.target], true end
+      for k, n in pairs(self.why[entry.target] or {}) do why[k] = (why[k] or 0) + n end
       local list, fresh = self.near[entry.target], {}
       local name = ns.DisenchantView.targetName(entry.target, entry.row)
       for _, e in ipairs(list or {}) do
@@ -445,13 +481,19 @@ function SnipeView:renderNear()
   end
   if self.running then
     local finds = self.session and self.session.finds or {}
-    self.hint:SetText(#near == 0 and (checked and string.format(
-      "Last checks: %d green%s listed, none in a band with a known worth.", seen, seen == 1 and "" or "s")
-      or "Waiting for the first check.")
+    local parts = {}
+    for _, w in ipairs(SnipeView.WHY) do
+      if (why[w[1]] or 0) > 0 then parts[#parts + 1] = why[w[1]] .. " " .. w[2] end
+    end
+    self.nearEmpty:SetText(#near == 0 and (checked and string.format("Last checks: %d green%s%s", seen,
+      seen == 1 and "" or "s", #parts > 0 and (": " .. table.concat(parts, ", ") .. ".") or " listed.")
+      or "Waiting for the first check.") or "")
+    self.hint:SetText(#near == 0 and "Nothing close yet."
       or #finds > 0 and "Turn the mouse wheel over this tab to buy the next find."
       or "From the last check of each target.")
   else
     self.hint:SetText("Shows what is close to your max prices while sniping.")
+    self.nearEmpty:SetText("")
   end
   for i, row in ipairs(self.nearRows) do
     local e = near[i]

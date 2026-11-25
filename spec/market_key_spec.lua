@@ -26,8 +26,12 @@ describe("MarketKey", function()
     assert.has_error(function() MarketKey.build({ realm = "Firemaw", ruleset = "1" }) end)
   end)
 
+  it("builds keys that print cleanly in chat, which treats | as an escape", function()
+    assert.is_nil(MarketKey.build({ realm = "", ruleset = "1", faction = "Horde" }):find("|", 1, true))
+  end)
+
   it("rejects the separator inside a part", function()
-    assert.has_error(function() MarketKey.build({ realm = "a|b", ruleset = "1", faction = "Horde" }) end)
+    assert.has_error(function() MarketKey.build({ realm = "a/b", ruleset = "1", faction = "Horde" }) end)
   end)
 
   it("does not parse strings that are not market keys", function()
@@ -36,6 +40,6 @@ describe("MarketKey", function()
   end)
 
   it("describes a market with a realm", function()
-    assert.equal("Firemaw, ruleset 1, Horde", MarketKey.describe("Firemaw|1|Horde"))
+    assert.equal("Firemaw, ruleset 1, Horde", MarketKey.describe("Firemaw/1/Horde"))
   end)
 end)

@@ -1,8 +1,9 @@
 -- Slash commands. Thin glue between the chat frame and the pure modules.
 local _, ns = ...
 
+-- Chat treats "|" as an escape, so it is doubled in the line to print it as typed.
 local function say(line)
-  DEFAULT_CHAT_FRAME:AddMessage("|cfff2c94cBetter AH|r " .. line)
+  DEFAULT_CHAT_FRAME:AddMessage("|cfff2c94cBetter AH|r " .. (tostring(line):gsub("|", "||")))
 end
 
 local commands = {}

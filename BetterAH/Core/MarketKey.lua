@@ -5,7 +5,8 @@ ns = ns or {}
 
 local MarketKey = {}
 
-local SEP = "|"
+-- Not "|": WoW chat treats it as an escape character, so a key with "|" prints garbled.
+local SEP = "/"
 
 local function part(value, what)
   value = value == nil and "" or tostring(value)
@@ -26,7 +27,7 @@ end
 -- Returns the parts table, or nil when the string is not a market key.
 function MarketKey.parse(key)
   if type(key) ~= "string" then return nil end
-  local realm, ruleset, faction = key:match("^([^|]*)|([^|]+)|([^|]+)$")
+  local realm, ruleset, faction = key:match("^([^/]*)/([^/]+)/([^/]+)$")
   if not realm then return nil end
   return { realm = realm, ruleset = ruleset, faction = faction }
 end

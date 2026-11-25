@@ -113,7 +113,7 @@ function PostingAPI.readListings(env, entry)
       -- quantity above 1 is that many single auctions at that price.
       local count = math.max(1, r.quantity or 1)
       listings[#listings + 1] = { unit = r.buyoutAmount, count = count,
-        ownCount = r.containsOwnerItem and count or 0 }
+        ownCount = r.containsOwnerItem and count or 0, auctionID = r.auctionID, link = r.itemLink }
     end
   end
   return listings, try(ah.HasFullItemSearchResults, entry.itemKey) ~= false
@@ -243,8 +243,16 @@ function PostingAPI:onEvent(event, arg)
       -- Read the listings the way the answer came.
       local read = { itemID = e.itemID, itemKey = item and arg or e.itemKey, commodity = commodity }
       self:finishSearch(job, PostingAPI.readListings(self.env, read))
-    elseif (e.commodity and commodity) or (not e.commodity and item) then
+    elseif e.commodity and commodity then
       self:finishSearch(job, PostingAPI.readListings(self.env, e))
+    elseif not e.commodity and item then
+      -- Read with the searched key, like Blizzard's window; if the client filed the answer under its own
+      -- key (level or suffix cleared), read with that.
+      local listings, complete = PostingAPI.readListings(self.env, e)
+      if #listings == 0 then
+        listings, complete = PostingAPI.readListings(self.env, { itemID = e.itemID, itemKey = arg, commodity = false })
+      end
+      self:finishSearch(job, listings, complete)
     end
   elseif event == "AUCTION_HOUSE_POST_WARNING" then
     if self.onPostWarning then self.onPostWarning() end
@@ -252,6 +260,8 @@ function PostingAPI:onEvent(event, arg)
     self.pending = nil
     if self.onPosted then self.onPosted(true) end
   elseif event == "AUCTION_HOUSE_POST_ERROR" or event == "AUCTION_HOUSE_SHOW_ERROR" then
+    -- While the sniper waits on a buy (SnipeAPI sets buying), the error is about that buy.
+    if event == "AUCTION_HOUSE_SHOW_ERROR" and self.buying then return end
     self.pending = nil
     if self.onPosted then self.onPosted(false, arg) end
   end

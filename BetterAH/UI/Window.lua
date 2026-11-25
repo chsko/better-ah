@@ -825,6 +825,7 @@ function Window:onEvent(event)
   elseif event == "AUCTION_HOUSE_CLOSED" then
     self.model:auctionClosed()
     if self.postView then self.postView:reset() end
+    if self.disenchantView then self.disenchantView.snipe:stop("The auction house closed, so sniping stopped.") end
     self:render()
   end
 end

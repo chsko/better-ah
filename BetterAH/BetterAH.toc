@@ -12,6 +12,7 @@ Core/MarketKey.lua
 Core/MarketValue.lua
 Core/Disenchant.lua
 Core/Targets.lua
+Core/Sniper.lua
 Core/PriceDB.lua
 Core/CharacterRecords.lua
 Core/Posting.lua
@@ -23,6 +24,8 @@ Core/WindowModel.lua
 Game/AuctionAPI.lua
 Game/CharacterTracker.lua
 Game/PostingAPI.lua
+Game/SnipeAPI.lua
 UI/PostView.lua
+UI/SnipeView.lua
 UI/DisenchantView.lua
 UI/Window.lua

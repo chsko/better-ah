@@ -13,6 +13,8 @@ local function newFrame(kind, name, parent, template)
 end
 
 function Frame:SetSize() end
+function Frame:GetName() return self.name end
+function Frame:GetParent() return self.parent end
 function Frame:SetPoint() end
 function Frame:ClearAllPoints() end
 function Frame:SetFrameStrata() end
@@ -47,7 +49,13 @@ end
 function Frame:CreateFontString() return newFrame("FontString") end
 function Frame:Click() if self.scripts.OnClick then self.scripts.OnClick(self) end end
 
-function M.new()
+-- opts.template picks the shape of BasicFrameTemplateWithInset:
+--   "forever" (default) like the Forever client: a named $parentCloseButton and an InsetBg texture
+--   "modern" with CloseButton and Inset parent keys
+--   "named" like "forever" but with the inset texture reachable only by its global name
+--   "bare" with no close button or inset at all
+function M.new(opts)
+  local shape = (opts and opts.template) or "forever"
   local env = { frames = {}, closed = 0, UISpecialFrames = {}, timers = {} }
   env.UIParent = newFrame("Frame", "UIParent")
   env.C_Timer = { After = function(_, fn) env.timers[#env.timers + 1] = fn end }
@@ -58,10 +66,21 @@ function M.new()
   end
   env.CreateFrame = function(kind, name, parent, template)
     local f = newFrame(kind, name, parent, template)
-    if template == "BasicFrameTemplateWithInset" then
-      f.CloseButton = newFrame("Button", nil, f)
-      f.CloseButton:SetScript("OnClick", function() f:Hide() end)
-      f.Inset = newFrame("Frame", nil, f)
+    if template == "BasicFrameTemplateWithInset" and shape ~= "bare" then
+      local close = newFrame("Button", name and (name .. "CloseButton"), f)
+      close:SetScript("OnClick", function() f:Hide() end)
+      if shape == "modern" then
+        f.CloseButton = close
+        f.Inset = newFrame("Frame", nil, f)
+      else
+        if name then env[name .. "CloseButton"] = close end
+        local bg = newFrame("Texture", name and (name .. "InsetBg"), f)
+        if shape == "named" then
+          if name then env[name .. "InsetBg"] = bg end
+        else
+          f.InsetBg = bg
+        end
+      end
     end
     env.frames[#env.frames + 1] = f
     if name then env[name] = f end

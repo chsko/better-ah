@@ -173,6 +173,26 @@ function Window:onEvent(event)
   end
 end
 
+-- Finds a part of a frame template and says how it was found: by parent key first, then by
+-- global name (frame name plus suffix), accepting a global only if it is a child of the frame.
+-- Templates differ between clients: Forever names its close button $parentCloseButton instead
+-- of giving it a CloseButton parent key, and has an InsetBg texture instead of an Inset frame.
+-- Each name is tried as a parent key and as a global suffix.
+function Window.templatePart(env, frame, ...)
+  for i = 1, select("#", ...) do
+    local key = select(i, ...)
+    if frame[key] then return key end
+  end
+  local name = frame:GetName()
+  if not name then return nil end
+  for i = 1, select("#", ...) do
+    local global = name .. select(i, ...)
+    local part = env[global]
+    if type(part) == "table" and part.GetParent and part:GetParent() == frame then return global end
+  end
+  return nil
+end
+
 function Window.install(env, addon)
   local w = Window.new(env, addon.WindowModel.new())
   local events = env.CreateFrame("Frame")
@@ -184,12 +204,16 @@ function Window.install(env, addon)
     addon.Probes.suite():add("Better AH window", function()
       local ok, frame = pcall(w.build, w)
       if not ok then return "fail", "could not create window: " .. tostring(frame) end
-      if not (frame.CloseButton and frame.Inset) then
-        return "fail", "BasicFrameTemplateWithInset parts missing (CloseButton/Inset)"
+      local close = Window.templatePart(env, frame, "CloseButton")
+      local inset = Window.templatePart(env, frame, "Inset", "InsetBg")
+      if not close then
+        return "fail", "window has no close button (looked for CloseButton and " .. (frame:GetName() or "?")
+          .. "CloseButton); inset " .. (inset or "none")
       end
       local count = 0
       for _ in pairs(w.buttons) do count = count + 1 end
-      return "pass", "window created with " .. count .. " sidebar entries"
+      return "pass", "window created with " .. count .. " sidebar entries; close button " .. close
+        .. "; inset " .. (inset or "none")
     end)
   end
   return w

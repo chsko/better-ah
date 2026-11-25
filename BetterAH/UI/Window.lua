@@ -176,6 +176,14 @@ function Window:entryButton(style, parent, width)
     local ok, b = pcall(env.CreateFrame, "Button", nil, parent, "AuctionCategoryButtonTemplate")
     if ok and b and b.SelectedTexture and b:GetFontString() then
       b:SetSize(width, 20)
+      -- The template's textures are anchored for Blizzard's own list and spill across the window
+      -- (seen in game); pin every texture to the button itself.
+      for _, region in ipairs({ b:GetRegions() }) do
+        if region.GetObjectType and region:GetObjectType() == "Texture" then
+          region:ClearAllPoints()
+          region:SetAllPoints(b)
+        end
+      end
       b.isCategory = true
       return b, 21
     end

@@ -25,4 +25,10 @@ describe("Money", function()
       assert.is_nil(Money.parse(bad), bad)
     end
   end)
+
+  it("shortens money to gold and silver once there is gold", function()
+    assert.equal("4g 12s", Money.short(41230))
+    assert.equal("14s 95c", Money.short(1495))
+    assert.equal("0c", Money.short(0))
+  end)
 end)

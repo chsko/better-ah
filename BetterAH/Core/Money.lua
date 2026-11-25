@@ -28,6 +28,13 @@ function Money.format(copper)
 end
 
 -- The most a typed amount may be: the auction house's own limit of 9,999,999g 99s 99c.
+-- Money where room is tight: gold and silver once there is gold ("4g 12s"), else as format.
+function Money.short(copper)
+  local g, s = Money.split(copper)
+  if g > 0 then return g .. "g " .. s .. "s" end
+  return Money.format(copper)
+end
+
 Money.MAX = 99999999999
 
 -- Read what a player typed as a copper amount: "12g 3s 4c", "3s", "1g5s", or a bare number of copper.

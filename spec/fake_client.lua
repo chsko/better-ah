@@ -33,7 +33,10 @@ function Frame:SetScript(name, fn) self.scripts[name] = fn end
 function Frame:RegisterEvent(e) self.events[e] = true end
 function Frame:UnregisterEvent(e) self.events[e] = nil end
 function Frame:EnableMouseWheel() end
-function Frame:SetWidth() end
+function Frame:SetWidth(width) self.width = width end
+function Frame:GetWidth() return self.width end
+function Frame:SetHeight() end
+function Frame:SetWordWrap(on) self.wordWrap = on end
 function Frame:SetJustifyH() end
 function Frame:Enable() self.enabled = true end
 function Frame:Disable() self.enabled = false end

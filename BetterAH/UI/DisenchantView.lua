@@ -81,16 +81,28 @@ function DisenchantView.cellText(class)
   return ns.Money.format(class.net) .. ((class.missing or 0) > 0 and " *" or "")
 end
 
--- The detail panel text for a row.
-function DisenchantView.detailText(row, opts)
-  local lines = { "Armor", ns.Window.disenchantText(row.armor.value, row.armor.breakdown, row.armor.missing), "",
-    "Weapons", ns.Window.disenchantText(row.weapon.value, row.weapon.breakdown, row.weapon.missing), "" }
-  if opts.salvager then
-    lines[#lines + 1] = "Counts the Arcane Salvager's 50% chance of one extra dust or essence."
-  else
-    lines[#lines + 1] = "Without an Arcane Salvager."
+DisenchantView.CLASSES = { { "armor", "Armor", "What armor gives" }, { "weapon", "Weapons", "What weapons give" } }
+DisenchantView.MATERIAL_LINES = 4
+
+-- A material's chance as the player reads it: "75%", "2.5%".
+function DisenchantView.chanceText(chance)
+  return (string.format("%.1f", chance * 100):gsub("%.0$", "")) .. "%"
+end
+
+-- The band detail for one class ({ value, net, breakdown, missing } from rows): the big after-cut value,
+-- the value before the cut, and one line per material with its share of the value (0 to 1).
+function DisenchantView.classDetail(class)
+  local money = ns.Money.short
+  local out = { value = class.net and money(class.net) or "-",
+    before = class.value and (money(class.value) .. "\nbefore the cut") or "No prices\nyet", lines = {} }
+  for _, y in ipairs(class.breakdown or {}) do
+    out.lines[#out.lines + 1] = { name = (y.name:gsub(" Essence$", " Ess.")), fullName = y.name,
+      chance = DisenchantView.chanceText(y.chance),
+      count = y.min == y.max and tostring(y.min) or (y.min .. "-" .. y.max),
+      adds = y.value and money(y.value) or "no price",
+      share = (y.value and class.value and class.value > 0) and math.min(1, y.value / class.value) or 0 }
   end
-  return table.concat(lines, "\n")
+  return out
 end
 
 -- What a target's items are worth after the cut, from its band's row: the lower of its classes' values
@@ -245,6 +257,110 @@ function DisenchantView:buildTargets(p, width)
   self.targetsEmpty:SetText("No targets yet. Press New target, or pick a band on Values and make one from it.")
 end
 
+-- The Values tab's band detail (#52): both classes' after-cut values side by side, and the chosen
+-- class's materials as a table with a bar for each one's share of the value.
+function DisenchantView:buildBandDetail()
+  local env, w = self.env, self.window
+  local box = env.CreateFrame("Frame", nil, w.detailLayer)
+  box:SetPoint("TOPLEFT", w.detailLayer, "TOPLEFT", 12, -30)
+  box:SetSize(196, 330)
+  box:Hide()
+  self.bandDetail = box
+  local function text(parent, font, x, y, width, justify)
+    local t = parent:CreateFontString(nil, "OVERLAY", font)
+    t:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+    t:SetWidth(width)
+    t:SetJustifyH(justify or "LEFT")
+    if t.SetWordWrap then t:SetWordWrap(false) end
+    return t
+  end
+  self.bandRequired = text(box, "GameFontDisableSmall", 0, 0, 196)
+  self.classBoxes = {}
+  for i, c in ipairs(DisenchantView.CLASSES) do
+    local b = env.CreateFrame("Button", nil, box)
+    b:SetPoint("TOPLEFT", box, "TOPLEFT", (i - 1) * 101, -18)
+    b:SetSize(95, 66)
+    local bg = b:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints(b)
+    b.bg = bg
+    local hover = b:CreateTexture(nil, "HIGHLIGHT")
+    hover:SetAllPoints(b)
+    hover:SetColorTexture(1, 1, 1, 0.08)
+    b.label = text(b, "GameFontNormalSmall", 6, -6, 85)
+    b.label:SetText(c[2])
+    b.value = text(b, "GameFontHighlightLarge", 6, -20, 85)
+    b.before = text(b, "GameFontDisableSmall", 6, -38, 85)
+    b.before:SetWordWrap(true)
+    b:SetScript("OnClick", function() self.detailClass = c[1]; self:render() end)
+    ns.Window.tooltip(env, b, c[2], "What one green of this band is worth disenchanted, after the 5% auction "
+      .. "house cut. Click to see its materials.")
+    self.classBoxes[c[1]] = b
+  end
+  local top = -114 -- the table's header
+  self.materialsTitle = text(box, "GameFontNormalSmall", 0, top + 18, 196)
+  local cols = { { "Material", 0, 98, "LEFT" }, { "Chance", 98, 30, "RIGHT" }, { "Count", 128, 24, "RIGHT" },
+    { "Adds", 152, 44, "RIGHT" } }
+  for _, col in ipairs(cols) do text(box, "GameFontDisableSmall", col[2], top, col[3], col[4]):SetText(col[1]) end
+  self.materialLines = {}
+  for i = 1, DisenchantView.MATERIAL_LINES do
+    local y = top - i * 24
+    local line = {}
+    for c, col in ipairs(cols) do line[c] = text(box, "GameFontHighlightSmall", col[2], y, col[3], col[4]) end
+    local track = box:CreateTexture(nil, "ARTWORK")
+    track:SetColorTexture(0, 0, 0, 0.5)
+    track:SetPoint("TOPLEFT", box, "TOPLEFT", 0, y - 14)
+    track:SetSize(196, 3)
+    local fill = box:CreateTexture(nil, "OVERLAY")
+    fill:SetColorTexture(0.79, 0.64, 0.23, 1)
+    fill:SetPoint("TOPLEFT", track, "TOPLEFT", 0, 0)
+    fill:SetSize(1, 3)
+    line.track, line.fill = track, fill
+    self.materialLines[i] = line
+  end
+  self.materialsNote = text(box, "GameFontDisableSmall", 0, top - (DisenchantView.MATERIAL_LINES + 1) * 24 + 6, 196)
+  if self.materialsNote.SetWordWrap then self.materialsNote:SetWordWrap(true) end
+  self.salvagerNote = w.detailLayer:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  self.salvagerNote:SetPoint("BOTTOMLEFT", w.detailLayer, "BOTTOMLEFT", 12, 42)
+  self.salvagerNote:SetWidth(196)
+  self.salvagerNote:SetJustifyH("LEFT")
+  self.salvagerNote:Hide()
+end
+
+-- Fills the band detail for a row and the chosen class.
+function DisenchantView:renderBandDetail(row, opts)
+  local band = row.band
+  self.bandRequired:SetText("Usually required level " .. range(band.required.min, band.required.max, band.max))
+  local chosen = self.detailClass or "armor"
+  for _, c in ipairs(DisenchantView.CLASSES) do
+    local b, d = self.classBoxes[c[1]], DisenchantView.classDetail(row[c[1]])
+    b.value:SetText(d.value .. (((row[c[1]].missing or 0) > 0 and row[c[1]].net) and "*" or ""))
+    b.before:SetText(d.before)
+    if c[1] == chosen then b.bg:SetColorTexture(0.79, 0.64, 0.23, 0.3) else b.bg:SetColorTexture(0, 0, 0, 0.35) end
+    b.selected = c[1] == chosen
+    if c[1] == chosen then
+      self.materialsTitle:SetText(c[3])
+      for i, line in ipairs(self.materialLines) do
+        local m = d.lines[i]
+        line[1]:SetText(m and m.name or "")
+        line[2]:SetText(m and m.chance or "")
+        line[3]:SetText(m and m.count or "")
+        line[4]:SetText(m and m.adds or "")
+        line.track:SetShown(m ~= nil)
+        line.fill:SetShown(m ~= nil and m.share > 0)
+        line.fill:SetWidth(math.max(1, math.floor(196 * (m and m.share or 0) + 0.5)))
+        line.name = m and m.fullName
+        line.share = m and m.share or 0
+      end
+      self.materialsNote:SetText((row[c[1]].missing or 0) > 0
+        and "* A material has no price yet and counts as nothing. Scan materials to price it." or "")
+    end
+  end
+  self.salvagerNote:SetText(opts.salvager and "Counts the Arcane Salvager's 50% chance of one extra dust or essence."
+    or "Without an Arcane Salvager.")
+  self.bandDetail:Show()
+  self.salvagerNote:Show()
+end
+
 -- Controls on the detail panel: the Values tab's "make a target" button and the target editor.
 function DisenchantView:buildEditors()
   local env, w = self.env, self.window
@@ -252,11 +368,14 @@ function DisenchantView:buildEditors()
   make:SetSize(196, 22)
   make:SetPoint("BOTTOMLEFT", w.detailLayer, "BOTTOMLEFT", 12, 12)
   make:SetText("Make a target")
-  ns.Window.tooltip(env, make, "Make a target", "Add a target for green armor in this band, then change it "
-    .. "on Targets.")
-  make:SetScript("OnClick", function() if self.selected then self:newTarget(self.selected) end end)
+  ns.Window.tooltip(env, make, "Make a target", "Add a target for the greens shown above (armor or weapons) "
+    .. "in this band, then change it on Targets.")
+  make:SetScript("OnClick", function()
+    if self.selected then self:newTarget(self.selected, self.detailClass) end
+  end)
   make:Hide()
   self.makeButton = make
+  self:buildBandDetail()
 
   local box = env.CreateFrame("Frame", nil, w.detailLayer)
   -- Under the title, which can take two lines.
@@ -363,6 +482,7 @@ function DisenchantView:hideEditors()
   if self.snipe then self.snipe:hide() end
   if self.editor then self.editor:Hide() end
   if self.makeButton then self.makeButton:Hide() end
+  if self.bandDetail then self.bandDetail:Hide(); self.salvagerNote:Hide() end
 end
 
 function DisenchantView:selectTab(tab)
@@ -397,9 +517,14 @@ function DisenchantView:current()
   return self.target and self:targets():list()[self.target]
 end
 
-function DisenchantView:newTarget(band)
+-- class: "weapon" for a target of the three weapon types, else the four armor types.
+function DisenchantView:newTarget(band, class)
   self:dropFocus()
-  local _, index = self:targets():add(band)
+  local target, index = self:targets():add(band)
+  if class == "weapon" then
+    target.types = {}
+    for _, t in ipairs(ns.Targets.TYPES) do if t.class == "weapon" then target.types[t.id] = true end end
+  end
   self.tab, self.target, self.message = "targets", index, nil
   self:render()
 end
@@ -525,7 +650,11 @@ function DisenchantView:render()
   if self.tab ~= "snipe" then self.snipe:hide() end
   -- Only hidden when it goes away: hiding the editor would take focus from the profit box.
   if self.tab ~= "targets" then self.editor:Hide() end
-  if self.tab ~= "values" then self.makeButton:Hide() end
+  if self.tab ~= "values" then
+    self.makeButton:Hide()
+    self.bandDetail:Hide()
+    self.salvagerNote:Hide()
+  end
   if self.tab == "targets" then
     self:renderTargets()
   elseif self.tab == "snipe" then
@@ -568,11 +697,14 @@ function DisenchantView:renderValues(key, opts)
   end
   if chosen then
     w.detailTitle:SetText(string.format("Greens of item level %s", range(chosen.band.min, chosen.band.max)))
-    w.detailBody:SetText(DisenchantView.detailText(chosen, opts))
+    w.detailBody:SetText("")
+    self:renderBandDetail(chosen, opts)
     self.makeButton:Show()
   else
     w.detailTitle:SetText("")
     w.detailBody:SetText("Select a band to see what each material adds.")
+    self.bandDetail:Hide()
+    self.salvagerNote:Hide()
   end
 end
 

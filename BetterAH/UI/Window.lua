@@ -510,8 +510,8 @@ function Window.detailText(item, value, info, history, now)
         or string.format("leaving out %d priced far below the rest", scan.dropped)))
     end
     if search and today - search.day < ns.MarketValue.DAYS then
-      add(string.format("Post view check %s: the middle price of the %d units other sellers have listed.", when(search.day),
-        search.units))
+      add(string.format("Post view check %s: the middle price of the %d units other sellers have listed.",
+        when(search.day), search.units))
     end
     if info.imported and today - info.imported < ns.MarketValue.DAYS then
       add("Includes imported prices from " .. when(info.imported) .. ".")

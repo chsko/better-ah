@@ -7,8 +7,12 @@
 
 Core/Init.lua
 Core/Money.lua
+Core/Time.lua
+Core/MarketKey.lua
+Core/PriceDB.lua
 Core/SelfTest.lua
 Core/Probes.lua
 Core/Commands.lua
 Core/WindowModel.lua
+Game/AuctionAPI.lua
 UI/Window.lua

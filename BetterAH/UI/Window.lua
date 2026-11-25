@@ -7,11 +7,15 @@ ns = ns or {}
 local Window = {}
 
 local WIDTH, HEIGHT, SIDEBAR = 820, 470, 180
+local ROWS, ROW_HEIGHT = 14, 18
+local COLUMNS = { { "Item", 0, 260 }, { "Lowest buyout", 270, 130 }, { "Quantity", 410, 70 }, { "Seen", 490, 110 } }
 local BLIZZARD_FRAMES = { "AuctionFrame", "AuctionHouseFrame" }
 
 -- env is the game's global table (_G in the client, a fake in specs).
-function Window.new(env, model)
-  local self = setmetatable({ env = env, model = model, buttons = {}, concealed = {} }, { __index = Window })
+-- addon is the namespace holding prices (PriceDB) and auctionAPI; optional in specs of the frame.
+function Window.new(env, model, addon)
+  local self = setmetatable({ env = env, model = model, addon = addon or {}, buttons = {}, concealed = {},
+    offset = 0 }, { __index = Window })
   return self
 end
 
@@ -112,6 +116,7 @@ function Window:build()
   placeholder:SetText("Coming soon.")
   self.placeholder = placeholder
 
+  self:buildPrices(f)
   self:renderView()
   return f
 end
@@ -128,11 +133,128 @@ function Window:attachReturnButton()
   self.returnButton = b
 end
 
+-- Prices and history: a Scan button, the scan status and one row per item on this market.
+function Window:buildPrices(f)
+  local env = self.env
+  local panel = env.CreateFrame("Frame", nil, f)
+  panel:SetPoint("TOPLEFT", f, "TOPLEFT", SIDEBAR + 14, -90)
+  panel:SetSize(WIDTH - SIDEBAR - 30, HEIGHT - 100)
+  panel:EnableMouseWheel(true)
+  panel:SetScript("OnMouseWheel", function(_, delta) self:scrollPrices(-delta * 3) end)
+  self.pricesPanel = panel
+
+  local scan = env.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+  scan:SetSize(90, 22)
+  scan:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
+  scan:SetText("Scan")
+  scan:SetScript("OnClick", function() self:startScan() end)
+  self.scanButton = scan
+
+  local status = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  status:SetPoint("LEFT", scan, "RIGHT", 10, 0)
+  self.scanStatus = status
+
+  self.rows = {}
+  for r = 0, ROWS do
+    local row = {}
+    for c, col in ipairs(COLUMNS) do
+      local font = r == 0 and "GameFontNormalSmall" or "GameFontHighlightSmall"
+      local cell = panel:CreateFontString(nil, "OVERLAY", font)
+      cell:SetPoint("TOPLEFT", panel, "TOPLEFT", col[2], -32 - r * ROW_HEIGHT)
+      cell:SetWidth(col[3])
+      cell:SetJustifyH(c == 1 and "LEFT" or "RIGHT")
+      if r == 0 then cell:SetText(col[1]) end
+      row[c] = cell
+    end
+    if r > 0 then self.rows[r] = row end
+  end
+end
+
+function Window:market()
+  return ns.AuctionAPI and ns.AuctionAPI.currentMarket(self.env)
+end
+
+function Window:startScan()
+  local addon = self.addon
+  if not (addon.auctionAPI and addon.prices) then
+    self.statusMarket = self:market()
+    self.statusText = "Scanning isn't ready yet. Try again in a moment."
+    return self:renderPrices()
+  end
+  -- Set the waiting text first: the reply may come before scanIntoPrices returns.
+  self.statusMarket = self:market()
+  self.statusText = "Scanning the auction house. This can take a minute or two."
+  local started, why = ns.AuctionAPI.scanIntoPrices(addon, function(_, message)
+    self.statusText = message
+    self.offset = 0
+    self:renderPrices()
+  end)
+  if not started then self.statusText = why end
+  self:renderPrices()
+end
+
+function Window:scrollPrices(by)
+  self.offset = self.offset + by
+  self:renderPrices()
+end
+
+function Window:renderPrices()
+  if not self.pricesPanel then return end
+  local addon = self.addon
+  local key = self:market()
+  -- Sorting every item is only redone when the market or its last scan changes, not per scroll.
+  -- recordScan is the only writer today; a later writer (imports) must also bump lastScan.
+  local stamp = key and addon.prices and addon.prices:lastScan(key)
+  if not (self.cache and self.cache.key == key and self.cache.stamp == stamp) then
+    self.cache = { key = key, stamp = stamp, items = (key and addon.prices) and addon.prices:items(key) or {} }
+  end
+  local items = self.cache.items
+  local now = addon.auctionAPI and addon.auctionAPI:now() or 0
+  local maxOffset = math.max(0, #items - ROWS)
+  self.offset = math.max(0, math.min(self.offset, maxOffset))
+  local scanning = addon.auctionAPI and addon.auctionAPI.pending
+  if scanning then self.scanButton:Disable() else self.scanButton:Enable() end
+
+  -- A scan message belongs to the market it was about; on another market, show that one's state.
+  if self.statusText and self.statusMarket ~= key then self.statusText = nil end
+  local text = self.statusText
+  if not text then
+    local last = key and addon.prices and addon.prices:lastScan(key)
+    if last then
+      text = string.format("%d items. Last scan of %s: %s.", #items, ns.MarketKey.describe(key), ns.Time.ago(last, now))
+    else
+      text = "No scan of this market yet. Press Scan to record its prices."
+    end
+  end
+  self.scanStatus:SetText(text)
+
+  for r, row in ipairs(self.rows) do
+    local item = items[r + self.offset]
+    if item then
+      row[1]:SetText(item.name or (addon.auctionAPI and addon.auctionAPI:itemName(item.item)) or item.item)
+      row[2]:SetText(item.lowest and ns.Money.format(item.lowest) or "bid only")
+      row[3]:SetText(tostring(item.quantity))
+      row[4]:SetText(ns.Time.ago(item.seen, now))
+    else
+      for _, cell in ipairs(row) do cell:SetText("") end
+    end
+  end
+end
+
 function Window:renderView()
   for id, b in pairs(self.buttons) do
     if id == self.model.view then b:LockHighlight() else b:UnlockHighlight() end
   end
   self.heading:SetText(self.model:label(self.model.view))
+  local prices = self.model.view == "prices"
+  if prices then
+    self.placeholder:Hide()
+    self.pricesPanel:Show()
+    self:renderPrices()
+  else
+    self.placeholder:Show()
+    self.pricesPanel:Hide()
+  end
 end
 
 function Window:render()
@@ -194,7 +316,7 @@ function Window.templatePart(env, frame, ...)
 end
 
 function Window.install(env, addon)
-  local w = Window.new(env, addon.WindowModel.new())
+  local w = Window.new(env, addon.WindowModel.new(), addon)
   local events = env.CreateFrame("Frame")
   events:RegisterEvent("AUCTION_HOUSE_SHOW")
   events:RegisterEvent("AUCTION_HOUSE_CLOSED")

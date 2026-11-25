@@ -4,9 +4,13 @@ local fake = require("spec.fake_client")
 local function setup(opts)
   local env = fake.new(opts)
   local ns = helper.load("BetterAH/Core/WindowModel.lua")
-  helper.load("BetterAH/Core/SelfTest.lua", ns)
-  helper.load("BetterAH/Core/Probes.lua", ns)
+  for _, file in ipairs({ "Money", "Time", "MarketKey", "PriceDB", "SelfTest", "Probes" }) do
+    helper.load("BetterAH/Core/" .. file .. ".lua", ns)
+  end
+  helper.load("BetterAH/Game/AuctionAPI.lua", ns)
   helper.load("BetterAH/UI/Window.lua", ns)
+  ns.prices = ns.PriceDB.new({})
+  ns.AuctionAPI.install(env, ns)
   local w = ns.Window.install(env, ns)
   return env, w, ns
 end
@@ -167,5 +171,109 @@ describe("Window", function()
     assert.equal("fail", last.status)
     assert.equal("window has no close button (looked for CloseButton and BetterAHFrameCloseButton); inset none",
       last.detail)
+  end)
+
+  describe("Prices and history", function()
+    local function rowText(w, r)
+      local out = {}
+      for c, cell in ipairs(w.rows[r]) do out[c] = cell:GetText() end
+      return out
+    end
+
+    it("asks for a first scan on a market never scanned", function()
+      local env, w = setup()
+      env.openAuctionHouse()
+      w:select("prices")
+      assert.is_true(w.pricesPanel:IsShown())
+      assert.is_false(w.placeholder:IsShown())
+      assert.equal("No scan of this market yet. Press Scan to record its prices.", w.scanStatus:GetText())
+    end)
+
+    it("scans from the Scan button and lists items with lowest buyout, quantity and seen time", function()
+      local env, w = setup()
+      env.auctions = {
+        { name = "Wool Cloth", count = 10, buyout = 30500, itemID = 2592 },
+        { name = "Linen Cloth", count = 20, buyout = 4000, itemID = 2589 },
+      }
+      env.openAuctionHouse()
+      w:select("prices")
+      w.scanButton:Click()
+      assert.equal("Scanning the auction house. This can take a minute or two.", w.scanStatus:GetText())
+      assert.is_false(w.scanButton:IsEnabled())
+      env.runTimers()
+      assert.equal("Scanned 2 listings of 2 items in 0 seconds.", w.scanStatus:GetText())
+      assert.is_true(w.scanButton:IsEnabled())
+      assert.same({ "Linen Cloth", "2s 0c", "20", "just now" }, rowText(w, 1))
+      assert.same({ "Wool Cloth", "30s 50c", "10", "just now" }, rowText(w, 2))
+      assert.same({ "", "", "", "" }, rowText(w, 3))
+    end)
+
+    it("shows the result when the auction house replies before the scan call returns", function()
+      local env, w = setup()
+      env.openAuctionHouse()
+      w:select("prices")
+      local replicate = env.C_AuctionHouse.ReplicateItems
+      env.C_AuctionHouse.ReplicateItems = function()
+        replicate()
+        env.runTimers()
+      end
+      w.scanButton:Click()
+      assert.equal("Scanned 0 listings of 0 items in 0 seconds.", w.scanStatus:GetText())
+    end)
+
+    it("says why a scan can't start", function()
+      local env, w = setup()
+      env.openAuctionHouse()
+      w:select("prices")
+      env.C_AuctionHouse.ReplicateItems = nil
+      w.scanButton:Click()
+      assert.equal("This client can't do a full scan (C_AuctionHouse.ReplicateItems is missing).",
+        w.scanStatus:GetText())
+      assert.is_true(w.scanButton:IsEnabled())
+    end)
+
+    it("drops the last scan message when the player is on another market", function()
+      local env, w = setup()
+      env.openAuctionHouse()
+      w:select("prices")
+      w.scanButton:Click()
+      env.runTimers()
+      env.C_Map = { GetBestMapForUnit = function() return 1446 end }
+      w:renderPrices()
+      assert.equal("No scan of this market yet. Press Scan to record its prices.", w.scanStatus:GetText())
+    end)
+
+    it("shows only the current market's items", function()
+      local env, w, ns = setup()
+      ns.prices:recordScan("|1|Alliance", env.now, { { item = "i:1", name = "Elsewhere", count = 1, buyout = 1 } })
+      env.openAuctionHouse()
+      w:select("prices")
+      assert.same({ "", "", "", "" }, rowText(w, 1))
+    end)
+
+    it("shows the last scan time when coming back later", function()
+      local env, w, ns = setup()
+      ns.prices:recordScan("|1|Horde", env.now - 600, { { item = "i:1", name = "Thing", count = 1, buyout = 1 } })
+      env.openAuctionHouse()
+      w:select("prices")
+      assert.equal("1 items. Last scan of ruleset 1, Horde: 10 min ago.", w.scanStatus:GetText())
+      assert.same({ "Thing", "1c", "1", "10 min ago" }, rowText(w, 1))
+    end)
+
+    it("scrolls through more items than fit", function()
+      local env, w, ns = setup()
+      local listings = {}
+      for i = 1, 20 do
+        listings[i] = { item = "i:" .. i, name = string.format("Item %02d", i), count = 1, buyout = i }
+      end
+      ns.prices:recordScan("|1|Horde", env.now, listings)
+      env.openAuctionHouse()
+      w:select("prices")
+      w.pricesPanel.scripts.OnMouseWheel(w.pricesPanel, -1)
+      assert.equal("Item 04", rowText(w, 1)[1])
+      for _ = 1, 10 do w.pricesPanel.scripts.OnMouseWheel(w.pricesPanel, -1) end
+      assert.equal("Item 07", rowText(w, 1)[1], "stops at the last full page")
+      assert.equal("Item 20", rowText(w, 14)[1])
+    end)
   end)
 end)

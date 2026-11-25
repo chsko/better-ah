@@ -7,7 +7,7 @@ globals = { "BetterAHDB", "SLASH_BETTERAH1", "SlashCmdList" }
 
 -- WoW client globals the addon reads. Add to this list as new APIs are used.
 read_globals = {
-  "CreateFrame", "GetBuildInfo", "GetRealmName", "GetNormalizedRealmName", "UnitGUID", "UnitFactionGroup",
+  "CreateFrame", "GetBuildInfo", "UnitName", "C_Container", "GetRealmName", "GetNormalizedRealmName", "UnitGUID", "UnitFactionGroup",
   "GetCurrentRegionName",
   "C_GameRules", "C_Seasons", "C_Realm", "GetServerTime", "GetItemInfo", "GetMoney",
   "C_AuctionHouse", "C_Timer", "C_Item", "C_Map",

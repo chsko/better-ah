@@ -182,6 +182,33 @@ function M.new(opts)
         a.hasAllInfo ~= false
     end,
   }
+  -- The player and their containers. env.containers[bag] is an array of slots, each nil (empty) or
+  -- { itemID, count, name }. env.owned is the player's auctions: { itemID, quantity, status }.
+  env.playerName = "Thrall"
+  env.UnitName = function() return env.playerName end
+  env.guid = "Player-6841-0A1B2C3D"
+  env.UnitGUID = function() return env.guid end
+  env.containers = { [0] = {} }
+  env.C_Container = {
+    GetContainerNumSlots = function(bag) return env.containers[bag] and #env.containers[bag] or 0 end,
+    GetContainerItemInfo = function(bag, slot)
+      local it = env.containers[bag] and env.containers[bag][slot]
+      if not it then return nil end
+      return { itemID = it.itemID, stackCount = it.count, itemName = it.name, hyperlink = "" }
+    end,
+  }
+  env.owned = {}
+  env.ownedComplete = true
+  env.C_AuctionHouse.HasFullOwnedAuctionResults = function() return env.ownedComplete end
+  env.C_AuctionHouse.QueryOwnedAuctions = function()
+    env.ownedQueries = (env.ownedQueries or 0) + 1
+    env.C_Timer.After(0, function() env.fire("OWNED_AUCTIONS_UPDATED") end)
+  end
+  env.C_AuctionHouse.GetNumOwnedAuctions = function() return #env.owned end
+  env.C_AuctionHouse.GetOwnedAuctionInfo = function(i)
+    local a = env.owned[i]
+    return a and { auctionID = i, itemKey = { itemID = a.itemID }, quantity = a.quantity, status = a.status or 0 }
+  end
   -- Fire an event at every frame registered for it.
   env.fire = function(event, ...)
     for _, f in ipairs(env.frames) do

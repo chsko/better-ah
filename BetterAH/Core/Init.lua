@@ -13,6 +13,8 @@ frame:SetScript("OnEvent", function(self, event, loadedName)
     ns.db = BetterAHDB
     BetterAHDB.prices = BetterAHDB.prices or {}
     if ns.PriceDB then ns.prices = ns.PriceDB.new(BetterAHDB.prices) end
+    BetterAHDB.characters = BetterAHDB.characters or {}
+    if ns.CharacterRecords then ns.characters = ns.CharacterRecords.new(BetterAHDB.characters) end
     self:UnregisterEvent("ADDON_LOADED")
   end
 end)

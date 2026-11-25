@@ -59,8 +59,10 @@ function PostView.detailText(row, ownFloor, marketValue, step)
   elseif plan.reason == "none-left" then
     add("None left in your bags.")
   elseif plan.reason == "no-floor" then
-    add("There is no market value for this item yet, so there is no floor price to protect you. "
-      .. "Scan the auction house first, or set a floor price below.")
+    add("There is no market value for this item yet: "
+      .. (plan.price and "too few other listings to judge a price from" or "nobody else has it listed")
+      .. ", and no scan has seen it in the last 14 days. So there is no floor price to protect you. "
+      .. "Set a floor price below to post it.")
   elseif plan.reason == "below-floor" then
     add(string.format("Posting under the cheapest other listing would take it to %s, below your floor of %s (%s), "
       .. "so it stays in your bags.", money(plan.price), money(plan.floor), floorSource(ownFloor, marketValue)))
@@ -225,6 +227,7 @@ function PostView:open()
     marketValue = function(item) return self:marketValue(item) end,
   })
   self.selected, self.offset, self.message, self.searching, self.busy = nil, 0, nil, {}, nil
+  self.recorded = {}
   self:dropConfirm()
   if api then
     api.onPosted = function(ok) self:posted(ok) end
@@ -274,6 +277,16 @@ function PostView:refresh()
         api:search(e, function(listings, reason)
           if queue ~= self.queue then return end -- from an earlier visit
           self.searching[e.item] = nil
+          -- What the search saw counts toward the item's market value (reason is true for full results).
+          local prices = self.addon.prices
+          -- Once per item per visit, so re-checks between posts don't outweigh the day's other points.
+          -- Not for gear with a random suffix: its search sees one variant, but prices are per item ID.
+          local key = e.itemKey
+          local variant = not e.commodity and type(key) == "table" and (key.itemSuffix or 0) ~= 0
+          if listings and reason == true and prices and self.key and not variant and not self.recorded[e.item] then
+            -- Only once it counted, so a later check that sees more listings can still count.
+            self.recorded[e.item] = prices:recordSearch(self.key, self:now(), e.item, listings, e.name) or nil
+          end
           if listings then queue:setListings(e.item, listings) else queue:setListings(e.item, nil, reason) end
           self:render()
         end)

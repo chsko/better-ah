@@ -353,7 +353,7 @@ describe("Window", function()
         "Scan today: the average of the cheapest 30 of 100 listed, leaving out 1 priced far below the rest.",
         "Smoothed over 2 days of the last 14, with recent days counting most.",
         "",
-        "Daily value (average of each day's scans)",
+        "Daily value (average of each day's scans and checks)",
         "Today: 50s 0c",
         "Yesterday: 30s 0c",
       }, "\n"), w.detailBody:GetText())
@@ -390,6 +390,12 @@ describe("Window", function()
       assert.equal("", w.detailBody:GetText(), "other views clear the detail panel")
     end)
 
+    it("tells an item scanned before price history existed to be scanned again", function()
+      local _, _, ns = setup()
+      local text = ns.Window.detailText({ item = "i:1", seen = 1, lowest = 195 }, nil, nil, {}, 1)
+      assert.matches("Scanned before Better AH kept price history", text, 1, true)
+    end)
+
     it("explains an item known only from imported prices", function()
       local env, w, ns = setup()
       ns.prices:importPrices("/1/Horde", env.now, { ["i:5"] = { value = 777, name = "Imported" } })
@@ -403,7 +409,7 @@ describe("Window", function()
         "Includes imported prices from today.",
         "Smoothed over 1 day of the last 14, with recent days counting most.",
         "",
-        "Daily value (average of each day's scans)",
+        "Daily value (average of each day's scans and checks)",
         "Today: 7s 77c",
       }, "\n"), w.detailBody:GetText())
       assert.same({ "Imported", "-", "7s 77c", "-", "never" }, rowText(w, 1))
@@ -536,6 +542,42 @@ describe("Window", function()
       ns.posting:setProfile("i:2592", 20, 2)
       return env, w, ns
     end
+
+    it("counts other sellers' listings toward market value, once per day, and not as a full scan", function()
+      local env, w, ns = setup()
+      env.containers[0] = { linen, { itemID = 2592, count = 3, name = "Wool Cloth" },
+        { itemID = 4306, count = 10, name = "Silk Cloth" } }
+      env.listings[2589] = { { unitPrice = 950, quantity = 40 }, { unitPrice = 1000, quantity = 10 } }
+      env.listings[2592] = { { unitPrice = 500, quantity = 20 } }
+      env.listings[4306] = {}
+      env.openAuctionHouse()
+      assert.equal(950, (ns.prices:marketValue("/1/Horde", "i:2589", env.now)), "no scan needed")
+      assert.same({ "Linen Cloth", "20", "9s 49c", "7s 60c", "Needs setup" }, cells(w, 1))
+      assert.is_nil(ns.prices:marketValue("/1/Horde", "i:2592", env.now), "one listing is too few to judge")
+      assert.is_nil(ns.prices:marketValue("/1/Horde", "i:4306", env.now))
+      assert.is_nil(ns.prices:lastScan("/1/Horde"), "a search is not a full scan")
+      w.postView.rows[2].button:Click()
+      assert.matches("nobody else has it listed", w.detailBody:GetText(), 1, true)
+      w.postView.rows[3].button:Click()
+      assert.matches("too few other listings", w.detailBody:GetText(), 1, true)
+      w.postView.queue:forget("i:2589") -- looked up again, as after a post
+      w.postView:refresh()
+      env.runTimers()
+      assert.equal(1, ns.prices:history("/1/Horde", "i:2589")[1].points, "once per day")
+      w:select("prices")
+      w.rows[1].button:Click()
+      assert.matches("Post view check today: the middle price of the 50 units other sellers have listed.",
+        w.detailBody:GetText(), 1, true)
+    end)
+
+    it("doesn't count partial search results", function()
+      local env, _, ns = setup()
+      env.containers[0] = { linen }
+      env.listings[2589] = { { unitPrice = 950, quantity = 40 }, { unitPrice = 1000, quantity = 10 } }
+      env.fullResults = false
+      env.openAuctionHouse()
+      assert.is_nil(ns.prices:marketValue("/1/Horde", "i:2589", env.now))
+    end)
 
     it("keeps floors set before rulesets had names (ADR 0005)", function()
       local env, w, ns = postSetup()

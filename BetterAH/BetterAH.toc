@@ -19,4 +19,5 @@ Core/Commands.lua
 Core/WindowModel.lua
 Game/AuctionAPI.lua
 Game/CharacterTracker.lua
+Game/PostingAPI.lua
 UI/Window.lua

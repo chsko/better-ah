@@ -194,7 +194,8 @@ function M.new(opts)
     GetContainerItemInfo = function(bag, slot)
       local it = env.containers[bag] and env.containers[bag][slot]
       if not it then return nil end
-      return { itemID = it.itemID, stackCount = it.count, itemName = it.name, hyperlink = "" }
+      return { itemID = it.itemID, stackCount = it.count, itemName = it.name, hyperlink = "", isBound = it.bound,
+        isLocked = it.locked }
     end,
   }
   env.owned = {}
@@ -208,6 +209,78 @@ function M.new(opts)
   env.C_AuctionHouse.GetOwnedAuctionInfo = function(i)
     local a = env.owned[i]
     return a and { auctionID = i, itemKey = { itemID = a.itemID }, quantity = a.quantity, status = a.status or 0 }
+  end
+  -- Posting. A container slot can say { soulbound = true } (the AH refuses it) or { item = true } (not a
+  -- commodity). env.listings[itemID] is what a search finds: commodity rows { unitPrice, quantity,
+  -- numOwnerItems } or item rows { buyoutAmount, quantity, containsOwnerItem }. env.posts records posts.
+  env.ItemLocation = {
+    CreateFromBagAndSlot = function(_, bag, slot) return { bag = bag, slot = slot } end,
+  }
+  local function slotAt(loc) return env.containers[loc.bag] and env.containers[loc.bag][loc.slot] end
+  local ah = env.C_AuctionHouse
+  ah.IsSellItemValid = function(loc) local it = slotAt(loc) return it and not it.soulbound or false end
+  ah.GetItemKeyFromItem = function(loc)
+    local it = slotAt(loc)
+    return { itemID = it.itemID, itemLevel = 0, itemSuffix = 0, battlePetSpeciesID = 0 }
+  end
+  ah.GetItemCommodityStatus = function(loc)
+    local it = slotAt(loc)
+    if it.unknown then return 0 end
+    return it.item and 1 or 2
+  end
+  env.throttled, env.copperValues = false, true
+  ah.IsThrottledMessageSystemReady = function() return not env.throttled end
+  ah.SupportsCopperValues = function() return env.copperValues end
+  env.listings, env.searches, env.posts, env.searchSilent = {}, {}, {}, false
+  env.fullResults = true
+  ah.SendSearchQuery = function(itemKey, sorts, separateOwnerItems)
+    env.searches[#env.searches + 1] = { itemKey = itemKey, sorts = sorts, separate = separateOwnerItems }
+    if env.searchSilent or not env.open then return end
+    env.C_Timer.After(0, function()
+      local rows = env.listings[itemKey.itemID] or {}
+      if rows.item then env.fire("ITEM_SEARCH_RESULTS_UPDATED", itemKey) else
+        env.fire("COMMODITY_SEARCH_RESULTS_UPDATED", itemKey.itemID) end
+    end)
+  end
+  ah.GetNumCommoditySearchResults = function(id) return #(env.listings[id] or {}) end
+  ah.GetCommoditySearchResultInfo = function(id, i)
+    local r = (env.listings[id] or {})[i]
+    return r and { itemID = id, unitPrice = r.unitPrice, quantity = r.quantity, numOwnerItems = r.numOwnerItems or 0 }
+  end
+  ah.HasFullCommoditySearchResults = function() return env.fullResults end
+  ah.GetNumItemSearchResults = function(key) return #(env.listings[key.itemID] or {}) end
+  ah.GetItemSearchResultInfo = function(key, i)
+    local r = (env.listings[key.itemID] or {})[i]
+    return r and { itemKey = key, buyoutAmount = r.buyoutAmount, quantity = r.quantity or 1,
+      containsOwnerItem = r.containsOwnerItem or false }
+  end
+  ah.HasFullItemSearchResults = function() return env.fullResults end
+  env.needsConfirmation = false
+  -- Like the client, a post needs the item at the location; a warning asks for a confirmation.
+  local function holds(loc)
+    if not slotAt(loc) then error("item not found", 0) end
+    if env.needsConfirmation then env.C_Timer.After(0, function() env.fire("AUCTION_HOUSE_POST_WARNING") end) end
+  end
+  ah.PostCommodity = function(loc, duration, quantity, unitPrice, extra)
+    assert(extra == nil, "PostCommodity takes four arguments")
+    holds(loc)
+    env.posts[#env.posts + 1] = { kind = "commodity", loc = loc, duration = duration, quantity = quantity,
+      price = unitPrice }
+    return env.needsConfirmation
+  end
+  ah.PostItem = function(loc, duration, quantity, bid, buyout)
+    holds(loc)
+    env.posts[#env.posts + 1] = { kind = "item", loc = loc, duration = duration, quantity = quantity, bid = bid,
+      price = buyout }
+    return env.needsConfirmation
+  end
+  ah.ConfirmPostCommodity = function(loc, duration, quantity, unitPrice)
+    env.posts[#env.posts + 1] = { kind = "confirm commodity", loc = loc, duration = duration, quantity = quantity,
+      price = unitPrice }
+  end
+  ah.ConfirmPostItem = function(loc, duration, quantity, _, buyout)
+    env.posts[#env.posts + 1] = { kind = "confirm item", loc = loc, duration = duration, quantity = quantity,
+      price = buyout }
   end
   -- Fire an event at every frame registered for it.
   env.fire = function(event, ...)

@@ -76,6 +76,33 @@ function Frame:GetFontString() return self.fontString end
 function Frame:SetShown(on) if on then self:Show() else self:Hide() end end
 function Frame:Click() if self.scripts.OnClick then self.scripts.OnClick(self) end end
 
+-- Blizzard's ScrollBarMixin, as much as the lists use: setting the scroll percentage fires OnScroll
+-- (the client does that too, for the owner's own calls as well as the player's), and with
+-- SetHideIfUnscrollable the bar hides while everything is visible. bar:drag(p) is the player moving it.
+function M.scrollBar(f)
+  f.scroll, f.visible, f.pan, f.callbacks = 0, 0, 0, {}
+  function f.SetHideIfUnscrollable(bar, on)
+    bar.hideIfUnscrollable = on
+    if on then bar:SetShown(bar.visible > 0 and bar.visible < 1) end
+  end
+  function f.RegisterCallback(bar, event, fn, owner) bar.callbacks[event] = { fn, owner } end
+  function f.SetPanExtentPercentage(bar, p) bar.pan = p end
+  function f.SetVisibleExtentPercentage(bar, p)
+    bar.visible = math.max(0, math.min(1, p))
+    if bar.hideIfUnscrollable then bar:SetShown(bar.visible > 0 and bar.visible < 1) end
+  end
+  function f.GetVisibleExtentPercentage(bar) return bar.visible end
+  function f.GetScrollPercentage(bar) return bar.scroll end
+  function f.SetScrollPercentage(bar, p)
+    bar.scroll = math.max(0, math.min(1, p))
+    local cb = bar.callbacks.OnScroll
+    if cb then cb[1](cb[2], bar.scroll) end
+  end
+  function f.drag(bar, p) bar:SetScrollPercentage(p) end
+  -- A wheel notch over the bar, like ScrollControllerMixin (default scalar 2).
+  function f.wheel(bar, delta) bar:SetScrollPercentage(bar.scroll - delta * bar.pan * (bar.wheelPanScalar or 2)) end
+end
+
 -- opts.template picks the shape of PortraitFrameTemplate's close button:
 --   "forever" (default) like Forever's SharedUIPanelTemplates.xml: parent key CloseButton and global
 --     $parentCloseButton
@@ -131,6 +158,7 @@ function M.new(opts)
         if shape == "forever" then f.CloseButton = close end
       end
     end
+    if template == "MinimalScrollBar" then M.scrollBar(f) end
     env.frames[#env.frames + 1] = f
     if name then env[name] = f end
     return f

@@ -263,12 +263,14 @@ function Window:buildPrices(f)
   status:SetPoint("LEFT", scan, "RIGHT", 10, 0)
   self.scanStatus = status
 
-  self.rows = self:buildRows(panel, COLUMNS, function(index) self:selectRow(index) end)
+  self.rows = self:buildRows(panel, COLUMNS, function(index) self:selectRow(index) end,
+    function(offset) self.offset = offset; self:renderPrices() end)
 end
 
 -- A header row and ROWS selectable item rows under it, starting 32px below the panel's top.
--- Returns the item rows; each is an array of cells (font strings) plus .button.
-function Window:buildRows(panel, columns, onClick)
+-- Returns the item rows; each is an array of cells (font strings) plus .button. With onScroll, the rows
+-- also get a scroll bar (rows.scrollBar, see buildScrollBar).
+function Window:buildRows(panel, columns, onClick, onScroll)
   local env, rows = self.env, {}
   for r = 0, ROWS do
     -- Item rows are buttons, so they can be selected; the header is plain text on the panel.
@@ -285,6 +287,7 @@ function Window:buildRows(panel, columns, onClick)
       selected:SetAtlas(Window.ART.rowSelected, false)
       selected:SetAllPoints(parent)
       selected:SetBlendMode("ADD")
+      selected:SetAlpha(0.5) -- softer than the art at full strength, so white text stays readable
       selected:Hide()
       parent.selectedTexture = selected
       local index = r
@@ -306,7 +309,53 @@ function Window:buildRows(panel, columns, onClick)
     end
     if r > 0 then rows[r] = row end
   end
+  if onScroll then rows.scrollBar = self:buildScrollBar(panel, onScroll) end
   return rows
+end
+
+-- A scroll bar beside the item rows: Blizzard's slim MinimalScrollBar (the classic AH's own bar is
+-- 25px, too wide for this layout). It hides itself while every item fits. Dragging it, clicking its
+-- track or arrows, or wheeling over it calls onScroll(offset) with the first item to show (0-based);
+-- Window.syncScrollBar keeps it in step with a list scrolled any other way.
+function Window:buildScrollBar(panel, onScroll)
+  local bar = self.env.CreateFrame("EventFrame", nil, panel, "MinimalScrollBar")
+  bar:SetPoint("TOPLEFT", panel, "TOPLEFT", LIST_WIDTH + 1, -32 - ROW_HEIGHT + 3)
+  bar:SetPoint("BOTTOMLEFT", panel, "TOPLEFT", LIST_WIDTH + 1, -32 - (ROWS + 1) * ROW_HEIGHT + 3)
+  bar:SetHideIfUnscrollable(true)
+  bar.wheelPanScalar = 3 -- 3 rows per wheel notch, as over the list
+  bar.total = 0
+  bar:RegisterCallback("OnScroll", function(_, percentage)
+    if bar.syncing then return end
+    local max = bar.total - ROWS
+    if max <= 0 then return end
+    bar.moving = true
+    local ok, err = pcall(onScroll, math.floor(percentage * max + 0.5))
+    bar.moving = nil
+    if not ok then error(err, 0) end
+  end, bar)
+  return bar
+end
+
+-- Sizes the bar's thumb for total items and moves it to offset. While the player is moving the bar
+-- itself, only the sizes are updated, so the thumb stays under the cursor.
+function Window.syncScrollBar(bar, offset, total)
+  if not bar then return end
+  bar.total = total
+  local max = total - ROWS
+  local held = bar.moving or (bar.IsThumbMouseDown and bar:IsThumbMouseDown())
+  bar.syncing = true
+  local ok, err = pcall(function()
+    if max > 0 then
+      bar:SetPanExtentPercentage(1 / max) -- one row per step
+      bar:SetVisibleExtentPercentage(ROWS / total)
+      if not held then bar:SetScrollPercentage(offset / max, true) end
+    else
+      bar:SetVisibleExtentPercentage(1) -- everything fits: the bar hides itself
+      bar:SetScrollPercentage(0, true)
+    end
+  end)
+  bar.syncing = nil
+  if not ok then error(err, 0) end
 end
 
 -- Alts and inventory: every item the player's characters own, with totals.
@@ -323,7 +372,8 @@ function Window:buildAlts(f)
   status:SetWidth(LIST_WIDTH)
   status:SetJustifyH("LEFT")
   self.altsStatus = status
-  self.altsRows = self:buildRows(panel, ALT_COLUMNS, function(index) self:selectAlt(index) end)
+  self.altsRows = self:buildRows(panel, ALT_COLUMNS, function(index) self:selectAlt(index) end,
+    function(offset) self.altsOffset = offset; self:renderAlts() end)
   self.altsOffset = 0
 end
 
@@ -339,15 +389,21 @@ function Window:selectAlt(r)
   self:renderAlts()
 end
 
+Window.PLACE_NAMES = { bags = "in bags", bank = "in the bank", auctions = "on the auction house" }
+
 -- Who has how many of an item, for the detail panel. by is CharacterRecords:count's second value.
 function Window.altsDetailText(total, by)
   local lines = { "Total: " .. total, "" }
   for _, c in ipairs(by) do
     local parts = {}
     for _, place in ipairs({ "bags", "bank", "auctions" }) do
-      if c[place] > 0 then parts[#parts + 1] = place .. " " .. c[place] end
+      if c[place] > 0 then parts[#parts + 1] = c[place] .. " " .. Window.PLACE_NAMES[place] end
     end
-    lines[#lines + 1] = string.format("%s: %d (%s)", c.name, c.total, table.concat(parts, ", "))
+    if #parts == 1 then
+      lines[#lines + 1] = string.format("%s: %s", c.name, parts[1])
+    else
+      lines[#lines + 1] = string.format("%s: %d (%s)", c.name, c.total, table.concat(parts, ", "))
+    end
   end
   return table.concat(lines, "\n")
 end
@@ -361,6 +417,7 @@ function Window:renderAlts()
   self.altsItems = items
   local chars = records and records:characters() or {}
   self.altsOffset = math.max(0, math.min(self.altsOffset, math.max(0, #items - ROWS)))
+  Window.syncScrollBar(self.altsRows.scrollBar, self.altsOffset, #items)
   if #chars == 0 then
     self.altsStatus:SetText("Nothing recorded yet. Your bags are read as you play, your bank when you open it.")
   else
@@ -541,6 +598,7 @@ function Window:renderPrices()
   local items = self.cache.items
   local maxOffset = math.max(0, #items - ROWS)
   self.offset = math.max(0, math.min(self.offset, maxOffset))
+  Window.syncScrollBar(self.rows.scrollBar, self.offset, #items)
   local scanning = addon.auctionAPI and addon.auctionAPI.pending
   if scanning then self.scanButton:Disable() else self.scanButton:Enable() end
 

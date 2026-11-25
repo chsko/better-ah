@@ -41,6 +41,9 @@ function Frame:IsEnabled() return self.enabled ~= false end
 function Frame:SetText(t) self.text = t end
 function Frame:GetText() return self.text end
 function Frame:LockHighlight() self.highlighted = true end
+function Frame:SetAutoFocus() end
+function Frame:SetNumeric(on) self.numeric = on end
+function Frame:ClearFocus() self.focused = false end
 function Frame:UnlockHighlight() self.highlighted = false end
 function Frame:IsShown() return self.shown end
 function Frame:Show()
@@ -257,9 +260,15 @@ function M.new(opts)
   ah.HasFullItemSearchResults = function() return env.fullResults end
   env.needsConfirmation = false
   -- Like the client, a post needs the item at the location; a warning asks for a confirmation.
+  -- A post the client takes fires AUCTION_HOUSE_AUCTION_CREATED once the server answers.
+  local function created() env.C_Timer.After(0, function() env.fire("AUCTION_HOUSE_AUCTION_CREATED", 1) end) end
   local function holds(loc)
     if not slotAt(loc) then error("item not found", 0) end
-    if env.needsConfirmation then env.C_Timer.After(0, function() env.fire("AUCTION_HOUSE_POST_WARNING") end) end
+    if env.needsConfirmation then
+      env.C_Timer.After(0, function() env.fire("AUCTION_HOUSE_POST_WARNING") end)
+    else
+      created()
+    end
   end
   ah.PostCommodity = function(loc, duration, quantity, unitPrice, extra)
     assert(extra == nil, "PostCommodity takes four arguments")
@@ -277,10 +286,12 @@ function M.new(opts)
   ah.ConfirmPostCommodity = function(loc, duration, quantity, unitPrice)
     env.posts[#env.posts + 1] = { kind = "confirm commodity", loc = loc, duration = duration, quantity = quantity,
       price = unitPrice }
+    created()
   end
   ah.ConfirmPostItem = function(loc, duration, quantity, _, buyout)
     env.posts[#env.posts + 1] = { kind = "confirm item", loc = loc, duration = duration, quantity = quantity,
       price = buyout }
+    created()
   end
   -- Fire an event at every frame registered for it.
   env.fire = function(event, ...)

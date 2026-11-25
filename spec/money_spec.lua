@@ -14,4 +14,15 @@ describe("Money", function()
     assert.equal("0c", Money.format(0))
     assert.equal("1g 0s 0c", Money.format(10000))
   end)
+
+  it("reads typed amounts in gold, silver and copper", function()
+    assert.equal(120304, Money.parse("12g 3s 4c"))
+    assert.equal(300, Money.parse("3s"))
+    assert.equal(10500, Money.parse("1G5s"))
+    assert.equal(1234, Money.parse(" 1234 "))
+    assert.equal(0, Money.parse("0"))
+    for _, bad in ipairs({ "", "abc", "5x", "3s 2g", "1.5g", "g", "-5" }) do
+      assert.is_nil(Money.parse(bad), bad)
+    end
+  end)
 end)

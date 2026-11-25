@@ -13,6 +13,7 @@ Core/MarketValue.lua
 Core/PriceDB.lua
 Core/CharacterRecords.lua
 Core/Posting.lua
+Core/PostQueue.lua
 Core/SelfTest.lua
 Core/Probes.lua
 Core/Commands.lua
@@ -20,4 +21,5 @@ Core/WindowModel.lua
 Game/AuctionAPI.lua
 Game/CharacterTracker.lua
 Game/PostingAPI.lua
+UI/PostView.lua
 UI/Window.lua

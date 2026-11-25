@@ -33,7 +33,6 @@ Window.ART = {
 
 -- What each placeholder view will show, until it is built.
 Window.EMPTY = {
-  post = "Items in your bags that are ready to post will be listed here.",
   cancel = "Your auctions that have been undercut will be listed here, ready to cancel.",
   disenchant = "Green, blue and epic listings worth more disenchanted than their buyout will be listed here.",
   deals = "Listings below 70% of market value and your shopping list hits will be listed here.",
@@ -165,6 +164,8 @@ function Window:build()
   self:buildDetail(f)
   self:buildPrices(f)
   self:buildAlts(f)
+  self.postView = ns.PostView.new(self, self.addon)
+  self.postPanel = self.postView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
   self:renderView()
   return f
 end
@@ -422,7 +423,7 @@ function Window:buildDetail(f)
   body:SetWidth(DETAIL - 24)
   body:SetJustifyH("LEFT")
   body:SetSpacing(3)
-  self.detailPanel, self.detailTitle, self.detailBody = detail, title, body
+  self.detailPanel, self.detailLayer, self.detailTitle, self.detailBody = detail, text, title, body
 end
 
 -- The detail text for one item: its market value and how it was worked out, then its history.
@@ -580,13 +581,17 @@ function Window:renderView()
   self.heading:SetText(self.model:label(self.model.view))
   self.placeholder:SetText(Window.EMPTY[self.model.view] or "")
   local view = self.model.view
-  self.placeholder:SetShown(view ~= "prices" and view ~= "alts")
+  self.placeholder:SetShown(view ~= "prices" and view ~= "alts" and view ~= "post")
   self.pricesPanel:SetShown(view == "prices")
   self.altsPanel:SetShown(view == "alts")
+  self.postPanel:SetShown(view == "post")
+  if view ~= "post" then self.postView.editor:Hide() end
   if view == "prices" then
     self:renderPrices()
   elseif view == "alts" then
     self:renderAlts()
+  elseif view == "post" then
+    if self.frame:IsShown() then self.postView:show() end
   else
     self.detailTitle:SetText("")
     self.detailBody:SetText("")
@@ -600,6 +605,7 @@ function Window:render()
     self.cache = nil -- rebuild the price list on open, with any item names loaded since
     self:build():Show()
     self:concealBlizzard()
+    self:renderView()
   else
     if self.frame then self.frame:Hide() end
     self:revealBlizzard()
@@ -628,6 +634,7 @@ function Window:onEvent(event)
     end
   elseif event == "AUCTION_HOUSE_CLOSED" then
     self.model:auctionClosed()
+    if self.postView then self.postView:reset() end
     self:render()
   end
 end

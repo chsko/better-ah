@@ -14,9 +14,9 @@ local Posting = {}
 
 Posting.FLOOR_SHARE = 0.8
 -- C_AuctionHouse durations are indices 1-3 into the client's own list (AUCTION_DURATION_ONE..THREE).
--- 2 is 24 hours in the retail-style auction house; the self-test prints Forever's labels to confirm it.
+-- Forever's are 2, 8 and 24 hours (self-test, build 1.60.1.71139), so 24 hours is 3.
 Posting.DURATIONS = { 1, 2, 3 }
-Posting.DEFAULT_DURATION = 2
+Posting.DEFAULT_DURATION = 3
 
 local function finite(n)
   return type(n) == "number" and n == n and n ~= math.huge and n ~= -math.huge
@@ -70,7 +70,7 @@ end
 -- Returns a plan, one of
 --   { action = "skip", reason = why, price, floor }      stays in the bags, where why is
 --     "none-left", "no-floor" (no market value and no own floor) or "below-floor"
---   { action = "profile", price, floor, suggested = { stack, duration } }   would post; asks first
+--   { action = "profile", price, floor, undercut, suggested = { stack, duration } }   would post; asks first
 --   { action = "post", price, floor, undercut, quantity, posts, remainder, duration }
 -- price is per unit. Posting makes posts auctions of quantity units each and leaves remainder in the
 -- bags. undercut is the competing unit price it went under (nil when priced at market value).
@@ -99,7 +99,7 @@ function Posting.plan(args)
   local profile = args.profile
   local stack = tonumber(profile and profile.stack)
   if not (stack and finite(stack) and stack >= 1 and profile.duration) then
-    return { action = "profile", price = price, floor = floor, suggested = {
+    return { action = "profile", price = price, floor = floor, undercut = other, suggested = {
       stack = math.min(Posting.commonStack(listings) or cap, cap), duration = Posting.DEFAULT_DURATION,
     } }
   end

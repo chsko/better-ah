@@ -31,7 +31,7 @@ The lowest price you are willing to sell an item for. Defaults to 80% of market 
 _Avoid_: minimum price, min
 
 **Undercut**:
-Listing 1 copper below the cheapest competing listing.
+Listing 1 copper below the cheapest competing listing (one that isn't yours). With no competing listing, the item is listed at its market value.
 
 **Posting profile**:
 The stack size and duration remembered for an item after the first time you post it.

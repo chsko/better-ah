@@ -774,9 +774,11 @@ function Window:autoScan()
   if not (api and api.open) then return end
   local s = self:scanState()
   if ns.AutoScan.wait(s.lastScan, s.now, s.failures, s.failedAt) > 0 then return self:scheduleAutoScan() end
-  -- Not in the middle of something: a running scan, a post or a buy waits for it.
+  -- Not in the middle of something: a running scan, a post or sniping waits for it. A full scan shares
+  -- the auction house's query pipe with the snipe checks and buys, so it waits until sniping stops (#96).
   local snipe = self.disenchantView and self.disenchantView.snipe
-  if api.pending or self.materialScan or (self.postView and self.postView.busy) or (snipe and snipe.buying) then
+  if api.pending or self.materialScan or (self.postView and self.postView.busy) or (snipe and (snipe.buying
+    or snipe.running)) then
     return self:scheduleAutoScan(ns.AutoScan.BUSY_DELAY)
   end
   self:startScan()
@@ -813,7 +815,8 @@ function Window:scanState()
   local now = api and api:now() or 0
   return { open = api and api.open, scanning = api and api.pending ~= nil, now = now,
     lastScan = key and addon.prices and addon.prices:lastScan(key), failures = self.scanFailures,
-    failedAt = self.scanFailedAt, why = self.scanWhy }
+    failedAt = self.scanFailedAt, why = self.scanWhy,
+    held = self.disenchantView and self.disenchantView.snipe and self.disenchantView.snipe.running or nil }
 end
 
 function Window:renderScanState()

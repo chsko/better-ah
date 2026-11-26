@@ -6,7 +6,7 @@
 -- throttled message system like a search. One item's auctions come from PostingAPI:search, so searches
 -- share one queue. Buying uses PlaceBid with the buyout, which needs a hardware event (a click or a
 -- mouse wheel turn) and answers with AUCTION_HOUSE_PURCHASE_COMPLETED or AUCTION_HOUSE_SHOW_ERROR.
-local _, ns = ...
+local addonName, ns = ...
 ns = ns or {}
 
 local SnipeAPI = {}
@@ -110,46 +110,69 @@ function SnipeAPI:auctions(itemKey, done)
   self.posting:search({ item = "i:" .. itemKey.itemID, itemID = itemKey.itemID, itemKey = itemKey }, done)
 end
 
--- Buys an auction at its buyout. Must run inside a click or a mouse wheel turn. done(true) once the
--- auction house confirms, done(false, why) otherwise. One buy at a time. A confirmation that comes after
--- the timeout calls done(true) again, so the spend still counts.
-function SnipeAPI:buy(auctionID, price, done)
+-- Buys an auction at its buyout. Must run inside a click or a mouse wheel turn (source names which, for
+-- the log). done(true) once the auction house confirms, done(false, why, kind) otherwise. kind says what
+-- became of the auction (#96):
+--   "unsent"   PlaceBid was never sent, or the game blocked it: the auction is untouched, buy again.
+--   "unknown"  sent, but no answer came: it may still be listed.
+--   "refused"  the auction house said no (sold to someone else, or an error).
+--   "closed"   the auction house closed.
+-- One buy at a time. A confirmation that comes after the timeout calls done(true) again, so the spend
+-- still counts.
+function SnipeAPI:buy(auctionID, price, done, source)
   local ah = self.env.C_AuctionHouse
-  if not self:open() then return done(false, "the auction house is closed") end
-  if self.buying then return done(false, "still waiting for the last buy") end
-  if self.posting.pending then return done(false, "a post is still waiting for the auction house") end
-  if not (ah and ah.PlaceBid) then return done(false, "C_AuctionHouse.PlaceBid is missing") end
-  local job = { auctionID = auctionID, done = done }
+  if not self:open() then return done(false, "the auction house is closed", "closed") end
+  if self.buying then return done(false, "still waiting for the last buy", "unsent") end
+  if self.posting.pending then return done(false, "a post is still waiting for the auction house", "unsent") end
+  if not (ah and ah.PlaceBid) then return done(false, "C_AuctionHouse.PlaceBid is missing", "unsent") end
+  -- A query still waiting on the throttle would make the client queue or drop the buy, and the auction
+  -- house would never answer it. Say so now; the buy can't wait for the throttle, it needs this click.
+  if not self.posting:ready() then
+    return done(false, "the auction house was still answering a check, so the buy wasn't sent", "unsent")
+  end
+  local job = { auctionID = auctionID, done = done, source = source }
   self.buying = job
   self.posting.buying = true -- its error event is ours, not a failed post
   after(self, function()
     if self.buying == job then
       self.late[auctionID] = job
-      self:finishBuy(job, false, "no answer from the auction house")
+      self:finishBuy(job, false, "no answer from the auction house", "unknown")
     end
   end)
   -- Called directly, in the click's own call stack, the way Blizzard's UI and TSM do: the game only lets
   -- an addon buy inside a hardware event. An error here is a real error; the timeout ends the buy.
+  -- While placing is set, a block the game reports is this call's (the event fires inside it).
+  self.placing = job
   ah.PlaceBid(auctionID, price)
+  self.placing = nil
 end
 
-function SnipeAPI:finishBuy(job, ok, why)
+function SnipeAPI:finishBuy(job, ok, why, kind)
   if self.buying ~= job then return end
   self.buying = nil
   self.posting.buying = nil
-  local fine, err = pcall(job.done, ok, why)
+  if self.placing == job then self.placing = nil end
+  local fine, err = pcall(job.done, ok, why, kind)
   if not fine and self.env.geterrorhandler then try(self.env.geterrorhandler(), err) end
 end
 
 function SnipeAPI:onEvent(event, arg, arg2)
   local ah = self.env.C_AuctionHouse
   if event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
-    -- The game stopped a call (arg: the tainted addon, arg2: the function). Name it on the buy that was
-    -- waiting, so the session log says what the game refused.
-    -- The event fires inside the blocked call, so it is PlaceBid's only when it names PlaceBid.
-    if self.buying and tostring(arg2 or ""):find("PlaceBid", 1, true) then
-      self:finishBuy(self.buying, false, string.format("the game %s %s", event == "ADDON_ACTION_FORBIDDEN"
-        and "forbids addons to call" or "blocked", tostring(arg2 or "a protected call")))
+    -- The game stopped a call (arg: the tainted addon, arg2: the function). One that fires while PlaceBid
+    -- runs, or that names PlaceBid, is the buy's: it ends at once with the blocked call named, and the
+    -- auction is untouched. Any block naming this addon is handed to onBlocked, for the session log.
+    local what = tostring(arg2 or "a protected call")
+    local ours = arg == nil or arg == addonName
+    local job = self.buying
+    if job and ours and (self.placing == job or what:find("PlaceBid", 1, true)) then
+      -- If the game let the buy through after all, its confirmation still counts.
+      self.late[job.auctionID] = job
+      local verb = event == "ADDON_ACTION_FORBIDDEN" and "forbids addons to call" or "blocked"
+      self:finishBuy(job, false, string.format("the game %s %s%s", verb, what,
+        job.source and (" from " .. job.source) or ""), "unsent")
+    elseif ours and self.onBlocked then
+      pcall(self.onBlocked, event, what)
     end
   elseif event == "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED" then
     local job = self.browsing
@@ -200,10 +223,12 @@ function SnipeAPI:onEvent(event, arg, arg2)
       if not fine and self.env.geterrorhandler then try(self.env.geterrorhandler(), err) end
     end
   elseif event == "AUCTION_HOUSE_SHOW_ERROR" then
-    if self.buying then self:finishBuy(self.buying, false, "sold to someone else, or the auction house refused") end
+    if self.buying then
+      self:finishBuy(self.buying, false, "sold to someone else, or the auction house refused", "refused")
+    end
   elseif event == "AUCTION_HOUSE_CLOSED" then
     if self.browsing then self:finishBrowse(self.browsing, nil, "the auction house closed") end
-    if self.buying then self:finishBuy(self.buying, false, "the auction house closed") end
+    if self.buying then self:finishBuy(self.buying, false, "the auction house closed", "closed") end
   end
 end
 

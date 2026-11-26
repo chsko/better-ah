@@ -138,6 +138,39 @@ describe("Sniper", function()
       assert.equal(100, again:summary().started, "a /reload keeps the session")
     end)
 
+    it("keeps a find that was never sent, and lets one with no answer be found again", function()
+      local s = Sniper.Session.new(nil, 100)
+      local key = { itemID = 5, itemLevel = 28 }
+      local a = { auctionID = 1, name = "A", price = 900, worth = 1420, itemKey = key }
+      s:add(a)
+      s:lookedUp(key, 900, 100)
+      s:missed(110, a, "the game blocked UNKNOWN()", "unsent")
+      assert.equal(a, s:next(), "still next, to buy again")
+      assert.equal("unsent", s.saved.log[1].kind)
+      s:missed(120, a, "no answer from the auction house", "unknown")
+      assert.is_nil(s:next())
+      assert.is_false(s:fresh(key, 900, 121), "its item is looked up again on the next check")
+      assert.is_true(s:add({ auctionID = 1, name = "A", price = 900, worth = 1420, itemKey = key }),
+        "still listed: it comes back")
+    end)
+
+    it("logs a buy that wasn't sent once per reason, and writes off a refused one", function()
+      local s = Sniper.Session.new(nil, 100)
+      local key = { itemID = 5 }
+      local a = { auctionID = 1, name = "A", price = 900, worth = 1420, itemKey = key }
+      s:add(a)
+      s:missed(110, a, "busy", "unsent")
+      s:missed(111, a, "busy", "unsent")
+      assert.equal(1, #s.saved.log, "a second try for the same reason isn't logged again")
+      s:missed(112, a, "blocked", "unsent")
+      assert.equal(2, #s.saved.log)
+      s:lookedUp(key, 900, 112)
+      s:missed(113, a, "sold to someone else", "refused")
+      assert.is_false(s:add({ auctionID = 1, name = "A", price = 900, worth = 1420, itemKey = key }),
+        "a refused auction doesn't come back")
+      assert.is_true(s:fresh(key, 900, 114))
+    end)
+
     it("keeps the log short", function()
       local s = Sniper.Session.new(nil, 0)
       for i = 1, Sniper.LOG_LINES + 5 do s:log(i, "passed", { name = "X" .. i }) end
@@ -277,21 +310,83 @@ describe("SnipeAPI", function()
     assert.equal("sold to someone else, or the auction house refused", why)
   end)
 
-  it("names the call the game blocked during a buy", function()
+  it("names the call the game blocked during a buy, and the input it came from", function()
     local env, api = setup()
     env.openAuctionHouse()
-    local result, why
+    local result, why, kind
+    local placeBid = env.C_AuctionHouse.PlaceBid
+    env.C_AuctionHouse.PlaceBid = function()
+      env.fire("ADDON_ACTION_BLOCKED", "SomeOtherAddon", "CastSpellByName()")
+      assert.is_nil(result, "another addon's block isn't the buy's")
+      env.fire("ADDON_ACTION_BLOCKED", "BetterAH", "UNKNOWN()") -- inside the call, like the client
+    end
+    api:buy(7, 900, function(ok, w, k) result, why, kind = ok, w, k end, "the mouse wheel")
+    env.runTimers(10)
+    assert.is_false(result)
+    assert.equal("the game blocked UNKNOWN() from the mouse wheel", why)
+    assert.equal("unsent", kind, "a blocked buy never reached the auction house")
+    assert.is_nil(api.buying)
+    env.C_AuctionHouse.PlaceBid = placeBid
+    api:buy(8, 900, function(ok) result = ok end)
+    env.runTimers()
+    assert.is_true(result, "the next buy goes through")
+  end)
+
+  it("counts a blocked buy the auction house confirms after all", function()
+    local env, api = setup()
+    env.openAuctionHouse()
+    local results = {}
     local placeBid = env.C_AuctionHouse.PlaceBid
     env.C_AuctionHouse.PlaceBid = function(...)
-      env.fire("ADDON_ACTION_BLOCKED", "BetterAH", "CastSpellByName()")
-      assert.is_nil(result, "a block of another call isn't the buy's")
-      env.fire("ADDON_ACTION_BLOCKED", "BetterAH", "C_AuctionHouse.PlaceBid()") -- inside the call, like the client
-      return placeBid(...)
+      placeBid(...)
+      env.fire("ADDON_ACTION_BLOCKED", "BetterAH", "UNKNOWN()")
     end
-    api:buy(7, 900, function(ok, w) result, why = ok, w end)
+    api:buy(7, 900, function(ok, _, k) results[#results + 1] = { ok, k } end)
     env.runTimers()
+    assert.same({ { false, "unsent" }, { true } }, results)
+  end)
+
+  it("leaves a PlaceBid block of another addon alone", function()
+    local env, api = setup()
+    env.openAuctionHouse()
+    local result
+    api:buy(7, 900, function(ok) result = ok end)
+    env.fire("ADDON_ACTION_BLOCKED", "SomeOtherAddon", "C_AuctionHouse.PlaceBid()")
+    assert.is_nil(result)
+    env.runTimers()
+    assert.is_true(result)
+  end)
+
+  it("hands other blocks of this addon to onBlocked", function()
+    local env, api = setup()
+    local got = {}
+    api.onBlocked = function(event, what) got[#got + 1] = event .. " " .. what end
+    env.fire("ADDON_ACTION_BLOCKED", "BetterAH", "SetPoint()")
+    env.fire("ADDON_ACTION_FORBIDDEN", "SomeOtherAddon", "PickupItem()")
+    assert.same({ "ADDON_ACTION_BLOCKED SetPoint()" }, got)
+  end)
+
+  it("doesn't send a buy while a query waits on the throttle", function()
+    local env, api = setup()
+    env.openAuctionHouse()
+    env.throttled = true
+    local result, why, kind
+    api:buy(7, 900, function(ok, w, k) result, why, kind = ok, w, k end)
+    assert.equal(0, #env.bids)
     assert.is_false(result)
-    assert.equal("the game blocked C_AuctionHouse.PlaceBid()", why)
+    assert.equal("the auction house was still answering a check, so the buy wasn't sent", why)
+    assert.equal("unsent", kind)
+    assert.is_nil(api.buying)
+  end)
+
+  it("says a buy with no answer may still be listed, and a refused one was refused", function()
+    local env, api = setup()
+    env.openAuctionHouse()
+    local kind
+    env.C_AuctionHouse.PlaceBid = function() end
+    api:buy(7, 900, function(_, _, k) kind = k end)
+    env.runTimers(10)
+    assert.equal("unknown", kind)
   end)
 
   it("probes for browse and buy", function()

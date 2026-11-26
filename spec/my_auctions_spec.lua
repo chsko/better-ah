@@ -113,6 +113,26 @@ describe("MyAuctions.totals", function()
   end)
 end)
 
+describe("MyAuctions.sold", function()
+  it("adds up each sale before and after the cut, for the view and a ledger", function()
+    local rows = MyAuctions.rows({
+      auction({ id = 1, key = "a", sold = true, quantity = 2, unit = 11000, total = 22000 }),
+      auction({ id = 2, key = "b", sold = true, quantity = 1, unit = false, bid = 999 }),
+      auction({ id = 3, key = "c" }),
+    }, {})
+    local s = MyAuctions.sold(rows)
+    assert.equal(2, s.count)
+    assert.equal(22999, s.gross)
+    assert.equal(20900 + MyAuctions.net(999), s.net)
+    assert.equal(2, #s.sales)
+    assert.equal(s.net, MyAuctions.totals(rows).soldGold, "the totals agree")
+  end)
+
+  it("is empty with nothing sold", function()
+    assert.same({ count = 0, gross = 0, net = 0, sales = {} }, MyAuctions.sold({}))
+  end)
+end)
+
 describe("MyAuctions.nextUndercut and toCheck", function()
   it("picks the first undercut row not already being cancelled", function()
     local rows = MyAuctions.rows({ auction({ id = 1, key = "a", name = "A" }),

@@ -9,7 +9,7 @@ ns = ns or {}
 local SnipeView = {}
 SnipeView.__index = SnipeView
 
-SnipeView.REST = 2 -- seconds between browses
+SnipeView.REST = 0.5 -- seconds between browses; the auction house's own throttle paces the queries
 SnipeView.HISTORY = 20 -- finished sessions kept
 -- The "closest to your max prices" list: columns as { label, x, width, justify } on a 540 px row.
 -- Listed (how many the auction house has of the item, at all prices: a browse doesn't say how many
@@ -79,7 +79,8 @@ function SnipeView:build(p, width)
   self.startButton = start
   local status = p:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   status:SetPoint("LEFT", start, "RIGHT", 10, 0)
-  status:SetPoint("RIGHT", p, "RIGHT", 0, 0)
+  -- Room at the right end for the spinner that follows the text while sniping runs.
+  status:SetPoint("RIGHT", p, "RIGHT", -(ns.Loading.SPINNER + 6), 0)
   status:SetJustifyH("LEFT")
   self.status = status
   self.loading = ns.Loading.attach(env, p, status, { "LEFT", start, "RIGHT", 10, 0 })
@@ -320,6 +321,18 @@ function SnipeView:start()
   self.run = {} -- this run's identity: late answers from an earlier run are dropped
   self:refresh()
   self:tick(self.run)
+  self:clock(self.run)
+end
+
+-- Keeps "checked Xs ago" current while a check waits on the auction house: once a second, the status
+-- line alone is drawn again.
+function SnipeView:clock(run)
+  if not (self.running and self.run == run and self.env.C_Timer) then return end
+  self.env.C_Timer.After(1, function()
+    if not (self.running and self.run == run) then return end
+    self:renderStatus()
+    self:clock(run)
+  end)
 end
 
 -- Files the saved session in the history (once), unless nothing happened in it (busy: a buy is still
@@ -337,7 +350,7 @@ end
 -- Ends sniping and files the session in the history.
 function SnipeView:stop(why)
   if not self.running then return end
-  self.running, self.run, self.checking = false, nil, false
+  self.running, self.run = false, nil
   self.message = why
   SnipeView.file(self.addon.disenchant, self:now(), self.buying ~= nil)
   if self.session then self.session.finds = {} end
@@ -389,15 +402,11 @@ function SnipeView:tick(run)
   local query = ns.Sniper.browseQuery(entry.target, band)
   local api = self:api()
   local function rest()
-    if self.run == run then
-      self.checking = false
-      self:refresh()
-    end
+    if self.run == run then self:refresh() end
     if self.running and self.run == run and self.env.C_Timer then
       self.env.C_Timer.After(SnipeView.REST, function() self:tick(run) end)
     end
   end
-  self.checking = true
   self:refresh()
   api:browse(query, function(results, why)
     if self.run ~= run then return end
@@ -570,25 +579,31 @@ function SnipeView:hide()
   if self.settingsBox then self.settingsBox:Hide() end
 end
 
-function SnipeView:render()
-  local money = ns.Money.format
-  local w = self.window
-  local s = SnipeView.settings(self.addon)
+-- The Start/Stop button and the status line, with its spinner.
+function SnipeView:renderStatus()
   local targets = #self:runnable()
   self.startButton:SetText(self.running and "Stop" or "Start sniping")
   local status
   if self.running then
     local ago = self.lastCheck and math.max(0, self:now() - self.lastCheck)
     status = string.format("Sniping %d target%s%s", targets, targets == 1 and "" or "s",
-      ago and string.format(", checked %ds ago", ago) or "")
+      ago and (ago < 1 and ", checked just now" or string.format(", checked %ds ago", ago)) or "")
     if self.problem then status = status .. ". Last check failed: " .. self.problem end
   else
     status = targets > 0 and string.format("Not sniping. %d target%s ticked on Targets.", targets,
       targets == 1 and " is" or "s are") or "Not sniping. Tick a target on Targets to snipe it."
   end
   self.status:SetText(self.message or status)
-  -- The spinner turns while the auction house is working on one of the sniper's queries.
-  if self.running and self.checking then self.loading:spin() else self.loading:clear() end
+  -- The spinner turns at the end of the line for as long as sniping runs. With checks only REST apart it
+  -- would blink if it stopped between them.
+  if self.running then self.loading:spin() else self.loading:clear() end
+end
+
+function SnipeView:render()
+  local money = ns.Money.format
+  local w = self.window
+  local s = SnipeView.settings(self.addon)
+  self:renderStatus()
   self.buySpinner:SetShown(self.buying ~= nil)
 
   local summary = self.session and self.session:summary() or (self.addon.disenchant.session

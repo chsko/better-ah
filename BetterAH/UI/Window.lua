@@ -931,7 +931,7 @@ function Window:renderView()
   local view = self.model.view
   self.placeholder:SetShown(view ~= "prices" and view ~= "alts" and view ~= "post" and view ~= "disenchant"
     and view ~= "settings" and not (view == "browse" and self.browsePanel))
-  self:widenMain(view == "browse" and self.browsePanel ~= nil)
+  self:widenMain(view == "browse" and self.browsePanel ~= nil and self.browseView:wide())
   if self.browsePanel then self.browsePanel:SetShown(view == "browse") end
   self.pricesPanel:SetShown(view == "prices")
   self.disenchantPanel:SetShown(view == "disenchant")
@@ -939,6 +939,7 @@ function Window:renderView()
   self.postPanel:SetShown(view == "post")
   if self.settingsPanel then self.settingsPanel:SetShown(view == "settings") end
   if view ~= "settings" and self.settingsView then self.settingsView:hide() end
+  if view ~= "browse" and self.browseView then self.browseView:hide() end
   if view ~= "post" then
     self.postView.editor:Hide()
     if self.postView.ruleEditor then self.postView.ruleEditor:Hide() end

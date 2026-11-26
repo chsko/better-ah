@@ -5,6 +5,7 @@ local function setup(opts)
   local env = fake.new(opts)
   local ns = helper.load("BetterAH/Core/WindowModel.lua")
   helper.load("BetterAH/Core/Browse.lua", ns)
+  helper.load("BetterAH/Core/Buying.lua", ns)
   local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "Targets", "Sniper", "PriceDB",
     "CharacterRecords", "MatFloors", "Posting", "PostQueue", "SelfTest", "Probes" }
   for _, file in ipairs(core) do
@@ -20,6 +21,7 @@ local function setup(opts)
   helper.load("BetterAH/UI/DisenchantView.lua", ns)
   helper.load("BetterAH/UI/SettingsView.lua", ns)
   helper.load("BetterAH/Game/BrowseAPI.lua", ns)
+  helper.load("BetterAH/UI/BrowseItemView.lua", ns)
   helper.load("BetterAH/UI/BrowseView.lua", ns)
   helper.load("BetterAH/UI/Window.lua", ns)
   ns.prices = ns.PriceDB.new({})
@@ -1998,7 +2000,7 @@ describe("Browse view", function()
     assert.is_false(w.placeholder:IsShown())
     w:select("prices")
     assert.is_true(w.detailPanel:IsShown(), "other views get the detail panel back")
-    assert.is_false(view.panel:IsShown())
+    assert.is_false(view.container:IsShown())
   end)
 
   it("searches with the typed name and levels and lists the results cheapest first", function()
@@ -2139,7 +2141,8 @@ describe("Browse view, after review", function()
     end
     view:search()
     env.runTimers()
-    view.rows[1].button:Click()
+    view.selected = view.results.rows[1].itemKey
+    view:render()
     assert.is_true(view.rows[1].button.selectedTexture:IsShown())
     assert.equal("-", view.rows[1][2]:GetText())
     env.levels = { [1] = 23, [2] = 25 }
@@ -2163,5 +2166,243 @@ describe("Browse view, after review", function()
     assert.is_true(calls <= w.browseView.MAX_IDLE_REBUILDS, "gave up after a few rebuilds")
     env.CloseAuctionHouse()
     assert.is_nil(view.results)
+  end)
+end)
+
+describe("Browse item page", function()
+  local function setupItem()
+    local env, w, ns = setup()
+    env.openAuctionHouse()
+    w:select("browse")
+    env.guid = "Player-1"
+    env.itemNames = { [10] = "Battleforge Shoulderpads", [20] = "Strange Dust" }
+    env.browseResults = {
+      { itemKey = { itemID = 10, itemLevel = 30 }, totalQuantity = 3, minPrice = 1250 },
+      { itemKey = { itemID = 20, itemLevel = 0 }, totalQuantity = 34, minPrice = 98 },
+    }
+    env.listings[10] = { item = true,
+      { auctionID = 7, buyoutAmount = 1500, bidAmount = 1120, minBid = 1180, timeLeft = 2, owners = { "Mirelle" } },
+      { auctionID = 5, buyoutAmount = 1250, minBid = 900, timeLeft = 3, owners = { "Grukdar" } },
+      { auctionID = 9, buyoutAmount = 1750, minBid = 1200, containsOwnerItem = true },
+    }
+    env.listings[20] = { { unitPrice = 110, quantity = 20 }, { unitPrice = 98, quantity = 6 },
+      { unitPrice = 102, quantity = 8 } }
+    local view = w.browseView
+    view.searchButton:Click()
+    env.runTimers()
+    return env, w, ns, view
+  end
+  local function open(view, env, name)
+    for _, cells in ipairs(view.rows) do
+      if cells[1]:GetText() == name then cells.button:Click() break end
+    end
+    env.runTimers()
+    return view.item
+  end
+
+  it("opens an item's auctions with the buy controls on the detail panel", function()
+    local env, w, _, view = setupItem()
+    local item = open(view, env, "Battleforge Shoulderpads")
+    assert.is_false(view.panel:IsShown())
+    assert.is_true(item.panel:IsShown())
+    assert.is_true(w.detailPanel:IsShown(), "the detail panel comes back for the buy controls")
+    assert.equal("Battleforge Shoulderpads", item.nameText:GetText())
+    assert.equal("12s 50c", item.itemRows[1][1]:GetText())
+    assert.equal("Grukdar", item.itemRows[1][4]:GetText())
+    assert.equal("11s 20c", item.itemRows[2][2]:GetText())
+    assert.equal("You", item.itemRows[3][4]:GetText())
+    assert.same({ 0.6, 0.6, 0.6 }, item.itemRows[3][1].textColor)
+    assert.is_true(item.itemControls.buy:IsShown())
+    assert.is_false(item.itemControls.buy:IsEnabled(), "nothing selected yet")
+    item.backButton:Click()
+    assert.is_true(view.panel:IsShown())
+    assert.is_false(w.detailPanel:IsShown())
+    assert.is_false(item.itemControls.buy:IsShown())
+  end)
+
+  it("buys out the selected auction and looks again", function()
+    local env, _, _, view = setupItem()
+    local item = open(view, env, "Battleforge Shoulderpads")
+    local searches = #env.searches
+    item.itemRows[1].button:Click()
+    assert.equal("Buy out for 12s 50c", item.itemControls.buy:GetText())
+    assert.is_true(item.itemControls.buy:IsEnabled())
+    item.itemControls.buy:Click()
+    assert.same({ auctionID = 5, amount = 1250 }, env.bids[1])
+    env.runTimers()
+    assert.equal("Bought Battleforge Shoulderpads for 12s 50c.", item.messageText:GetText())
+    assert.equal(searches + 1, #env.searches, "the auctions are looked up again")
+  end)
+
+  it("bids at least the lowest bid, filled in on selection", function()
+    local env, _, _, view = setupItem()
+    local item = open(view, env, "Battleforge Shoulderpads")
+    item.itemRows[2].button:Click()
+    local boxes = item.itemControls.boxes
+    assert.same({ "", "11", "80" }, { boxes[1]:GetText(), boxes[2]:GetText(), boxes[3]:GetText() })
+    boxes[3]:SetText("0")
+    item:renderDetail()
+    assert.is_false(item.itemControls.bid:IsEnabled(), "under the lowest bid")
+    boxes[2]:SetText("12")
+    item:renderDetail()
+    item.itemControls.bid:Click()
+    assert.same({ auctionID = 7, amount = 1200 }, env.bids[1])
+    env.runTimers(5)
+    assert.truthy(item.messageText:GetText():find("^Bid 12s 0c sent"))
+  end)
+
+  it("can't buy your own auction", function()
+    local env, _, _, view = setupItem()
+    local item = open(view, env, "Battleforge Shoulderpads")
+    item.itemRows[3].button:Click()
+    assert.is_false(item.itemControls.buy:IsEnabled())
+    assert.is_false(item.itemControls.bid:IsEnabled())
+  end)
+
+  it("buys a quantity of a commodity after a quote and a confirm", function()
+    local env, _, _, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    assert.is_true(item.commodityList:IsShown())
+    assert.equal("98c", item.commodityRows[1][1]:GetText())
+    assert.equal("14 for 14s 4c", item.commodityRows[2][3]:GetText())
+    local c = item.commodityControls
+    c.quantity:SetText("20")
+    item:quantityChanged() -- the client's OnTextChanged
+    assert.is_true(item.commodityRows[3].button.selectedTexture:IsShown())
+    assert.equal("20 (6 of them)", item.commodityRows[3][2]:GetText())
+    assert.equal("Buy 20 for 20s 64c", c.buy:GetText())
+    env.quote = function(_, qty) return 106, qty * 105 + 52 end
+    c.buy:Click()
+    assert.same({ itemID = 20, quantity = 20 }, env.quoted)
+    env.runTimers()
+    assert.is_true(c.confirm:IsShown())
+    assert.truthy(c.confirmText:GetText():find("The price went up: 20 now cost 21s 52c"))
+    assert.equal(0, #env.commodityBuys)
+    c.confirm:Click()
+    env.runTimers()
+    assert.same({ itemID = 20, quantity = 20 }, env.commodityBuys[1])
+    assert.equal("Bought 20 Strange Dust for 21s 52c.", item.messageText:GetText())
+    assert.is_false(c.confirm:IsShown())
+  end)
+
+  it("sets the quantity from Max or a clicked row, and cancels a quote", function()
+    local env, _, _, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    local c = item.commodityControls
+    env.money = 6 * 98 + 102
+    c.max:Click()
+    assert.equal("7", c.quantity:GetText())
+    item.commodityRows[2].button:Click()
+    assert.equal("14", c.quantity:GetText())
+    env.money = 100000
+    env.fire("PLAYER_MONEY")
+    env.quote = function(_, qty) return 100, qty * 100 end
+    c.buy:Click()
+    env.runTimers()
+    c.cancel:Click()
+    assert.equal(1, env.quoteCancelled)
+    assert.is_false(c.confirm:IsShown())
+  end)
+
+  it("closes the item page when the auction house closes", function()
+    local env, w, _, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    env.CloseAuctionHouse()
+    assert.is_nil(item.row)
+    assert.is_true(view:wide())
+    w.model.mode = "better"
+    w:select("prices")
+    assert.is_false(item.commodityControls.buy:IsShown())
+  end)
+end)
+
+describe("Browse item page, after review", function()
+  local function setupItem()
+    local env, w, ns = setup()
+    env.openAuctionHouse()
+    w:select("browse")
+    env.itemNames = { [10] = "Battleforge Shoulderpads", [20] = "Strange Dust" }
+    env.browseResults = {
+      { itemKey = { itemID = 10, itemLevel = 30 }, totalQuantity = 1, minPrice = 1250 },
+      { itemKey = { itemID = 20, itemLevel = 0 }, totalQuantity = 6, minPrice = 98 },
+    }
+    env.listings[10] = { item = true, { auctionID = 5, buyoutAmount = 1250, minBid = 900, owners = { "Grukdar" } } }
+    env.listings[20] = { { unitPrice = 98, quantity = 6 } }
+    w.browseView.searchButton:Click()
+    env.runTimers()
+    return env, w, ns, w.browseView
+  end
+  local function open(view, env, name)
+    for _, cells in ipairs(view.rows) do
+      if cells[1]:GetText() == name then cells.button:Click() break end
+    end
+    env.runTimers()
+    return view.item
+  end
+
+  it("keeps its buy controls off other views, whatever redraws it", function()
+    local env, w, _, view = setupItem()
+    local item = open(view, env, "Battleforge Shoulderpads")
+    item.itemRows[1].button:Click()
+    w:select("disenchant")
+    env.fire("PLAYER_MONEY")
+    item:load()
+    env.runTimers()
+    assert.is_false(item.itemControls.buy:IsShown())
+    w:select("browse")
+    assert.is_true(item.itemControls.buy:IsShown(), "back on Browse, the page is still open")
+  end)
+
+  it("frees the buttons when a pending quote is dropped, and never confirms an old quantity", function()
+    local env, _, _, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    local c = item.commodityControls
+    c.quantity:SetText("3")
+    item:quantityChanged()
+    env.quote = function(_, qty) return 98, qty * 98 end
+    c.buy:Click()
+    c.quantity:SetText("1")
+    item:quantityChanged()
+    env.runTimers()
+    assert.is_nil(item.quoted, "the quote for 3 is dropped")
+    assert.is_nil(item.busy)
+    c.buy:Click()
+    item.backButton:Click()
+    env.runTimers()
+    open(view, env, "Strange Dust")
+    assert.is_nil(view.item.busy, "reopening starts free")
+  end)
+
+  it("says a timed-out commodity buy may have gone through, and reports a late success", function()
+    local env, _, ns, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    local c = item.commodityControls
+    c.quantity:SetText("2")
+    item:quantityChanged()
+    env.quote = function(_, qty) return 98, qty * 98 end
+    c.buy:Click()
+    env.runTimers()
+    local confirm = env.C_AuctionHouse.ConfirmCommoditiesPurchase
+    env.C_AuctionHouse.ConfirmCommoditiesPurchase = function() end
+    c.confirm:Click()
+    env.runTimers(ns.BrowseAPI.TIMEOUT + 1)
+    assert.truthy(item.messageText:GetText():find("may have gone through"))
+    env.C_AuctionHouse.ConfirmCommoditiesPurchase = confirm
+    env.fire("COMMODITY_PURCHASE_SUCCEEDED")
+    assert.truthy(item.messageText:GetText():find("^Bought 2 Strange Dust"))
+  end)
+
+  it("drops an open quote when another view shows, so the sniper isn't held up", function()
+    local env, w, ns, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    item.commodityControls.quantity:SetText("2")
+    item:quantityChanged()
+    env.quote = function(_, qty) return 98, qty * 98 end
+    item.commodityControls.buy:Click()
+    env.runTimers()
+    assert.is_true(ns.postingAPI.buying)
+    w:select("disenchant")
+    assert.is_nil(ns.postingAPI.buying)
+    assert.is_nil(ns.browseAPI.commodity)
   end)
 end)

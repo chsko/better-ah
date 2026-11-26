@@ -385,7 +385,9 @@ function M.new(opts)
   ah.GetItemSearchResultInfo = function(key, i)
     local r = (env.listings[key.itemID] or {})[i]
     return r and { itemKey = key, buyoutAmount = r.buyoutAmount, quantity = r.quantity or 1,
-      containsOwnerItem = r.containsOwnerItem or false, auctionID = r.auctionID, itemLink = r.itemLink }
+      containsOwnerItem = r.containsOwnerItem or false, auctionID = r.auctionID, itemLink = r.itemLink,
+      bidAmount = r.bidAmount, minBid = r.minBid, bidder = r.bidder, timeLeft = r.timeLeft,
+      owners = r.owners or { r.containsOwnerItem and "Me" or "Someone" }, containsAccountItem = false }
   end
   ah.HasFullItemSearchResults = function() return env.fullResults end
   env.needsConfirmation = false
@@ -456,6 +458,25 @@ function M.new(opts)
     end)
   end
   env.GetMoney = function() return env.money end
+  -- Commodity buying: StartCommoditiesPurchase quotes env.quote(itemID, quantity) -> unit, total (nil: no
+  -- quote) on the next tick; ConfirmCommoditiesPurchase succeeds unless env.commodityFails.
+  env.commodityBuys = {}
+  ah.StartCommoditiesPurchase = function(itemID, quantity, extra)
+    assert(extra == nil, "StartCommoditiesPurchase takes two arguments")
+    env.quoted = { itemID = itemID, quantity = quantity }
+    env.C_Timer.After(0, function()
+      local unit, total
+      if env.quote then unit, total = env.quote(itemID, quantity) end
+      if unit then env.fire("COMMODITY_PRICE_UPDATED", unit, total) else env.fire("COMMODITY_PRICE_UNAVAILABLE") end
+    end)
+  end
+  ah.ConfirmCommoditiesPurchase = function(itemID, quantity)
+    env.commodityBuys[#env.commodityBuys + 1] = { itemID = itemID, quantity = quantity }
+    env.C_Timer.After(0, function()
+      env.fire(env.commodityFails and "COMMODITY_PURCHASE_FAILED" or "COMMODITY_PURCHASE_SUCCEEDED")
+    end)
+  end
+  ah.CancelCommoditiesPurchase = function() env.quoteCancelled = (env.quoteCancelled or 0) + 1 end
   env.sounds = {}
   env.SOUNDKIT = { AUCTION_WINDOW_OPEN = 5274 }
   env.PlaySound = function(id) env.sounds[#env.sounds + 1] = id end

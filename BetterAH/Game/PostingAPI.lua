@@ -281,6 +281,8 @@ function PostingAPI:onEvent(event, arg)
   elseif event == "COMMODITY_SEARCH_RESULTS_UPDATED" or event == "ITEM_SEARCH_RESULTS_UPDATED" then
     if not (job and job.sent) then return end
     local e = job.entry
+    -- An entry can bring its own reader (the Browse view reads bids and owners too).
+    local readListings = e.reader or PostingAPI.readListings
     -- Item events are matched on itemID only: the client may hand back the key with level and suffix
     -- cleared, and one search runs at a time.
     local commodity = event == "COMMODITY_SEARCH_RESULTS_UPDATED" and arg == e.itemID
@@ -288,15 +290,15 @@ function PostingAPI:onEvent(event, arg)
     if e.unsure and (commodity or item) then
       -- Read the listings the way the answer came.
       local read = { itemID = e.itemID, itemKey = item and arg or e.itemKey, commodity = commodity }
-      self:finishSearch(job, PostingAPI.readListings(self.env, read))
+      self:finishSearch(job, readListings(self.env, read))
     elseif e.commodity and commodity then
-      self:finishSearch(job, PostingAPI.readListings(self.env, e))
+      self:finishSearch(job, readListings(self.env, e))
     elseif not e.commodity and item then
       -- Read with the searched key, like Blizzard's window; if the client filed the answer under its own
       -- key (level or suffix cleared), read with that.
-      local listings, complete = PostingAPI.readListings(self.env, e)
+      local listings, complete = readListings(self.env, e)
       if #listings == 0 then
-        listings, complete = PostingAPI.readListings(self.env, { itemID = e.itemID, itemKey = arg, commodity = false })
+        listings, complete = readListings(self.env, { itemID = e.itemID, itemKey = arg, commodity = false })
       end
       self:finishSearch(job, listings, complete)
     end

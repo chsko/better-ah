@@ -38,11 +38,14 @@ function Loading.bar(env, parent, width, height)
   return bar
 end
 
--- Puts a spinner and a bar in front of a status line. at = { point, rel, relPoint, x, y, width }: the
--- point the line's left edge is set with (text:SetPoint(point, rel, relPoint, x, y)), and its width
--- when it has a fixed one. Then :show(done, total) for a bar (total nil or 0: a bar that sweeps, for a
--- wait with no count yet), :spin() for a spinner after the text, :clear() for neither. The line moves
--- right of a bar (and narrows by as much, when it has a width).
+-- Puts a spinner and a bar in front of a status line. at = { point, rel, relPoint, x, y, width, slot }:
+-- the point the line's left edge is set with (text:SetPoint(point, rel, relPoint, x, y)), its width when
+-- it has a fixed one, and slot = true to keep the spinner's space in front of the line at all times.
+-- Then :show(done, total) for a bar (total nil or 0: a bar that sweeps, for a wait with no count yet),
+-- :spin() for a spinner, :clear() for neither. The line moves right of whichever is shown (and narrows by
+-- as much, when it has a width). With a slot, the spinner's space is kept while no bar shows, so neither
+-- the text nor the spinner moves when the spinner starts, stops or the text changes. A slot is meant for
+-- lines that only spin: a bar still moves the text right of it.
 function Loading.attach(env, parent, text, at)
   local self = setmetatable({ env = env, text = text, at = at }, Loading)
   local point = at[1] or "LEFT"
@@ -60,6 +63,7 @@ local RIGHT_OF = { LEFT = "RIGHT", TOPLEFT = "TOPRIGHT", BOTTOMLEFT = "BOTTOMRIG
 
 function Loading:place(frame, width)
   local at = self.at
+  if not frame and at.slot then frame, width = self.spinnerFrame, Loading.SPINNER end
   if frame then
     self.text:SetPoint(self.point, frame, RIGHT_OF[self.point] or "RIGHT", 6, 0)
     if at[6] then self.text:SetWidth(at[6] - width - 6) end
@@ -90,23 +94,11 @@ function Loading:show(done, total)
   self:place(bar, Loading.BAR_WIDTH)
 end
 
--- The spinner goes after the line's text, so the text doesn't move each time it starts and stops.
--- Call it again after the text changes, to keep it at the end.
--- The line keeps room for it at its right end: a line with a fixed width narrows by as much, and a line
--- whose right edge is anchored must leave Loading.SPINNER + 6 px free there itself.
 function Loading:spin()
   self.barFrame:Hide()
   self.sweeping = false
-  self:place(nil)
-  local text, at = self.text, self.at
-  if at[6] then text:SetWidth(at[6] - Loading.SPINNER - 6) end
-  local width = text.GetStringWidth and tonumber(text:GetStringWidth()) or 0
-  local room = text.GetWidth and tonumber(text:GetWidth())
-  if room and room > 0 then width = math.min(width, room) end
-  local f = self.spinnerFrame
-  f:ClearAllPoints()
-  f:SetPoint("LEFT", text, "LEFT", width + 6, 0)
-  f:Show()
+  self.spinnerFrame:Show()
+  self:place(self.spinnerFrame, Loading.SPINNER)
 end
 
 function Loading:clear()

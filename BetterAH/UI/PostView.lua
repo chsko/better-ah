@@ -30,8 +30,10 @@ function PostView.statusText(row)
   local plan = row.plan
   if row.state == "checking" then return "Checking..." end
   if row.state == "failed" then return "Not checked" end
-  if row.state == "setup" then return "Needs setup" end
-  if row.state == "ready" then return string.format("Ready: %d x %d", plan.posts, plan.quantity) end
+  if row.state == "ready" then
+    if plan.posts == 1 then return string.format("Ready: %d", plan.quantity) end
+    return string.format("Ready: %d x %d", plan.posts, plan.quantity)
+  end
   if row.skipped == "you" then return "Skipped" end
   if row.skipped == "kept" then return "Leftover" end
   if plan.reason == "below-floor" then return "Below floor" end
@@ -85,8 +87,8 @@ function PostView.detailText(row, ownFloor, marketValue, step)
   if row.skipped == "you" then
     add("You skipped this item. It stays in your bags until you next open the auction house.")
   elseif row.skipped == "kept" then
-    add("These are the leftovers from posting this item, too few for a full stack. They stay in your bags "
-      .. "until you next open the auction house.")
+    add(string.format("You posted your Post at most limit of %d this visit, so the rest stay in your bags "
+      .. "until you next open the auction house.", row.plan and row.plan.limit or 0))
   elseif plan.reason == "none-left" then
     add("None left in your bags.")
   elseif plan.reason == "no-floor" then
@@ -104,11 +106,6 @@ function PostView.detailText(row, ownFloor, marketValue, step)
       add(string.format("Combine them in threes into %s instead.", matName(c.id)))
     end
   else
-    if row.state == "setup" then
-      add("This is the first time you post this item. Choose a stack size and duration below; "
-        .. "Better AH remembers them.")
-      add("")
-    end
     if plan.undercut then
       add(string.format("The cheapest other listing is %s each, so this posts at %s, %s under it.",
         money(math.ceil(plan.undercut)), money(plan.price), under))
@@ -118,9 +115,16 @@ function PostView.detailText(row, ownFloor, marketValue, step)
     add(string.format("Your floor is %s (%s).", money(plan.floor), floorSource(ownFloor, marketValue, row.matFloor)))
     if row.state == "ready" then
       add("")
-      local stacks = plan.posts == 1 and "1 stack" or (plan.posts .. " stacks")
-      add(string.format("%s of %d post%s.", stacks, plan.quantity, plan.posts == 1 and "s" or ""))
-      if plan.remainder > 0 then add(string.format("The %d left over stay in your bags.", plan.remainder)) end
+      local total = row.have - plan.remainder
+      if plan.posts == 1 then
+        add(string.format("Posts %s in one go.", total == row.have and ("all " .. total) or tostring(total)))
+      else
+        add(string.format("Posts %d in %d auctions.", total, plan.posts))
+      end
+      if plan.remainder > 0 then
+        add(string.format("The other %d stay in your bags (Post at most %d%s).", plan.remainder, plan.limit,
+          total < plan.limit and ", minus what you posted this visit" or ""))
+      end
     end
   end
   return table.concat(lines, "\n")
@@ -243,12 +247,14 @@ function PostView:buildEditor()
   end
 
   self.profileLabel = label("Posting profile", 0)
-  self.stackLabel = box:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  self.stackLabel:SetPoint("TOPLEFT", box, "TOPLEFT", 0, -20)
-  self.stackLabel:SetText("Stack size")
-  self.stackInput = input(-16, 70)
-  self.stackInput:SetNumeric(true)
-  self.stackInput:SetScript("OnEnterPressed", function() self:saveProfile() end)
+  self.limitLabel = box:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  self.limitLabel:SetPoint("TOPLEFT", box, "TOPLEFT", 0, -20)
+  self.limitLabel:SetText("Post at most")
+  self.limitInput = input(-16, 78)
+  self.limitInput:SetNumeric(true)
+  self.limitInput:SetScript("OnEnterPressed", function() self:saveProfile() end)
+  ns.Window.tooltip(env, self.limitInput, "Post at most",
+    "The most of this item to post per visit; the rest stay in your bags. Leave it empty to post everything.")
   self.durationButtons = {}
   for i = 1, 3 do
     self.durationButtons[i] = button(PostView.durationLabel(env, i), 64, -42, (i - 1) * 66, function()
@@ -258,7 +264,7 @@ function PostView:buildEditor()
   end
   self.saveButton = button("Save", 64, -66, 0, function() self:saveProfile() end)
   ns.Window.tooltip(env, self.saveButton, "Save posting profile",
-    "Remember this stack size and duration for this item. You can change them later here.")
+    "Remember this limit and duration for this item. You can change them later here.")
 
   self.floorLabel = label("Floor price", -96)
   self.floorInput = input(-112)
@@ -485,7 +491,7 @@ function PostView:open()
   self.recorded, self.known, self.asked = {}, {}, {}
   self:dropConfirm()
   if api then
-    api.onPosted = function(ok) self:posted(ok) end
+    api.onPosted = function(ok, _, event) self:posted(ok, event) end
     -- Blizzard's window shows its own confirmation popup too; ours is the Confirm button.
     api.onPostWarning = function()
       if self.confirming and type(self.env.StaticPopup_Hide) == "function" then
@@ -568,8 +574,7 @@ function PostView:selectRow(r)
   self.ruleShown = nil
   self.duration = nil
   local profile = self.addon.posting and self.addon.posting:profile(row.item)
-  local suggested = row.plan and row.plan.suggested
-  self.stackInput:SetText(tostring(profile and profile.stack or suggested and suggested.stack or ""))
+  self.limitInput:SetText(tostring(profile and profile.limit or ""))
   local floor = self.addon.posting and self.addon.posting:floor(self.key, row.item)
   self.floorInput:SetText(floor and ns.Money.format(floor) or "")
   self.editorStatus:SetText("")
@@ -588,12 +593,12 @@ function PostView:saveProfile()
   if not (row and settings) then return end
   local profile = settings:profile(row.item)
   local duration = self.duration or profile and profile.duration or ns.Posting.DEFAULT_DURATION
-  if settings:setProfile(row.item, self.stackInput:GetText(), duration) then
+  if settings:setProfile(row.item, self.limitInput:GetText(), duration) then
     self:dropConfirm()
-    self.stackInput:ClearFocus()
+    self.limitInput:ClearFocus()
     self.editorStatus:SetText("Saved.")
   else
-    self.editorStatus:SetText("Stack size must be a whole number of 1 or more.")
+    self.editorStatus:SetText("Post at most must be a whole number of 1 or more, or empty for everything.")
   end
   self:render()
 end
@@ -627,23 +632,23 @@ function PostView:postNext()
   local api = self.addon.postingAPI
   if not (api and self.queue) then return end
   if self.busy then return end
-  local result, why, row
+  local result, why, units, row
   if self.confirming then
     row = self.confirming
-    result, why = api:confirm()
+    result, why, units = api:confirm()
     self.confirming = nil
   else
     row = self.queue:nextPost()
     if not row then return end
-    result, why = api:post(row.entry, row.plan)
+    result, why, units = api:post(row.entry, row.plan)
     if result == "confirm" then self.confirming = row end
   end
   if result == "sent" then
     self.message = nil
     -- Wait for the game and the bags before the next post, so it never posts from a stale row.
-    local busy = { item = row.item }
+    local busy = { item = row.item, units = units or 0 }
     self.busy = busy
-    self.queue:sent(row.item, row.plan)
+    self.queue:sent(row.item, busy.units)
     local timer = self.env.C_Timer
     if timer and timer.After then
       timer.After(5, function()
@@ -668,7 +673,9 @@ function PostView:skipNext()
   self:render()
 end
 
-function PostView:posted(ok)
+-- event names the error when ok is false: only a post error takes the post's units back, since
+-- AUCTION_HOUSE_SHOW_ERROR can be about something else.
+function PostView:posted(ok, event)
   self:dropConfirm()
   local busy = self.busy
   if busy and self.queue then
@@ -678,6 +685,7 @@ function PostView:posted(ok)
   end
   if not ok then
     self.message = "The auction house didn't take that post. Check the chat for why."
+    if busy and self.queue and event == "AUCTION_HOUSE_POST_ERROR" then self.queue:sent(busy.item, -busy.units) end
     self.busy = nil
   end
   self:refresh()
@@ -689,11 +697,6 @@ function PostView:renderEditor(row)
   self.editor:SetShown(editable and true or false)
   if not editable then return end
   local profile = self.addon.posting:profile(row.item)
-  if (self.stackInput:GetText() or "") == "" then
-    local suggested = row.plan and row.plan.suggested
-    local stack = profile and profile.stack or suggested and suggested.stack
-    if stack then self.stackInput:SetText(tostring(stack)) end
-  end
   local current = self.duration or profile and profile.duration or ns.Posting.DEFAULT_DURATION
   for i, b in ipairs(self.durationButtons) do
     if i == current then b:LockHighlight() else b:UnlockHighlight() end
@@ -735,7 +738,7 @@ function PostView:render()
       local plan = row.plan or {}
       cells[1]:SetText(row.name or row.item)
       cells[2]:SetText(tostring(row.have))
-      cells[3]:SetText(plan.price and (row.state == "ready" or row.state == "setup") and money(plan.price) or "")
+      cells[3]:SetText(plan.price and row.state == "ready" and money(plan.price) or "")
       cells[4]:SetText(plan.floor and money(plan.floor) or "")
       cells[5]:SetText(PostView.statusText(row))
       cells.button:Show()
@@ -750,7 +753,9 @@ function PostView:render()
   if self.confirming then
     local now = self.queue:row(self.confirming.entry)
     local a, b = self.confirming.plan, now.plan
-    if now.state ~= "ready" or a.price ~= b.price or a.quantity ~= b.quantity then self:dropConfirm() end
+    if now.state ~= "ready" or a.price ~= b.price or a.quantity ~= b.quantity or a.duration ~= b.duration then
+      self:dropConfirm()
+    end
   end
   local nextRow = self.confirming or self.queue:nextPost()
   if self.busy then
@@ -785,7 +790,7 @@ function PostView:render()
     self.selected = nil
     w.detailTitle:SetText("")
     w.detailBody:SetText(total > 0 and "Select an item to see how its price was worked out, or to change its "
-      .. "stack size, duration and floor price." or "")
+      .. "limit, duration and floor price." or "")
     self.ruleEditor:Hide()
   end
   self:renderEditor(selected)

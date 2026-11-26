@@ -34,8 +34,14 @@ _Avoid_: minimum price, min
 Listing 1 copper below the cheapest competing listing (one that isn't yours). With no competing listing, the item is listed at its market value.
 
 **Posting profile**:
-The stack size and duration remembered for an item after the first time you post it.
+The optional post limit ("Post at most") and duration remembered for an item. Without one, an item posts
+everything in your bags for 24 hours.
 _Avoid_: operation, group settings
+
+**Post limit**:
+The most of an item to post per visit to the auction house ("Post at most"); the rest stay in your bags.
+Empty means everything. A commodity posts as one listing of any size; other items post one auction per bag stack.
+_Avoid_: stack size
 
 **Post queue**:
 The items in your bags that are ready to be posted right now.

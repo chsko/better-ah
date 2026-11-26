@@ -4,9 +4,10 @@
 -- The price is an undercut: the highest whole copper below the cheapest unit price that isn't the
 -- player's. With no other listings the item is priced at its market value. If the price is below the
 -- item's floor price (its own floor on this market, else 80% of market value) the item is skipped and
--- stays in the bags, with the reason. An item that would post but has no posting profile (stack size
--- and duration) asks for one first, pre-filled with the most common competing stack size and the
--- 24 hour duration.
+-- stays in the bags, with the reason. Otherwise it posts everything in the bags, or at most the
+-- profile's limit, for the profile's duration (24 hours without one). A commodity goes up as one post
+-- of any size, since C_AuctionHouse.PostCommodity takes units from every bag slot; other items post
+-- one auction per bag stack.
 local _, ns = ...
 ns = ns or {}
 
@@ -41,21 +42,6 @@ function Posting.cheapestOther(listings)
   return cheapest
 end
 
--- The stack size other sellers use most (ties go to the bigger stack), or nil with no other listings.
-function Posting.commonStack(listings)
-  local seen, best = {}, nil
-  for _, l in ipairs(listings or {}) do
-    if (tonumber(l.ownCount) or 0) == 0 then
-      local count = tonumber(l.count)
-      if count and count > 0 then
-        seen[count] = (seen[count] or 0) + 1
-        if not best or seen[count] > seen[best] or (seen[count] == seen[best] and count > best) then best = count end
-      end
-    end
-  end
-  return best
-end
-
 -- The item's floor price in copper: its own floor if set, else the rule's floor (disenchant materials,
 -- Core/MatFloors.lua), else FLOOR_SHARE of market value rounded up. nil when none is known.
 function Posting.floor(marketValue, ownFloor, ruleFloor)
@@ -67,18 +53,26 @@ end
 
 -- args: { have = units in bags, listings = {...}, marketValue = copper or nil, floor = own floor or nil,
 --         ruleFloor = the floor a rule gives when there's no own floor (or nil),
---         profile = { stack, duration } or nil, maxStack = the item's stack size or nil,
+--         profile = { limit, duration } or nil, commodity = true for a commodity,
+--         stacks = the counts of the item's bag stacks in bag order (a non-commodity posts one per click),
+--         maxStack = the item's stack size or nil (caps a non-commodity post when stacks is nil),
+--         posted = units of the item already posted this visit (they count toward the limit), or nil,
 --         step = the smallest price step the client takes, 1 copper (default) or 100 (whole silver) }
 -- Returns a plan, one of
 --   { action = "skip", reason = why, price, floor }      stays in the bags, where why is
---     "none-left", "no-floor" (no market value and no own floor) or "below-floor"
---   { action = "profile", price, floor, undercut, suggested = { stack, duration } }   would post; asks first
---   { action = "post", price, floor, undercut, quantity, posts, remainder, duration }
--- price is per unit. Posting makes posts auctions of quantity units each and leaves remainder in the
--- bags. undercut is the competing unit price it went under (nil when priced at market value).
+--     "none-left", "limit" (this visit already posted the profile's limit), "no-floor" (no market value
+--     and no own floor) or "below-floor"
+--   { action = "post", price, floor, undercut, quantity, posts, remainder, duration, limit }
+-- price is per unit. Posting makes posts auctions of quantity units each (the last of a non-commodity
+-- run may be smaller) and leaves remainder in the bags. undercut is the competing unit price it went
+-- under (nil when priced at market value). limit is the profile's limit, or nil for everything.
 function Posting.plan(args)
   local have = math.floor(tonumber(args.have) or 0)
   if have <= 0 then return { action = "skip", reason = "none-left" } end
+  local profile = type(args.profile) == "table" and args.profile or {}
+  local limit = Posting.limit(profile.limit)
+  local due = limit and limit - math.max(0, math.floor(tonumber(args.posted) or 0)) or have
+  if due <= 0 then return { action = "skip", reason = "limit", limit = limit } end
   local listings = args.listings or {}
 
   local step = math.max(1, math.floor(tonumber(args.step) or 1))
@@ -96,25 +90,50 @@ function Posting.plan(args)
   if not floor then return { action = "skip", price = price, reason = "no-floor" } end
   if price < floor then return { action = "skip", price = price, floor = floor, reason = "below-floor" } end
 
-  local maxStack = tonumber(args.maxStack)
-  local cap = math.min(have, maxStack and maxStack >= 1 and math.floor(maxStack) or have)
-  local profile = args.profile
-  local stack = tonumber(profile and profile.stack)
-  if not (stack and finite(stack) and stack >= 1 and profile.duration) then
-    return { action = "profile", price = price, floor = floor, undercut = other, suggested = {
-      stack = math.min(Posting.commonStack(listings) or cap, cap), duration = Posting.DEFAULT_DURATION,
-    } }
+  local duration = Posting.duration(profile.duration) or Posting.DEFAULT_DURATION
+  local total = math.min(have, due)
+  local quantity, posts = total, 1
+  if not args.commodity then
+    local stacks = type(args.stacks) == "table" and #args.stacks > 0 and args.stacks
+    if stacks then
+      -- One auction per bag stack, in bag order, the last one cut to what the limit leaves.
+      quantity, posts = math.min(total, stacks[1]), 0
+      local left = total
+      for _, count in ipairs(stacks) do
+        if left <= 0 then break end
+        left, posts = left - math.min(count, left), posts + 1
+      end
+    else
+      local maxStack = tonumber(args.maxStack)
+      quantity = math.min(total, maxStack and finite(maxStack) and maxStack >= 1 and math.floor(maxStack) or total)
+      posts = math.ceil(total / quantity)
+    end
   end
-  local quantity = math.min(math.floor(stack), cap)
-  local posts = math.floor(have / quantity)
   return {
-    action = "post", price = price, floor = floor, undercut = other, duration = profile.duration,
-    quantity = quantity, posts = posts, remainder = have - posts * quantity,
+    action = "post", price = price, floor = floor, undercut = other, duration = duration, limit = limit,
+    quantity = quantity, posts = posts, remainder = have - total,
   }
 end
 
+-- A post limit as a whole number of 1 or more, or nil for none (nil, "" or anything else).
+function Posting.limit(value)
+  local n = tonumber(value)
+  if n and finite(n) and n >= 1 then return math.floor(n) end
+  return nil
+end
+
+-- A duration the client offers, or nil.
+function Posting.duration(value)
+  local n = tonumber(value)
+  for _, d in ipairs(Posting.DURATIONS) do
+    if d == n then return d end
+  end
+  return nil
+end
+
 -- Posting settings, kept across sessions in BetterAHDB.posting:
---   profiles[item] = { stack, duration }      the same on every market
+--   profiles[item] = { limit, duration }      the same on every market; limit nil posts everything
+--                                             (profiles saved before #80 may still hold a stack, unused)
 --   floors[marketKey][item] = copper          a price, so per market like all prices (ADR 0003)
 --   mats = { kind, percent, convert }          the floor rule for disenchant materials (MatFloors.rule)
 --   filter = "all" or "mats"                   which items the Post view shows
@@ -164,14 +183,15 @@ function Settings:profile(item)
   return self.store.profiles[item]
 end
 
--- Returns false (and changes nothing) for a stack below 1 or a duration the client doesn't offer.
-function Settings:setProfile(item, stack, duration)
-  stack, duration = tonumber(stack), tonumber(duration)
-  if not (stack and finite(stack) and stack >= 1 and duration) then return false end
-  local known = false
-  for _, d in ipairs(Posting.DURATIONS) do known = known or d == duration end
-  if not known then return false end
-  self.store.profiles[item] = { stack = math.floor(stack), duration = duration }
+-- limit is empty (or nil) for no limit, else a whole number of 1 or more. Returns false (and changes
+-- nothing) for any other limit, or a duration the client doesn't offer.
+function Settings:setProfile(item, limit, duration)
+  local text = limit == nil and "" or tostring(limit):match("^%s*(.-)%s*$")
+  local n = tonumber(text)
+  if not (text == "" or n and finite(n) and n >= 1 and n == math.floor(n)) then return false end
+  duration = Posting.duration(duration)
+  if not duration then return false end
+  self.store.profiles[item] = { limit = text ~= "" and n or nil, duration = duration }
   return true
 end
 

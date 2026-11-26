@@ -2,7 +2,7 @@ local helper = require("spec.helper")
 
 describe("Posting", function()
   local Posting = helper.load("BetterAH/Core/Posting.lua").Posting
-  local profile = { stack = 20, duration = 2 }
+  local profile = { duration = 2 }
 
   local function plan(args)
     if args.profile == false then args.profile = nil else args.profile = args.profile or profile end
@@ -14,7 +14,7 @@ describe("Posting", function()
       { unit = 1200, count = 20 }, { unit = 950, count = 5 }, { unit = 990, count = 20 },
     } })
     assert.same({ action = "post", price = 949, floor = 800, undercut = 950, duration = 2,
-      quantity = 20, posts = 3, remainder = 0 }, p)
+      quantity = 60, posts = 1, remainder = 0 }, p)
   end)
 
   it("goes just under a fractional unit price, not a copper further", function()
@@ -54,36 +54,60 @@ describe("Posting", function()
     assert.equal("post", plan({ have = 20, floor = 600, listings = { { unit = 700, count = 20 } } }).action)
   end)
 
-  it("asks for a posting profile only for items that would post", function()
-    local listings = {
-      { unit = 1000, count = 5 }, { unit = 1000, count = 20 }, { unit = 1000, count = 20 }, { unit = 1000, count = 10 },
-      { unit = 1000, count = 10 }, { unit = 1000, count = 1, ownCount = 1 }, { unit = 1000, count = 1, ownCount = 1 },
-      { unit = 1000, count = 1, ownCount = 1 },
-    }
-    local p = plan({ have = 50, marketValue = 1000, profile = false, listings = listings })
-    assert.same({ action = "profile", price = 999, floor = 800, undercut = 1000,
-      suggested = { stack = 20, duration = 3 } }, p,
-      "the most common competing stack (ties go to the bigger) and 24 hours")
-    assert.equal("skip", plan({ have = 50, profile = false, listings = listings }).action)
-    assert.same({ stack = 7, duration = 3 },
-      plan({ have = 7, marketValue = 1, profile = false, listings = {} }).suggested, "no competitors: all you have")
-    assert.equal(10, plan({ have = 50, marketValue = 1, maxStack = 10, profile = false, listings = {} })
-      .suggested.stack, "never more than a stack holds")
+  it("posts everything for 24 hours without a profile", function()
+    local p = plan({ have = 142, marketValue = 1000, commodity = true, maxStack = 20, profile = false,
+      listings = { { unit = 1000, count = 20 } } })
+    assert.same({ action = "post", price = 999, floor = 800, undercut = 1000, duration = 3,
+      quantity = 142, posts = 1, remainder = 0 }, p, "a commodity is one post of any size, past one bag stack")
+    assert.equal("skip", plan({ have = 50, profile = false, listings = {} }).action, "still needs a floor")
   end)
 
-  it("posts whole stacks and keeps the rest in the bags", function()
-    local p = plan({ have = 50, marketValue = 100, listings = {} })
-    assert.same({ 20, 2, 10 }, { p.quantity, p.posts, p.remainder })
-    local few = plan({ have = 7, marketValue = 100, listings = {} })
-    assert.same({ 7, 1, 0 }, { few.quantity, few.posts, few.remainder }, "fewer than a stack: one smaller stack")
-    local capped = plan({ have = 50, marketValue = 100, maxStack = 10, listings = {} })
-    assert.same({ 10, 5 }, { capped.quantity, capped.posts })
+  it("posts at most the profile's limit and keeps the rest in the bags", function()
+    local p = plan({ have = 142, marketValue = 100, commodity = true, profile = { limit = 50, duration = 1 },
+      listings = {} })
+    assert.same({ 50, 1, 92, 50, 1 }, { p.quantity, p.posts, p.remainder, p.limit, p.duration })
+    local few = plan({ have = 7, marketValue = 100, commodity = true, profile = { limit = 50 }, listings = {} })
+    assert.same({ 7, 1, 0, 3 }, { few.quantity, few.posts, few.remainder, few.duration },
+      "fewer than the limit: all of them, and 24 hours by default")
   end)
 
-  it("treats a broken saved profile as no profile", function()
-    for _, bad in ipairs({ { stack = "x", duration = 2 }, { stack = 0.5, duration = 2 }, { stack = 20 } }) do
-      assert.equal("profile", plan({ have = 5, marketValue = 1, profile = bad, listings = {} }).action)
+  it("posts other items one auction per bag stack", function()
+    local gear = plan({ have = 3, marketValue = 100, maxStack = 1, listings = {} })
+    assert.same({ 1, 3, 0 }, { gear.quantity, gear.posts, gear.remainder })
+    local limited = plan({ have = 5, marketValue = 100, maxStack = 1, profile = { limit = 2 }, listings = {} })
+    assert.same({ 1, 2, 3 }, { limited.quantity, limited.posts, limited.remainder })
+    local stacks = plan({ have = 50, marketValue = 100, maxStack = 20, listings = {} })
+    assert.same({ 20, 3, 0 }, { stacks.quantity, stacks.posts, stacks.remainder }, "the last stack may be smaller")
+  end)
+
+  it("counts what this visit already posted toward the limit", function()
+    local p = plan({ have = 30, marketValue = 100, commodity = true, posted = 20, profile = { limit = 30 },
+      listings = {} })
+    assert.same({ 10, 1, 20 }, { p.quantity, p.posts, p.remainder }, "only the 10 still due from the limit")
+    local grown = plan({ have = 132, marketValue = 100, commodity = true, posted = 50, profile = { limit = 50 },
+      listings = {} })
+    assert.same({ action = "skip", reason = "limit", limit = 50 }, grown, "more in the bags doesn't reset it")
+    assert.equal(132, plan({ have = 132, marketValue = 100, commodity = true, posted = 50, listings = {} }).quantity,
+      "without a limit everything posts")
+  end)
+
+  it("posts a non-commodity one bag stack per auction", function()
+    local p = plan({ have = 20, marketValue = 100, maxStack = 20, stacks = { 5, 5, 5, 5 }, listings = {} })
+    assert.same({ 5, 4, 0 }, { p.quantity, p.posts, p.remainder })
+    local cut = plan({ have = 20, marketValue = 100, stacks = { 5, 5, 5, 5 }, profile = { limit = 12 },
+      listings = {} })
+    assert.same({ 5, 3, 8 }, { cut.quantity, cut.posts, cut.remainder }, "the last auction cut to the limit")
+    local small = plan({ have = 20, marketValue = 100, stacks = { 5, 15 }, profile = { limit = 3 }, listings = {} })
+    assert.same({ 3, 1 }, { small.quantity, small.posts })
+  end)
+
+  it("ignores a broken or old saved profile", function()
+    for _, bad in ipairs({ { stack = 20, duration = 2 }, { limit = "x", duration = 9 }, { limit = 0.5 }, {} }) do
+      local p = plan({ have = 40, marketValue = 1, commodity = true, profile = bad, listings = {} })
+      assert.same({ "post", 40 }, { p.action, p.quantity })
     end
+    assert.equal(2, plan({ have = 1, marketValue = 1, profile = { stack = 20, duration = 2 }, listings = {} })
+      .duration, "an old profile keeps its duration")
   end)
 
   it("prices in whole silver on a client without copper values", function()
@@ -117,7 +141,9 @@ describe("Posting", function()
       assert.is_true(s:setProfile("i:2589", 20, 3))
       assert.is_true(s:setFloor("/1/Horde", "i:2589", 1234.9))
       s = Posting.Settings.new(store)
-      assert.same({ stack = 20, duration = 3 }, s:profile("i:2589"))
+      assert.same({ limit = 20, duration = 3 }, s:profile("i:2589"))
+      assert.is_true(s:setProfile("i:2589", " ", 1))
+      assert.same({ duration = 1 }, s:profile("i:2589"), "an empty limit posts everything")
       assert.equal(1234, s:floor("/1/Horde", "i:2589"))
       assert.is_nil(s:floor("/1/Alliance", "i:2589"), "a floor is a price on one market")
       assert.is_true(s:setFloor("/1/Horde", "i:2589", 0))
@@ -135,9 +161,11 @@ describe("Posting", function()
       assert.is_false(s:adoptFloors("/1/Alliance", "/PvP/Alliance"), "nothing to move")
     end)
 
-    it("refuses bad stacks, unknown durations and floors that aren't a copper amount", function()
+    it("refuses bad limits, unknown durations and floors that aren't a copper amount", function()
       local s = Posting.Settings.new({})
       assert.is_false(s:setProfile("i:1", 0, 2))
+      assert.is_false(s:setProfile("i:1", "2.5", 2))
+      assert.is_false(s:setProfile("i:1", "abc", 2))
       assert.is_false(s:setProfile("i:1", 5, 4))
       assert.is_false(s:setProfile("i:1", math.huge, 2))
       assert.is_nil(s:profile("i:1"))

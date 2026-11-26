@@ -99,6 +99,12 @@ function Frame:CreateTexture(_, layer)
   self.textures[#self.textures + 1] = t
   return t
 end
+function Frame:SetStatusBarTexture(path) self.barTexture = path end
+function Frame:SetStatusBarColor(...) self.barColor = { ... } end
+function Frame:SetMinMaxValues(lo, hi) self.min, self.max = lo, hi end
+function Frame:GetMinMaxValues() return self.min, self.max end
+function Frame:SetValue(v) self.value = v end
+function Frame:GetValue() return self.value end
 function Frame:SetAtlas(atlas) self.atlas = atlas end
 function Frame:SetAllPoints() end
 function Frame:SetSpacing() end

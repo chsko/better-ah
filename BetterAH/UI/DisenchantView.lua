@@ -196,6 +196,7 @@ function DisenchantView:buildValues(p, width)
   status:SetJustifyH("LEFT")
   if status.SetMaxLines then status:SetMaxLines(2) end -- clear of the column headers below
   self.status = status
+  self.loading = ns.Loading.attach(env, p, status, { "LEFT", mats, "RIGHT", 10, 0 })
 
   self.rows = self.window:buildRows(p, DisenchantView.COLUMNS, function(index) self:selectRow(index) end)
 
@@ -669,6 +670,7 @@ function DisenchantView:renderValues(key, opts)
   local addon, w = self.addon, self.window
   local scanning = (addon.auctionAPI and addon.auctionAPI.pending) or w.materialScan
   if scanning then self.materialsButton:Disable() else self.materialsButton:Enable() end
+  w:showProgress(self.loading)
   local text
   if w.materialStatus and w.materialMarket == key then
     text = w.materialStatus

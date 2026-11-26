@@ -108,6 +108,7 @@ function PostView:build(f, x, y, width, height)
   status:SetWidth(width)
   status:SetJustifyH("LEFT")
   self.status = status
+  self.loading = ns.Loading.attach(env, panel, status, { "TOPLEFT", panel, "TOPLEFT", 0, -6, width })
   self.rows = self.window:buildRows(panel, PostView.COLUMNS, function(index) self:selectRow(index) end,
     function(offset) self.offset = offset; self:render() end)
 
@@ -443,6 +444,7 @@ function PostView:render()
   local rows = self.queue:rows()
   self.shown = rows
   local done, total = self.queue:progress()
+  if not self.unavailable and done < total then self.loading:show(done, total) else self.loading:clear() end
   if self.unavailable then
     self.status:SetText("Posting isn't available on this client: " .. self.unavailable .. ".")
   elseif total == 0 then

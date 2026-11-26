@@ -617,6 +617,9 @@ function SnipeView:buyNext(source)
     if self.buying == find then self.buying = nil end
     if bought then
       session:bought(self:now(), find)
+      -- find.price is one auction's buyout (buyoutAmount is per item: a result of quantity n is n
+      -- single auctions), and PlaceBid buys one of them.
+      if self.addon.purchases then self.addon.purchases:bought(find.itemID, find.link, 1, find.price, self:now()) end
     else
       session:missed(self:now(), find, failure, kind)
     end

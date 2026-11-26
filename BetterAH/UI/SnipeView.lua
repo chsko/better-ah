@@ -39,6 +39,10 @@ function SnipeView.logLine(entry, env)
     return string.format("%s Bought %s for %s", when, name, ns.Money.format(entry.price or 0))
   elseif entry.kind == "passed" then
     return string.format("%s Passed %s", when, name)
+  elseif entry.kind == "unsent" then
+    return string.format("%s Not bought %s: %s. It's still next.", when, name, entry.note or "not sent")
+  elseif entry.kind == "blocked" then
+    return string.format("%s The game blocked %s", when, entry.note or "a call")
   end
   return string.format("%s Missed %s: %s", when, name, entry.note or "gone")
 end
@@ -70,7 +74,7 @@ function SnipeView:build(p, width)
   self.panel = p
   p:EnableMouseWheel(true)
   -- A mouse wheel turn is a hardware event, so it can buy: each notch buys the next find.
-  p:SetScript("OnMouseWheel", function() self:buyNext() end)
+  p:SetScript("OnMouseWheel", function() self:buyNext("the mouse wheel") end)
 
   local start = env.CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
   start:SetSize(110, 22)
@@ -138,7 +142,7 @@ function SnipeView:build(p, width)
   local buy = env.CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
   buy:SetSize(width - 120, 26)
   buy:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 6)
-  buy:SetScript("OnClick", function() self:buyNext() end)
+  buy:SetScript("OnClick", function() self:buyNext("the Buy button") end)
   self.buyButton = buy
   -- Turns while the auction house answers a buy.
   self.buySpinner = ns.Loading.spinner(env, buy)
@@ -321,9 +325,34 @@ function SnipeView:start()
   self.running, self.message, self.lastCheck, self.near, self.seen, self.why = true, nil, nil, {}, {}, {}
   self.requested = {}
   self.run = {} -- this run's identity: late answers from an earlier run are dropped
+  self.held = nil
+  -- Any call of this addon the game blocks while sniping goes in the session log (#96).
+  local session = self.session
+  api.onBlocked = function(event, what)
+    if not self.running or self.session ~= session then return end
+    session:log(self:now(), "blocked", nil, what .. (event == "ADDON_ACTION_FORBIDDEN" and " (forbidden)" or ""))
+    self:refresh()
+  end
   self:refresh()
   self:tick(self.run)
   self:clock(self.run)
+end
+
+-- Why the next check waits (#96), or nil. Checks keep the auction house's one query pipe busy, and a buy
+-- sent while it is busy gets no answer: so no checks while a find waits to be bought or passed, or a buy
+-- waits for its answer. A full scan or a materials scan uses the same pipe, so checks wait for those too.
+-- A find that can't be bought now (spend cap, gold) doesn't hold checks: nothing would ever free them.
+function SnipeView:holdReason()
+  local find = self.session and self.session:next()
+  if find and not self.buying then
+    local s, api = SnipeView.settings(self.addon), self:api()
+    if not self.session:canBuy(find.price, api and api:money(), s.cap, s.keep) then find = nil end
+  end
+  if self.buying or find then return "a find waits: buy it or pass" end
+  local api = self.addon.auctionAPI
+  if api and api.pending then return "a full scan is running" end
+  if self.window.materialScan then return "the materials scan is running" end
+  return nil
 end
 
 -- Keeps "checked Xs ago" current while a check waits on the auction house: once a second, the status
@@ -398,6 +427,15 @@ function SnipeView:tick(run)
   if not self.running or self.run ~= run then return end
   local list = self:runnable()
   if #list == 0 then return self:stop("No ticked targets left to snipe.") end
+  local hold = self:holdReason()
+  if hold ~= self.held then
+    self.held = hold
+    self:refresh()
+  end
+  if hold then
+    if self.env.C_Timer then self.env.C_Timer.After(SnipeView.REST, function() self:tick(run) end) end
+    return
+  end
   self.round = self.round % #list + 1
   local entry = list[self.round]
   local band = entry.row.band
@@ -475,7 +513,7 @@ function SnipeView:tick(run)
 end
 
 -- Buys the next find. Runs inside a click or a mouse wheel turn (a hardware event).
-function SnipeView:buyNext()
+function SnipeView:buyNext(source)
   local find = self.running and self.session and self.session:next()
   if not find or self.buying then return end
   local s = SnipeView.settings(self.addon)
@@ -490,15 +528,15 @@ function SnipeView:buyNext()
   self:refresh()
   -- The answer counts in the session the buy was made in, even after Stop or a new Start.
   local session = self.session
-  api:buy(find.auctionID, find.price, function(bought, failure)
+  api:buy(find.auctionID, find.price, function(bought, failure, kind)
     if self.buying == find then self.buying = nil end
     if bought then
       session:bought(self:now(), find)
     else
-      session:missed(self:now(), find, failure)
+      session:missed(self:now(), find, failure, kind)
     end
     self:refresh()
-  end)
+  end, source)
 end
 
 function SnipeView:passNext()
@@ -589,7 +627,8 @@ function SnipeView:renderStatus()
   if self.running then
     local ago = self.lastCheck and math.max(0, self:now() - self.lastCheck)
     status = string.format("Sniping %d target%s%s", targets, targets == 1 and "" or "s",
-      ago and (ago < 1 and ", checked just now" or string.format(", checked %ds ago", ago)) or "")
+      self.held and (", paused: " .. self.held)
+      or ago and (ago < 1 and ", checked just now" or string.format(", checked %ds ago", ago)) or "")
     if self.problem then status = status .. ". Last check failed: " .. self.problem end
   else
     status = targets > 0 and string.format("Not sniping. %d target%s ticked on Targets.", targets,

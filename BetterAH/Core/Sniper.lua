@@ -231,9 +231,26 @@ function Session:bought(time, find)
   self:log(time, "bought", find)
 end
 
--- The buyout failed (sold to someone else, or an error): the find is gone.
-function Session:missed(time, find, why)
+-- The buyout failed (#96). kind (from SnipeAPI:buy) says what became of the auction:
+-- "unsent" (the buy never reached the auction house, or the game blocked it): the find stays next, to
+-- buy again, and the log says why it wasn't bought (once, not for every try with the same reason).
+-- "unknown" (no answer) and "closed": the find goes, but the auction isn't written off: it may still be
+-- listed, so it can be found again, and its item is looked up again on the next check of its target.
+-- "refused" (sold, or the auction house said no): the find is gone for the session, so an auction the
+-- auction house keeps refusing doesn't come back every check.
+function Session:missed(time, find, why, kind)
+  if kind == "unsent" then
+    local last = self.saved.log[1]
+    if not (last and last.kind == "unsent" and last.name == find.name and last.note == why) then
+      self:log(time, "unsent", find, why)
+    end
+    return
+  end
   drop(self, find.auctionID)
+  if kind == "unknown" or kind == "closed" then
+    self.seen[find.auctionID] = nil
+    if find.itemKey then self.looked[keyText(find.itemKey)] = nil end
+  end
   self:log(time, "missed", find, why)
 end
 

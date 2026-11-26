@@ -28,6 +28,10 @@ describe("AutoScan", function()
     assert.equal("Scanned 3 h ago. Open the auction house to scan.",
       AutoScan.status({ open = false, lastScan = now - 3 * 3600, now = now }))
     assert.equal("Not scanned yet. Next scan in a moment.", AutoScan.status({ open = true, now = now }))
+    assert.equal("Not scanned yet. Next scan when sniping stops.",
+      AutoScan.status({ open = true, now = now, held = true }))
+    assert.equal("Scanned 4 min ago. Next scan in 11 min.",
+      AutoScan.status({ open = true, lastScan = now - 4 * 60, now = now, held = true }), "not due yet: as usual")
     assert.equal("Scan failed: no answer from the auction house. Trying again in 2 min.",
       AutoScan.status({ open = true, now = now, failures = 1, failedAt = now,
         why = "no answer from the auction house" }))

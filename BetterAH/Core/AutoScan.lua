@@ -29,12 +29,15 @@ function AutoScan.within(seconds)
   return "in " .. math.ceil(seconds / 60) .. " min"
 end
 
--- The scan state for the title bar. s = { open, scanning, lastScan, now, failures, failedAt, why }.
+-- The scan state for the title bar. s = { open, scanning, lastScan, now, failures, failedAt, why, held }.
+-- held: a due scan waits for something else (sniping) to finish.
 function AutoScan.status(s)
   if s.scanning then return "Scanning the auction house..." end
   local last = s.lastScan and ("Scanned " .. ns.Time.ago(s.lastScan, s.now) .. ".") or "Not scanned yet."
   if not s.open then return last .. " Open the auction house to scan." end
-  local wait = AutoScan.within(AutoScan.wait(s.lastScan, s.now, s.failures, s.failedAt))
+  local due = AutoScan.wait(s.lastScan, s.now, s.failures, s.failedAt)
+  if s.held and due == 0 then return last .. " Next scan when sniping stops." end
+  local wait = AutoScan.within(due)
   if s.failures and s.failures > 0 then
     return string.format("Scan failed: %s. Trying again %s.", s.why or "no answer", wait)
   end

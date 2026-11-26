@@ -1169,11 +1169,83 @@ describe("Window", function()
         assert.equal(1, ns.disenchant.session.bought)
       end)
 
+      it("pauses checks while a find waits and checks again once it is bought or passed", function()
+        local env, _, _, s = snipeSetup()
+        s.startButton:Click()
+        env.runTimers()
+        assert.equal(1, #env.browses)
+        env.runTimers(5)
+        assert.equal(1, #env.browses, "no checks while a find waits")
+        assert.equal("Sniping 1 target, paused: a find waits: buy it or pass", s.status:GetText())
+        s.passButton:Click()
+        s.passButton:Click()
+        env.runTimers(1)
+        assert.equal(2, #env.browses, "checking again")
+        assert.matches("checked just now", s.status:GetText())
+      end)
+
+      it("keeps checking while the next find can't be bought", function()
+        local env, _, ns, s = snipeSetup()
+        ns.disenchant.snipe = { cap = 500 }
+        s.startButton:Click()
+        env.runTimers()
+        assert.equal("[Ridgeback Bracers]", s.cardName:GetText())
+        env.runTimers(1)
+        assert.equal(2, #env.browses, "over the spend cap: nothing to wait for")
+      end)
+
+      it("waits for a full scan before the next check, and holds the auto scan while sniping", function()
+        local env, w, ns, s = snipeSetup()
+        ns.auctionAPI.pending = {}
+        s.startButton:Click()
+        env.runTimers(3)
+        assert.equal(0, #env.browses)
+        assert.equal("Sniping 1 target, paused: a full scan is running", s.status:GetText())
+        ns.auctionAPI.pending = nil
+        env.runTimers(1)
+        assert.equal(1, #env.browses)
+        assert.is_true(w:scanState().held, "a due auto scan waits for sniping to stop")
+      end)
+
+      it("keeps a find whose buy wasn't sent, and finds one with no answer again", function()
+        local env, w, _, s = snipeSetup()
+        s.startButton:Click()
+        env.runTimers()
+        env.throttled = true
+        s.panel.scripts.OnMouseWheel(s.panel, -1)
+        env.throttled = false
+        assert.equal(0, #env.bids)
+        assert.equal("[Ridgeback Bracers]", s.cardName:GetText(), "still the next buy")
+        assert.matches("Not bought %[Ridgeback Bracers%]: the auction house was still answering a check",
+          w.detailBody:GetText())
+        local placeBid = env.C_AuctionHouse.PlaceBid
+        env.C_AuctionHouse.PlaceBid = function() end
+        s.buyButton:Click()
+        env.runTimers(10)
+        assert.matches("Missed %[Ridgeback Bracers%]: no answer", w.detailBody:GetText())
+        assert.equal("Buy for 12s 0c", s.buyButton:GetText(), "the next find")
+        assert.is_true(s.nearRows[1].bg:IsShown(), "the bracer is under the max and buyable again")
+        env.C_AuctionHouse.PlaceBid = placeBid
+        s.passButton:Click()
+        env.runTimers(1)
+        assert.equal(2, #env.searches, "its item is looked up again")
+        assert.equal("Buy for 9s 0c", s.buyButton:GetText(), "still listed: found again")
+      end)
+
+      it("logs a call of this addon the game blocks while sniping", function()
+        local env, w, _, s = snipeSetup()
+        s.startButton:Click()
+        env.fire("ADDON_ACTION_BLOCKED", "BetterAH", "UNKNOWN()")
+        assert.matches("The game blocked UNKNOWN%(%)", w.detailBody:GetText())
+      end)
+
       it("counts the age of the last check up while the next one waits", function()
         local env, _, _, s = snipeSetup()
         s.startButton:Click()
         env.runTimers()
         assert.matches("checked just now", s.status:GetText())
+        s.passButton:Click()
+        s.passButton:Click()
         env.browseSilent = true
         env.runTimers(3)
         assert.matches("checked 3s ago", s.status:GetText())

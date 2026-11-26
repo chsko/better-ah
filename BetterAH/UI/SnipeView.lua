@@ -79,11 +79,13 @@ function SnipeView:build(p, width)
   self.startButton = start
   local status = p:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   status:SetPoint("LEFT", start, "RIGHT", 10, 0)
-  -- Room at the right end for the spinner that follows the text while sniping runs.
-  status:SetPoint("RIGHT", p, "RIGHT", -(ns.Loading.SPINNER + 6), 0)
+  status:SetPoint("RIGHT", p, "RIGHT", 0, 0)
   status:SetJustifyH("LEFT")
   self.status = status
-  self.loading = ns.Loading.attach(env, p, status, { "LEFT", start, "RIGHT", 10, 0 })
+  -- The spinner has a fixed slot in front of the line, kept free while it's hidden: the line is drawn
+  -- again several times a second while sniping, and a spinner that followed the text would jitter.
+  self.loading = ns.Loading.attach(env, p, status, { "LEFT", start, "RIGHT", 10, 0, slot = true })
+  self.loading:clear()
 
   local spent = p:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   spent:SetPoint("TOPLEFT", p, "TOPLEFT", 0, -34)
@@ -594,8 +596,8 @@ function SnipeView:renderStatus()
       targets == 1 and " is" or "s are") or "Not sniping. Tick a target on Targets to snipe it."
   end
   self.status:SetText(self.message or status)
-  -- The spinner turns at the end of the line for as long as sniping runs. With checks only REST apart it
-  -- would blink if it stopped between them.
+  -- The spinner turns for as long as sniping runs. With checks only REST apart it would blink if it
+  -- stopped between them.
   if self.running then self.loading:spin() else self.loading:clear() end
 end
 

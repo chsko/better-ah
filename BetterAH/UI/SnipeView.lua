@@ -12,8 +12,11 @@ SnipeView.__index = SnipeView
 SnipeView.REST = 2 -- seconds between browses
 SnipeView.HISTORY = 20 -- finished sessions kept
 -- The "closest to your max prices" list: columns as { label, x, width, justify } on a 540 px row.
-SnipeView.NEAR_COLUMNS = { { "Item", 4, 150, "LEFT" }, { "Target", 158, 156, "LEFT" }, { "Cheapest", 316, 70 },
-  { "Max", 390, 70 }, { "vs. max", 462, 74 } }
+-- Listed (how many the auction house has of the item, at all prices: a browse doesn't say how many
+-- are at the cheapest) is last in the list but sits
+-- between Target and Cheapest.
+SnipeView.NEAR_COLUMNS = { { "Item", 4, 150, "LEFT" }, { "Target", 158, 116, "LEFT" }, { "Cheapest", 316, 70 },
+  { "Max", 390, 70 }, { "vs. max", 462, 74 }, { "Listed", 274, 38 } }
 SnipeView.NEAR_ROW = 17
 SnipeView.LOG_LINES = 14
 
@@ -436,7 +439,7 @@ function SnipeView:tick(run)
           local auctionAPI = self.addon.auctionAPI
           local itemName = l.link or (auctionAPI and auctionAPI:itemName("i:" .. c.itemKey.itemID))
           found = self.session:add({ auctionID = l.auctionID, itemID = c.itemKey.itemID, itemKey = c.itemKey,
-            link = l.link,
+            link = l.link, count = l.count,
             name = itemName or ("item " .. c.itemKey.itemID),
             price = l.unit, worth = worthOf[c.itemKey.itemID], max = c.max, target = name,
             level = c.level }) or found
@@ -500,7 +503,7 @@ function SnipeView:renderNear()
         local max = self:maxFor(entry, e.itemKey.itemID)
         if max and max > 0 then
           fresh[#fresh + 1] = { itemKey = e.itemKey, minPrice = e.minPrice, max = max, delta = max - e.minPrice,
-            name = e.name, target = name }
+            name = e.name, target = name, quantity = e.quantity }
         end
       end
       lists[#lists + 1] = fresh
@@ -538,6 +541,7 @@ function SnipeView:renderNear()
     row[1]:SetText(e and e.name or "")
     row[2]:SetText(e and e.target or "")
     row[3]:SetText(e and short(e.minPrice) or "")
+    row[6]:SetText(e and e.quantity and tostring(e.quantity) or "")
     row[4]:SetText(e and short(e.max) or "")
     local delta = e and e.delta
     if delta == nil then
@@ -593,7 +597,12 @@ function SnipeView:render()
   local find = finds[1]
   self.shownFind = find
   if find then
-    self.cardLabel:SetText("Next buy: " .. find.target)
+    -- How many of this item wait to be bought at this price (bought and passed ones drop out).
+    local count = 0
+    for _, f in ipairs(finds) do
+      if f.itemID == find.itemID and f.price == find.price then count = count + (f.count or 1) end
+    end
+    self.cardLabel:SetText(string.format("Next buy: %s  ·  %d at this price", find.target, count))
     self.cardName:SetText(find.name)
     self.cardLevel:SetText(find.level and find.level > 0 and ("item level " .. find.level) or "")
     self.cols[1].value:SetText(money(find.price))
@@ -604,8 +613,9 @@ function SnipeView:render()
     self.cols[3].note:SetText(find.worth and find.worth > 0 and
       string.format("%d%%", math.floor(find.profit * 100 / find.worth + 0.5)) or "")
     self.buyButton:SetText(self.buying and "Buying..." or ("Buy for " .. money(find.price)))
-    if self.buying then self.buyButton:Disable() else self.buyButton:Enable() end
-    self.passButton:Enable()
+    -- Pass waits for a buy in flight too, so it shows as off until the auction house answers.
+    if self.buying then self.buyButton:Disable(); self.passButton:Disable()
+    else self.buyButton:Enable(); self.passButton:Enable() end
   else
     self.cardLabel:SetText(self.running and "Next buy" or "")
     self.cardName:SetText(self.running and "Nothing under your max prices yet" or "Press Start sniping")

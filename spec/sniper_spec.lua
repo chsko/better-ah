@@ -223,6 +223,23 @@ describe("SnipeAPI", function()
     assert.equal("sold to someone else, or the auction house refused", why)
   end)
 
+  it("names the call the game blocked during a buy", function()
+    local env, api = setup()
+    env.openAuctionHouse()
+    local result, why
+    local placeBid = env.C_AuctionHouse.PlaceBid
+    env.C_AuctionHouse.PlaceBid = function(...)
+      env.fire("ADDON_ACTION_BLOCKED", "BetterAH", "CastSpellByName()")
+      assert.is_nil(result, "a block of another call isn't the buy's")
+      env.fire("ADDON_ACTION_BLOCKED", "BetterAH", "C_AuctionHouse.PlaceBid()") -- inside the call, like the client
+      return placeBid(...)
+    end
+    api:buy(7, 900, function(ok, w) result, why = ok, w end)
+    env.runTimers()
+    assert.is_false(result)
+    assert.equal("the game blocked C_AuctionHouse.PlaceBid()", why)
+  end)
+
   it("probes for browse and buy", function()
     local ns = helper.load("BetterAH/Core/Money.lua")
     helper.load("BetterAH/Core/SelfTest.lua", ns)

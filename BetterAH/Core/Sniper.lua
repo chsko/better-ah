@@ -87,7 +87,8 @@ function Sniper.near(band, results, maxOf, levelFallback)
     local level = levelOf(key, levelFallback)
     local max = key and maxOf(key.itemID)
     if level and level >= band.min and level <= band.max and max and max > 0 and (r.minPrice or 0) > 0 then
-      out[#out + 1] = { itemKey = key, minPrice = r.minPrice, max = max, delta = max - r.minPrice }
+      out[#out + 1] = { itemKey = key, minPrice = r.minPrice, max = max, delta = max - r.minPrice,
+        quantity = r.totalQuantity }
     end
   end
   return out

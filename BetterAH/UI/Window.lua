@@ -147,7 +147,6 @@ function Window:build()
   if scanState.SetWordWrap then scanState:SetWordWrap(false) end
   self.scanStateText = scanState
   self.scanSpinner = ns.Loading.spinner(env, text)
-  self.scanSpinner:SetPoint("RIGHT", scanState, "LEFT", -6, 0)
 
   local y = TOP - 10
   for _, section in ipairs(self.model:sections()) do
@@ -820,6 +819,16 @@ function Window:renderScanState()
     self.scanStateText:SetText(ns.AutoScan.status(s))
   end
   self.scanSpinner:SetShown(s.scanning and self.addon.autoScan ~= false)
+  self:placeScanSpinner()
+end
+
+-- The line is right-aligned in a wide box, so the spinner goes just left of where its text starts.
+function Window:placeScanSpinner()
+  local text = self.scanStateText
+  local width = text.GetStringWidth and tonumber(text:GetStringWidth()) or Window.SCAN_STATE_WIDTH
+  width = math.min(width, Window.SCAN_STATE_WIDTH)
+  self.scanSpinner:ClearAllPoints()
+  self.scanSpinner:SetPoint("RIGHT", text, "RIGHT", -width - 6, 0)
 end
 
 -- A scan's progress on a status line's loading indicator: a bar of materials looked up, or a sweeping

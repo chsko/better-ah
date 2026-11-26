@@ -24,6 +24,7 @@ Core/SelfTest.lua
 Core/Probes.lua
 Core/Commands.lua
 Core/WindowModel.lua
+Core/BrowseFilters.lua
 Core/Browse.lua
 Core/SearchHistory.lua
 Core/Buying.lua
@@ -47,6 +48,7 @@ UI/DisenchantView.lua
 UI/SettingsView.lua
 UI/BrowseItemView.lua
 UI/BrowseHistory.lua
+UI/BrowseFilterBar.lua
 UI/BrowseView.lua
 UI/MyAuctionsView.lua
 UI/WindowResize.lua

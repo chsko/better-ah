@@ -4,6 +4,7 @@ local fake = require("spec.fake_client")
 local function setup(opts)
   local env = fake.new(opts)
   local ns = helper.load("BetterAH/Core/WindowModel.lua")
+  helper.load("BetterAH/Core/BrowseFilters.lua", ns)
   helper.load("BetterAH/Core/Browse.lua", ns)
   helper.load("BetterAH/Core/SearchHistory.lua", ns)
   helper.load("BetterAH/Core/Buying.lua", ns)
@@ -26,6 +27,7 @@ local function setup(opts)
   helper.load("BetterAH/Game/BrowseAPI.lua", ns)
   helper.load("BetterAH/UI/BrowseItemView.lua", ns)
   helper.load("BetterAH/UI/BrowseHistory.lua", ns)
+  helper.load("BetterAH/UI/BrowseFilterBar.lua", ns)
   helper.load("BetterAH/UI/BrowseView.lua", ns)
   helper.load("BetterAH/Game/MyAuctionsAPI.lua", ns)
   helper.load("BetterAH/UI/MyAuctionsView.lua", ns)
@@ -3298,5 +3300,173 @@ describe("Browse search history", function()
       assert.is_nil(settings.historyWidth)
       assert.truthy(w)
     end)
+  end)
+end)
+
+describe("Browse categories and filters", function()
+  -- Shaped like Blizzard's AuctionCategories.
+  local function categories()
+    local chest = { name = "Chest", filters = { { classID = 4, subClassID = 3, inventoryType = 5 } } }
+    local mail = { name = "Mail", filters = { { classID = 4, subClassID = 3 } }, subCategories = { chest } }
+    return {
+      { name = "Weapons", filters = { { classID = 2, subClassID = 0 } } },
+      { name = "Armor", filters = { { classID = 4, subClassID = 3 } }, subCategories = { mail } },
+      { name = "Quest Items", filters = { { classID = 12 } } },
+      { name = "WoW Token", filters = { { classID = 18 } }, flags = { WOW_TOKEN_FLAG = true } },
+    }
+  end
+  local function browse(opts)
+    local env, w, ns = setup(opts)
+    env.AuctionCategories = categories()
+    if opts and opts.settings then ns.browseSettings = opts.settings end
+    env.openAuctionHouse()
+    w:select("browse")
+    env.itemNames = { [1] = "Ridgeback Bracers" }
+    env.browseResults = { { itemKey = { itemID = 1, itemLevel = 28 }, totalQuantity = 3, minPrice = 890 } }
+    return env, w, ns, w.browseView, w.browseView.filterBar
+  end
+
+  it("lists Forever's categories and searches the one picked, column by column", function()
+    local env, _, _, view, bar = browse()
+    assert.equal("All items", bar.categoryButton:GetText())
+    bar.categoryButton:Click()
+    assert.is_true(bar.categoryMenu:IsShown())
+    local col = bar.columns
+    assert.equal("All items", col[1][1].text:GetText())
+    assert.equal("Armor", col[1][3].text:GetText())
+    assert.is_false(col[1][5]:IsShown(), "no WoW Token")
+    assert.is_false(col[2][1]:IsShown(), "nothing open yet")
+    col[1][3]:Click() -- Armor: chosen, and its subcategories open
+    env.runTimers()
+    assert.is_true(bar.categoryMenu:IsShown())
+    assert.equal("All armor", col[2][1].text:GetText())
+    assert.equal("Mail", col[2][2].text:GetText())
+    local q = env.browses[#env.browses]
+    assert.same({ { classID = 4, subClassID = 3 } }, q.itemClassFilters)
+    assert.is_nil(q.path, "Browse's own fields aren't sent to the client")
+    col[2][2]:Click() -- Mail opens Chest
+    env.runTimers()
+    assert.equal("Chest", col[3][2].text:GetText())
+    col[3][2]:Click()
+    env.runTimers()
+    assert.is_false(bar.categoryMenu:IsShown(), "a category without subcategories closes the menu")
+    assert.equal("Armor / Mail / Chest", bar.categoryButton:GetText())
+    q = env.browses[#env.browses]
+    assert.same({ { classID = 4, subClassID = 3, inventoryType = 5 } }, q.itemClassFilters)
+    assert.truthy(view.status:GetText():find("in Armor / Mail / Chest", 1, true))
+    bar.categoryButton:Click()
+    col[1][1]:Click() -- All items
+    env.runTimers()
+    assert.equal("All items", bar.categoryButton:GetText())
+    assert.same({}, env.browses[#env.browses].itemClassFilters)
+  end)
+
+  it("sends the filter chips with the next search, and clears them", function()
+    local env, _, _, view, bar = browse()
+    assert.is_false(bar.clearButton:IsShown())
+    bar.usableCheck:Click()
+    assert.equal(0, #env.browses, "a filter waits for Search")
+    bar.rarityButton:Click()
+    assert.is_true(bar.rarityMenu:IsShown())
+    bar.rarityChecks[1]:Click() -- Poor off
+    bar.rarityChecks[2]:Click() -- Common off
+    assert.equal("Uncommon and up", bar.rarityButton:GetText())
+    view.searchButton:Click()
+    assert.is_false(bar.rarityMenu:IsShown(), "searching closes the menu")
+    env.runTimers()
+    assert.same({ 2, 8, 9, 10, 11 }, env.browses[#env.browses].filters)
+    assert.is_true(bar.clearButton:IsShown())
+    bar.clearButton:Click()
+    assert.is_false(bar.usableCheck:GetChecked())
+    assert.equal("Any rarity", bar.rarityButton:GetText())
+    assert.is_false(bar.clearButton:IsShown())
+  end)
+
+  it("keeps the category and filters in the search history and brings them back", function()
+    local env, _, ns, view, bar = browse()
+    bar.usableCheck:Click()
+    bar.categoryButton:Click()
+    bar.columns[1][3]:Click() -- Armor, searches
+    env.runTimers()
+    local _, recent = ns.searchHistory:list()
+    assert.equal("Everything", recent[1].name)
+    assert.equal("Armor · usable by me", recent[1].detail)
+    bar:clear()
+    env.runTimers() -- leaving the category searched everything
+    view.history.lines[2]:Click()
+    assert.equal("Armor", bar.categoryButton:GetText())
+    assert.is_true(bar.usableCheck:GetChecked())
+    env.runTimers()
+    local q = env.browses[#env.browses]
+    assert.same({ { classID = 4, subClassID = 3 } }, q.itemClassFilters)
+    assert.equal(2, q.filters[1])
+  end)
+
+  it("remembers the last category and filters per character", function()
+    local settings = {}
+    local env, _, _, _, bar = browse({ tracker = true, settings = settings })
+    env.guid = "Player-6841-0A1B2C3D"
+    bar.exactCheck:Click()
+    bar.categoryButton:Click()
+    bar.columns[1][4]:Click() -- Quest Items
+    local saved = settings.characters["Thrall-6841"]
+    assert.same({ "Quest Items" }, saved.path)
+    assert.is_true(saved.chips.exact)
+    local _, _, _, _, again = browse({ tracker = true, settings = settings })
+    assert.equal("Quest Items", again.categoryButton:GetText(), "after a reload")
+    assert.is_true(again.exactCheck:GetChecked())
+    settings.characters = nil
+    local stranger, _, _, _, other = browse({ tracker = true, settings = settings })
+    assert.truthy(stranger)
+    assert.equal("All items", other.categoryButton:GetText(), "another character starts fresh")
+  end)
+
+  it("searches everything when a saved category is no longer on the auction house", function()
+    local settings = { characters = { ["Thrall-6841"] = { path = { "Gone" }, chips = {} } } }
+    local env, _, _, view, bar = browse({ tracker = true, settings = settings })
+    assert.truthy(env)
+    assert.equal("Gone", bar.categoryButton:GetText())
+    view.searchButton:Click()
+    env.runTimers()
+    assert.equal("All items", bar.categoryButton:GetText())
+    assert.truthy(view.status:GetText():find("isn't on this auction house", 1, true))
+  end)
+
+  it("searches a category picked during a search once that one ends, and saves what was searched", function()
+    local env, _, ns, _, bar = browse()
+    bar.categoryButton:Click()
+    bar.columns[1][3]:Click() -- Armor: searching, menu open
+    bar.columns[2][2]:Click() -- Mail, before Armor's answer
+    assert.equal(1, #env.browses)
+    env.runTimers()
+    assert.equal(2, #env.browses, "Mail is searched after Armor")
+    local _, recent = ns.searchHistory:list()
+    assert.equal("Armor / Mail", recent[1].detail)
+    assert.equal("Armor", recent[2].detail, "the Armor search is saved as Armor")
+    assert.is_true(bar.categoryMenu:IsShown(), "Mail has a slot column to show")
+  end)
+
+  it("searches everything when Clear filters leaves a category", function()
+    local env, _, _, _, bar = browse()
+    bar.categoryButton:Click()
+    bar.columns[1][4]:Click() -- Quest Items
+    env.runTimers()
+    local n = #env.browses
+    bar.clearButton:Click()
+    env.runTimers()
+    assert.equal(n + 1, #env.browses)
+    assert.same({}, env.browses[#env.browses].itemClassFilters)
+  end)
+
+  it("cuts a long column with a line saying how many more there are", function()
+    local env, _, _, _, bar = browse()
+    local many = {}
+    for i = 1, 25 do many[i] = { name = "Sub " .. i, filters = { { classID = 7, subClassID = i } } } end
+    env.AuctionCategories[#env.AuctionCategories + 1] = { name = "Trade Goods", filters = {}, subCategories = many }
+    bar.categoryButton:Click()
+    bar.columns[1][5]:Click() -- Trade Goods
+    env.runTimers()
+    local col = bar.columns[2]
+    assert.equal("and 7 more", col[#col].text:GetText())
   end)
 end)

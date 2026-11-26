@@ -48,13 +48,31 @@ end
 
 -- Sends a browse query (from Browse.query). done(results, truncated) with every page read, truncated
 -- when the auction house had more than were read; or done(nil, why).
+-- The fields C_AuctionHouse.SendBrowseQuery takes; Browse's own (the category path) stay behind.
+BrowseAPI.QUERY_FIELDS = { "searchString", "minLevel", "maxLevel", "filters", "itemClassFilters", "sorts" }
+
 function BrowseAPI:search(query, done)
   if not self.snipe then return done(nil, "browsing isn't ready yet") end
-  self.snipe:browse(query, function(results, why)
+  local send = {}
+  for _, k in ipairs(BrowseAPI.QUERY_FIELDS) do send[k] = query[k] end
+  self.snipe:browse(send, function(results, why)
     if not results then return done(nil, why) end
     local ah = self.env.C_AuctionHouse
     done(results, ah and try(ah.HasFullBrowseResults) == false)
   end)
+end
+
+-- Forever's category tree (#92) as BrowseFilters.tree makes it, from Blizzard's AuctionCategories,
+-- which Blizzard_AuctionHouseUI builds when it loads with the auction house. Empty until then.
+function BrowseAPI:categories()
+  local raw = self.env.AuctionCategories
+  if type(raw) ~= "table" or #raw == 0 then return {} end
+  if self.categoryTree and self.categorySource == raw and self.categoryCount == #raw then
+    return self.categoryTree
+  end
+  self.categoryTree = ns.BrowseFilters.tree(raw)
+  self.categorySource, self.categoryCount = raw, #raw
+  return self.categoryTree
 end
 
 -- { name, quality, isCommodity } for an item key, or nil while the client loads it.

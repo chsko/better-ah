@@ -493,7 +493,7 @@ function PostView:ownAuctions(entry)
   local t = self.env.GetTime and self.env.GetTime()
   local cache = self.owned
   if not (cache and t and cache.time and t - cache.time < PostView.OWNED_TTL) then
-    cache = { time = t, auctions = ns.MyAuctionsAPI.read(self.env) }
+    cache = { time = t, auctions = ns.MyAuctionsAPI.readOwned(self.env) }
     self.owned = cache
   end
   if not cache.auctions then return nil end

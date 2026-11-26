@@ -623,6 +623,7 @@ function SnipeView:buyNext(source)
       -- find.price is one auction's buyout (buyoutAmount is per item: a result of quantity n is n
       -- single auctions), and PlaceBid buys one of them.
       if self.addon.purchases then self.addon.purchases:bought(find.itemID, find.link, 1, find.price, self:now()) end
+      if self.addon.ledgerAPI then self.addon.ledgerAPI:bought(find.itemID, find.name, 1, find.price, "Snipe") end
     else
       session:missed(self:now(), find, failure, kind)
     end

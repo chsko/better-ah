@@ -19,6 +19,11 @@ frame:SetScript("OnEvent", function(self, event, loadedName)
     if ns.Posting then ns.posting = ns.Posting.Settings.new(BetterAHDB.posting) end
     BetterAHDB.purchases = BetterAHDB.purchases or {}
     if ns.Purchases then ns.purchases = ns.Purchases.new(BetterAHDB.purchases) end
+    -- The auction house ledger (#137). Ledger.new starts a broken store over.
+    if ns.Ledger then
+      ns.ledger = ns.Ledger.new(BetterAHDB.ledger)
+      BetterAHDB.ledger = ns.ledger.store
+    end
     BetterAHDB.tooltip = BetterAHDB.tooltip or {}
     ns.tooltipSettings = BetterAHDB.tooltip
     BetterAHDB.disenchant = BetterAHDB.disenchant or {}

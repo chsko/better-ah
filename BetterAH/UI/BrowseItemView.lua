@@ -360,6 +360,8 @@ function ItemView:buyout()
     if bought then
       local ledger = self.addon and self.addon.purchases
       if ledger then ledger:bought(self.row.itemID, row.link, 1, price, self:now()) end -- one auction
+      local book = self.addon and self.addon.ledgerAPI
+      if book then book:bought(self.row.itemID, self.row.name, 1, price, "Browse") end
       self:say(string.format("Bought %s for %s.", name, money(price)))
       self.selected = nil
     elseif kind == "unknown" then
@@ -421,6 +423,8 @@ function ItemView:confirm()
     if bought then
       local ledger = self.addon and self.addon.purchases
       if ledger then ledger:bought(self.row.itemID, nil, q.quantity, q.total, self:now()) end
+      local book = self.addon and self.addon.ledgerAPI
+      if book then book:bought(self.row.itemID, self.row.name, q.quantity, q.total, "Browse") end
       self:say(string.format("Bought %d %s for %s.", q.quantity, name, money(q.total)))
       self.commodityControls.quantity:SetText("1")
       self:relayer()

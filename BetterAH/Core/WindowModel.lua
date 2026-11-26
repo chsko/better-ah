@@ -18,6 +18,7 @@ local SECTIONS = {
     { id = "crafting", label = "Crafting profit" },
   } },
   { title = "Data", entries = {
+    { id = "ledger", label = "Ledger" },
     { id = "prices", label = "Prices and history" },
     { id = "alts", label = "Alts and inventory" },
   } },

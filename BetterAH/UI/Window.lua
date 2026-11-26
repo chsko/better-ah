@@ -208,6 +208,10 @@ function Window:build()
     self.myAuctionsView = ns.MyAuctionsView.new(self, self.addon)
     self.myAuctionsPanel = self.myAuctionsView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
   end
+  if ns.LedgerView then
+    self.ledgerView = ns.LedgerView.new(self, self.addon)
+    self.ledgerPanel = self.ledgerView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
+  end
   if ns.SettingsView then
     self.settingsView = ns.SettingsView.new(self, self.addon)
     self.settingsPanel = self.settingsView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
@@ -1025,7 +1029,7 @@ function Window:renderView()
   local view = self.model.view
   self.placeholder:SetShown(view ~= "prices" and view ~= "alts" and view ~= "post" and view ~= "disenchant"
     and view ~= "settings" and not (view == "browse" and self.browsePanel)
-    and not (view == "auctions" and self.myAuctionsPanel))
+    and not (view == "auctions" and self.myAuctionsPanel) and not (view == "ledger" and self.ledgerPanel))
   self:widenMain(view == "browse" and self.browsePanel ~= nil and self.browseView:wide())
   if self.browsePanel then self.browsePanel:SetShown(view == "browse") end
   self.pricesPanel:SetShown(view == "prices")
@@ -1035,6 +1039,7 @@ function Window:renderView()
   if self.settingsPanel then self.settingsPanel:SetShown(view == "settings") end
   if self.myAuctionsPanel then self.myAuctionsPanel:SetShown(view == "auctions") end
   if view ~= "auctions" and self.myAuctionsView then self.myAuctionsView:hide() end
+  if self.ledgerPanel then self.ledgerPanel:SetShown(view == "ledger") end
   if view ~= "settings" and self.settingsView then self.settingsView:hide() end
   if view ~= "browse" and self.browseView then self.browseView:hide() end
   if view ~= "post" then
@@ -1056,6 +1061,8 @@ function Window:renderView()
     self.browseView:render()
   elseif view == "auctions" and self.myAuctionsView then
     if self.frame:IsShown() then self.myAuctionsView:show() end
+  elseif view == "ledger" and self.ledgerView then
+    self.ledgerView:show()
   else
     self.detailTitle:SetText("")
     self.detailBody:SetText("")

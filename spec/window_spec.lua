@@ -10,7 +10,7 @@ local function setup(opts)
   helper.load("BetterAH/Core/Buying.lua", ns)
   local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "ValueHistory", "Targets", "Sniper",
     "PriceDB", "CharacterRecords", "MatFloors", "Posting", "PostQueue", "SelfTest", "Probes", "Purchases",
-    "TooltipPrices", "MyAuctions" }
+    "TooltipPrices", "MyAuctions", "Ledger" }
   for _, file in ipairs(core) do
     helper.load("BetterAH/Core/" .. file .. ".lua", ns)
   end
@@ -31,6 +31,8 @@ local function setup(opts)
   helper.load("BetterAH/UI/BrowseView.lua", ns)
   helper.load("BetterAH/Game/MyAuctionsAPI.lua", ns)
   helper.load("BetterAH/UI/MyAuctionsView.lua", ns)
+  helper.load("BetterAH/Game/LedgerAPI.lua", ns)
+  helper.load("BetterAH/UI/LedgerView.lua", ns)
   helper.load("BetterAH/UI/Window.lua", ns)
   ns.prices = ns.PriceDB.new({})
   -- Auto scan (#30) is off unless a spec turns it on, so scans start only where a spec starts one.
@@ -46,6 +48,8 @@ local function setup(opts)
   ns.SnipeAPI.install(env, ns)
   ns.BrowseAPI.install(env, ns)
   ns.MyAuctionsAPI.install(env, ns)
+  ns.ledger = ns.Ledger.new({})
+  ns.LedgerAPI.install(env, ns)
   if opts and opts.tracker then
     helper.load("BetterAH/Game/CharacterTracker.lua", ns)
     ns.CharacterTracker.install(env, ns)
@@ -272,7 +276,7 @@ describe("Window", function()
     local last = results[#results]
     assert.equal("Better AH window", last.name)
     assert.equal("pass", last.status)
-    assert.equal("window created with 10 sidebar entries; close button CloseButton; auction house art found",
+    assert.equal("window created with 11 sidebar entries; close button CloseButton; auction house art found",
       last.detail)
   end)
 
@@ -281,7 +285,7 @@ describe("Window", function()
     local last = ns.Probes.suite():run(env, { db = {} })
     last = last[#last]
     assert.equal("pass", last.status)
-    assert.equal("window created with 10 sidebar entries; close button BetterAHFrameCloseButton; "
+    assert.equal("window created with 11 sidebar entries; close button BetterAHFrameCloseButton; "
       .. "auction house art found", last.detail)
   end)
 
@@ -299,7 +303,7 @@ describe("Window", function()
     local last = ns.Probes.suite():run(env, { db = {} })
     last = last[#last]
     assert.equal("pass", last.status)
-    assert.equal("window created with 10 sidebar entries; close button CloseButton; "
+    assert.equal("window created with 11 sidebar entries; close button CloseButton; "
       .. "art not checked (no C_Texture.GetAtlasInfo)", last.detail)
   end)
 
@@ -3469,5 +3473,113 @@ describe("Browse categories and filters", function()
     env.runTimers()
     local col = bar.columns[2]
     assert.equal("and 7 more", col[#col].text:GetText())
+  end)
+  describe("Ledger view", function()
+    local function open()
+      local env, w, ns = setup()
+      env.date, env.time = os.date, os.time
+      env.UnitName = function() return "Me" end
+      ns.CharacterTracker = ns.CharacterTracker or { characterKey = function() return "Me" end }
+      local now = env.now
+      ns.ledger:sale({ t = now - 60, char = "Me", name = "Large Brilliant Shard", n = 2, money = 20900 + 50, cut = 1100,
+        deposit = 50 })
+      ns.ledger:buy({ t = now - 120, char = "Me", name = "Ridge Cleaver", n = 1, c = 2210, src = "Snipe" })
+      ns.ledger:deposit({ t = now - 180, char = "Me", name = "Large Brilliant Shard", n = 2, c = 50 })
+      ns.ledger:buy({ t = now - 40 * 86400, char = "Alt", name = "Old", n = 1, c = 5 })
+      env.openAuctionHouse()
+      env.runTimers()
+      sidebarButton(w, "ledger"):Click()
+      return env, w, ns, w.ledgerView
+    end
+
+    it("is in the sidebar under Data", function()
+      local _, w = setup()
+      assert.equal("Ledger", w.model:label("ledger"))
+    end)
+
+    it("lists the last 7 days' entries, newest first, with totals on the right", function()
+      local _, w, _, v = open()
+      assert.is_true(w.ledgerPanel:IsShown())
+      assert.equal("Sold", v.entryRows[1][2]:GetText())
+      assert.equal("Large Brilliant Shard", v.entryRows[1][3]:GetText())
+      assert.matches("%+2g 9s 0c", v.entryRows[1][5]:GetText(), "after the cut")
+      assert.equal("Bought · Snipe", v.entryRows[2][2]:GetText())
+      assert.matches("%-22s 10c", v.entryRows[2][5]:GetText())
+      assert.equal("Deposit", v.entryRows[3][2]:GetText())
+      assert.is_false(v.entryRows[4].button:IsShown(), "the 40-day-old buy is outside 7 days")
+      assert.equal("Last 7 days, all characters", w.detailTitle:GetText())
+      local body = w.detailBody:GetText()
+      assert.matches("Sales %(1 auction%): |c%x+2g 20s 0c", body)
+      assert.matches("Purchases %(1 item%): |c%x+22s 10c", body)
+      assert.matches("Deposits kept by the AH: |c%x+0c", body, "the deposit came back with the sale")
+      assert.matches("%+1g 86s 90c", body, "22000 - 1100 - 2210 = 18690")
+    end)
+
+    it("filters money in and out, and changes period", function()
+      local _, _, _, v = open()
+      v.filterButtons["out"]:Click()
+      assert.equal("Bought · Snipe", v.entryRows[1][2]:GetText())
+      v.filterButtons["all"]:Click()
+      v.periodButtons["all"]:Click()
+      assert.equal("Old", v.entryRows[4][3]:GetText())
+    end)
+
+    it("shows one character only when asked", function()
+      local _, _, _, v = open()
+      v.periodButtons["all"]:Click()
+      assert.equal("All characters", v.charsButton:GetText())
+      v.charsButton:Click()
+      assert.equal("This character", v.charsButton:GetText())
+      assert.is_false(v.entryRows[4].button:IsShown(), "Alt's buy is left out")
+    end)
+
+    it("shows an entry's details when its row is clicked", function()
+      local _, w, _, v = open()
+      v.entryRows[1].button:Click()
+      assert.equal("Large Brilliant Shard", w.detailTitle:GetText())
+      assert.matches("2 units sold for 2g 20s 0c", w.detailBody:GetText())
+      assert.matches("AH cut: |c%x+11s 0c", w.detailBody:GetText())
+    end)
+
+    it("adds up each item on By item", function()
+      local _, w, _, v = open()
+      v.tabButtons["items"]:Click()
+      assert.is_true(v.itemList:IsShown())
+      assert.is_false(v.entryList:IsShown())
+      assert.equal("Large Brilliant Shard", v.itemRows[1][1]:GetText())
+      assert.matches("%+2g 9s 0c", v.itemRows[1][6]:GetText(), "sold 22000, cut 1100, deposit back")
+      assert.equal("Ridge Cleaver", v.itemRows[2][1]:GetText())
+      v.itemRows[2].button:Click()
+      assert.equal("Ridge Cleaver", w.detailTitle:GetText())
+      assert.matches("1 for |c%x+22s 10c", w.detailBody:GetText())
+    end)
+
+    it("draws a column per day on By day", function()
+      local _, w, _, v = open()
+      v.tabButtons["days"]:Click()
+      assert.is_true(v.chart:IsShown())
+      assert.equal(7, #v.columns)
+      local today = v.columns[7]
+      assert.is_true(today.up:IsShown())
+      assert.is_true(today.down:IsShown())
+      assert.is_false(v.columns[1].up:IsShown())
+      today:Click()
+      assert.matches("Net: |c%x+%+1g 86s 90c", w.detailBody:GetText())
+    end)
+
+    it("redraws when something is recorded while it is on screen", function()
+      local _, _, ns, v = open()
+      ns.ledgerAPI:bought(1, "New thing", 1, 100, "Browse")
+      assert.equal("New thing", v.entryRows[1][3]:GetText())
+    end)
+
+    it("says how sales are counted while it is empty", function()
+      local env, w = setup()
+      env.date, env.time = os.date, os.time
+      env.openAuctionHouse()
+      env.runTimers()
+      sidebarButton(w, "ledger"):Click()
+      assert.matches("take their gold", w.ledgerView.empty:GetText())
+    end)
   end)
 end)

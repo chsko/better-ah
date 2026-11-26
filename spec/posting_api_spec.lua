@@ -38,6 +38,22 @@ describe("PostingAPI", function()
     assert.same({ itemID = 2589, itemLevel = 0, itemSuffix = 0, battlePetSpeciesID = 0 }, entries[1].itemKey)
   end)
 
+  it("keeps an item's kind from an earlier read while its data loads again (#82)", function()
+    local env, _, ns = setup()
+    local asked = {}
+    env.C_Item = { RequestLoadItemDataByID = function(id) asked[#asked + 1] = id end }
+    env.containers[0] = { { itemID = 9, count = 2, name = "Not Loaded", unknown = true },
+      { itemID = 9, count = 3, name = "Not Loaded", unknown = true } }
+    local once = {}
+    assert.same({}, ns.PostingAPI.readBags(env, {}, once))
+    assert.same({}, ns.PostingAPI.readBags(env, {}, once))
+    assert.same({ 9 }, asked, "asked once, not per slot or per read")
+    local entries = ns.PostingAPI.readBags(env, { ["i:9"] = true })
+    assert.equal(1, #entries)
+    assert.equal(5, entries[1].have)
+    assert.is_true(entries[1].commodity)
+  end)
+
   it("says what is missing on a client without the functions", function()
     local env, _, ns = setup()
     env.ItemLocation = nil

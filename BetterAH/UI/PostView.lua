@@ -191,8 +191,22 @@ function PostView:build(f, x, y, width, height)
 
   self:buildEditor()
   self.events = env.CreateFrame("Frame")
-  self.events:SetScript("OnEvent", function() self:refresh() end)
+  self.events:SetScript("OnEvent", function(_, event, itemID)
+    if event ~= "ITEM_DATA_LOAD_RESULT" then return self:refresh() end
+    -- Only items this view asked for, and one re-read for a burst of them: the event fires for every
+    -- item load in the client, and can fire inside the request itself.
+    if not (self.asked and self.asked[itemID]) or self.reread then return end
+    self.reread = true
+    local timer = self.env.C_Timer
+    if not (timer and timer.After) then self.reread = nil return end
+    timer.After(0, function()
+      self.reread = nil
+      self:refresh()
+    end)
+  end)
   pcall(self.events.RegisterEvent, self.events, "BAG_UPDATE_DELAYED")
+  -- An item's data arriving can bring an item into the list that a read left out (#82).
+  pcall(self.events.RegisterEvent, self.events, "ITEM_DATA_LOAD_RESULT")
   return panel
 end
 
@@ -468,7 +482,7 @@ function PostView:open()
   self.queue.filter = self:filter()
   self.ruleShown = nil
   self.selected, self.offset, self.message, self.searching, self.busy = nil, 0, nil, {}, nil
-  self.recorded = {}
+  self.recorded, self.known, self.asked = {}, {}, {}
   self:dropConfirm()
   if api then
     api.onPosted = function(ok) self:posted(ok) end
@@ -508,7 +522,11 @@ function PostView:refresh()
   -- A post is done once the game took it and the bags show it gone.
   if self.busy and self.busy.posted then self.busy = nil end
   local api = self.addon.postingAPI
-  local entries, why = ns.PostingAPI.readBags(self.env)
+  -- Items whose data isn't loaded keep the kind an earlier read of this visit saw (#82).
+  self.known = self.known or {}
+  self.asked = self.asked or {}
+  local entries, why = ns.PostingAPI.readBags(self.env, self.known, self.asked)
+  for _, e in ipairs(entries or {}) do self.known[e.item] = e.commodity end
   self.unavailable = not entries and why or nil
   local need = self.queue:setEntries(entries or {})
   if api then

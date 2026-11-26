@@ -47,9 +47,12 @@ end
 -- The items in the bags that the auction house accepts, sorted by name:
 --   { item = "i:id", itemID, name, have, commodity, itemKey, maxStack,
 --     slots = { { bag, slot, location, count } } }
--- Locked slots (mid-post or being moved) and items whose commodity status isn't known yet are left out;
--- they show up on the next read. Returns nil and a reason when the client lacks a needed function.
-function PostingAPI.readBags(env)
+-- Locked slots (mid-post or being moved) are left out; they show up on the next read. An item whose
+-- commodity status the client doesn't know yet (its data isn't loaded) takes it from known[item], what
+-- an earlier read said (#82), else it is left out and its data is asked for once: asked[itemID] is set,
+-- and ITEM_DATA_LOAD_RESULT follows. Pass the same asked table across reads so an item whose data
+-- never loads isn't asked for again. Returns nil and a reason when the client lacks a needed function.
+function PostingAPI.readBags(env, known, asked)
   local container, ah, loc = env.C_Container, env.C_AuctionHouse, env.ItemLocation
   if not (container and container.GetContainerNumSlots and container.GetContainerItemInfo) then
     return nil, "C_Container is missing"
@@ -59,6 +62,7 @@ function PostingAPI.readBags(env)
     return nil, "C_AuctionHouse.IsSellItemValid, GetItemKeyFromItem, GetItemCommodityStatus or ItemLocation is missing"
   end
   local byItem, out = {}, {}
+  asked = asked or {}
   for _, bag in ipairs(PostingAPI.BAGS) do
     for slot = 1, try(container.GetContainerNumSlots, bag) or 0 do
       local info = try(container.GetContainerItemInfo, bag, slot)
@@ -66,8 +70,17 @@ function PostingAPI.readBags(env)
         local location = try(loc.CreateFromBagAndSlot, loc, bag, slot)
         local valid = location and try(ah.IsSellItemValid, location, false)
         local status = valid and try(ah.GetItemCommodityStatus, location)
+        local item = "i:" .. info.itemID
+        if valid and status ~= ITEM and status ~= COMMODITY then
+          if known and known[item] ~= nil then
+            status = known[item] and COMMODITY or ITEM
+          elseif not asked[info.itemID] then
+            asked[info.itemID] = true
+            local items = env.C_Item
+            if items and items.RequestLoadItemDataByID then try(items.RequestLoadItemDataByID, info.itemID) end
+          end
+        end
         if status == ITEM or status == COMMODITY then
-          local item = "i:" .. info.itemID
           local entry = byItem[item]
           if not entry then
             entry = {

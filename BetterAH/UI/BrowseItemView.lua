@@ -382,7 +382,7 @@ function ItemView:quote()
     self.busy = nil
     if not unit then
       self.quoting = nil
-      return self:say("No price: " .. tostring(total) .. ".")
+      return self:say("No price: " .. tostring(total) .. ". Click Buy to try again.")
     end
     self.quoted = { quantity = qty, unit = unit, total = total, shown = shown,
       change = ns.Buying.quote(shown, total) }

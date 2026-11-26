@@ -268,7 +268,10 @@ function DebugHooks.onEvent(event, ...)
   if event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
     local who, what = ...
     if who ~= nil and who ~= addonName then return end
-    add("blocked", "%s %s", event, tostring(what))
+    -- The event fires inside the blocked call, so the stack shows which line of ours made it (#112).
+    -- Both ends are kept: Blizzard frames in the middle can't push ours out. The log turns newlines into " / ".
+    local stack = try(_G.debugstack, 3, 20, 20)
+    add("blocked", "%s %s%s", event, tostring(what), stack and ("\n" .. stack) or "")
   elseif event == "UI_ERROR_MESSAGE" then
     local w = ns.postingAPI
     if not (w and w.open) then return end

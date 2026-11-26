@@ -45,6 +45,16 @@ describe("DebugHooks (#99)", function()
     assert.matches("%[blocked%] ADDON_ACTION_BLOCKED PlaceBid%(%)", text)
   end)
 
+  it("logs the stack of a block, which names the line that made the call (#112)", function()
+    local _, _, ns = setup(true)
+    local saved = _G.debugstack
+    _G.debugstack = function() return "BetterAH/Game/BrowseAPI.lua:201: in quoteCommodity\nOnClick" end
+    ns.DebugHooks.onEvent("ADDON_ACTION_BLOCKED", "BetterAH", "UNKNOWN()")
+    _G.debugstack = saved
+    local text = table.concat(ns.debugLog.saved.lines, "\n")
+    assert.truthy(text:find("UNKNOWN() / BetterAH/Game/BrowseAPI.lua:201: in quoteCommodity / OnClick", 1, true))
+  end)
+
   it("logs Lua errors naming the addon and still hands them on", function()
     local env, _, ns = setup(false)
     local handed = {}

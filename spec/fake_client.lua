@@ -64,6 +64,7 @@ function Frame:Disable() self.enabled = false end
 function Frame:IsEnabled() return self.enabled ~= false end
 function Frame:SetText(t) self.text = t end
 function Frame:GetText() return self.text end
+function Frame:GetStringWidth() return #(self.text or "") * 6 end -- roughly, 6 px a character
 function Frame:LockHighlight() self.highlighted = true end
 function Frame:SetAutoFocus() end
 function Frame:SetNumeric(on) self.numeric = on end

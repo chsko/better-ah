@@ -327,11 +327,17 @@ describe("Window", function()
       assert.equal(1, scans)
       assert.equal("Scanning the auction house...", w.scanStateText:GetText())
       assert.is_true(w.scanSpinner:IsShown())
+      -- Just left of the right-aligned text, not of the whole box.
+      local at = w.scanSpinner.points.RIGHT
+      assert.equal(w.scanStateText, at.rel)
+      assert.equal(-(#"Scanning the auction house..." * 6) - 6, at.x)
       env.replicateSilent = false
       env.fire("REPLICATE_ITEM_LIST_UPDATE")
       env.runTimers(5)
       assert.equal("Scanned just now. Next scan in 15 min.", w.scanStateText:GetText())
       assert.is_false(w.scanSpinner:IsShown())
+      assert.equal(-(#"Scanned just now. Next scan in 15 min." * 6) - 6, w.scanSpinner.points.RIGHT.x,
+        "moves with the text")
       env.runTimers(14 * 60)
       assert.equal(1, scans, "not before 15 minutes")
       env.runTimers(60)

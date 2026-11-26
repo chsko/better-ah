@@ -608,9 +608,12 @@ function SnipeView:buyNext(source)
     self.message = "Can't buy " .. find.name .. ": " .. why .. "."
     return self:refresh()
   end
+  -- PlaceBid goes first and the view is redrawn after it (#130), as Browse does since #120: with the redraw
+  -- first (the Buy button greyed to "Buying..."), the game blocked PlaceBid from the click and the wheel
+  -- in game, and Browse's purchase stopped being blocked once it sent first. The cause is believed, not
+  -- proven. self.buying is set first so a second notch in the same moment doesn't buy twice.
   self.buying = find
   self.message = nil
-  self:refresh()
   -- The answer counts in the session the buy was made in, even after Stop or a new Start.
   local session = self.session
   api:buy(find.auctionID, find.price, function(bought, failure, kind)
@@ -625,6 +628,7 @@ function SnipeView:buyNext(source)
     end
     self:refresh()
   end, source)
+  self:refresh()
 end
 
 function SnipeView:passNext()

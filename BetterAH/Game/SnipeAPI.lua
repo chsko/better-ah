@@ -13,6 +13,8 @@ local SnipeAPI = {}
 SnipeAPI.__index = SnipeAPI
 
 SnipeAPI.TIMEOUT = 10
+-- Enum.AuctionHouseError.ItemNotFound, the code AUCTION_HOUSE_SHOW_ERROR carries when the auction is gone.
+SnipeAPI.ITEM_NOT_FOUND = Enum and Enum.AuctionHouseError and Enum.AuctionHouseError.ItemNotFound or 4
 -- The auction house answers a browse a page at a time (500 results here). A check reads the first page
 -- and up to this many more, so cheap listings past the first page are seen too.
 SnipeAPI.MAX_PAGES = 10
@@ -121,7 +123,9 @@ end
 -- became of the auction (#96):
 --   "unsent"   PlaceBid was never sent, or the game blocked it: the auction is untouched, buy again.
 --   "unknown"  sent, but no answer came: it may still be listed.
---   "refused"  the auction house said no (sold to someone else, or an error).
+--   "gone"     the auction house couldn't find the auction (Enum.AuctionHouseError.ItemNotFound): it was
+--              sold to someone else or taken down, and others from the same lookup may be gone too (#130).
+--   "refused"  the auction house said no for another reason.
 --   "closed"   the auction house closed.
 -- One buy at a time. A confirmation that comes after the timeout calls done(true) again, so the spend
 -- still counts.
@@ -236,7 +240,11 @@ function SnipeAPI:onEvent(event, arg, arg2)
     end
   elseif event == "AUCTION_HOUSE_SHOW_ERROR" then
     if self.buying then
-      self:finishBuy(self.buying, false, "sold to someone else, or the auction house refused", "refused")
+      if arg == SnipeAPI.ITEM_NOT_FOUND then
+        self:finishBuy(self.buying, false, "already gone (sold to someone else, or taken down)", "gone")
+      else
+        self:finishBuy(self.buying, false, "sold to someone else, or the auction house refused", "refused")
+      end
     end
   elseif event == "AUCTION_HOUSE_CLOSED" then
     if self.browsing then self:finishBrowse(self.browsing, nil, "the auction house closed") end

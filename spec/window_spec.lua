@@ -1435,6 +1435,39 @@ describe("Window", function()
         w.detailBody:GetText(), 1, true)
     end)
 
+    it("tries failed price checks again later and after a full scan, and rereads an empty bag read (#82)", function()
+      local env, w, ns = postSetup()
+      ns.posting:setFilter("mats")
+      env.containers[1] = { { itemID = 10998, count = 4, name = "Lesser Astral Essence" } }
+      env.searchSilent = true -- no answer
+      env.openAuctionHouse()
+      env.runTimers(11)
+      local pv = w.postView
+      assert.equal("failed", pv.queue:rows()[1].state)
+      env.searchSilent = false
+      env.listings[10998] = { { unitPrice = 1800, quantity = 60 } }
+      env.runTimers(ns.PostView.RETRY)
+      assert.are_not.equal("failed", pv.queue:rows()[1].state, "looked up again by itself")
+      assert.matches("on post: 4 items, 1 mats", table.concat(pv:debugLines(), "\n"), 1, true)
+
+      -- A read that finds the bags empty all of a sudden is read again a moment later.
+      local saved = env.containers
+      env.containers = { [0] = {}, [1] = {} }
+      pv:refresh()
+      assert.equal("Disenchant mats (1)", pv.filterButtons.mats:GetText(), "the empty read isn't taken")
+      env.containers = saved
+      env.runTimers(1)
+      assert.equal("Disenchant mats (1)", pv.filterButtons.mats:GetText())
+
+      -- Read again after 1, 2, 4 and 8 seconds; then the bags are taken to be empty.
+      env.containers = { [0] = {}, [1] = {} }
+      pv:refresh()
+      env.runTimers(7)
+      assert.equal("Disenchant mats (1)", pv.filterButtons.mats:GetText(), "still waiting")
+      env.runTimers(8)
+      assert.equal("Disenchant mats (0)", pv.filterButtons.mats:GetText())
+    end)
+
     it("doesn't count partial search results", function()
       local env, _, ns = setup()
       env.containers[0] = { linen }

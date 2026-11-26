@@ -488,7 +488,7 @@ function PostView:open()
   self.queue.filter = self:filter()
   self.ruleShown = nil
   self.selected, self.offset, self.message, self.searching, self.busy = nil, 0, nil, {}, nil
-  self.recorded, self.known, self.asked = {}, {}, {}
+  self.recorded, self.known, self.asked, self.tries, self.pending, self.emptyTries = {}, {}, {}, {}, {}, nil
   self:dropConfirm()
   if api then
     api.onPosted = function(ok, _, event) self:posted(ok, event) end
@@ -510,7 +510,7 @@ end
 -- The auction house closed: the next visit starts a new queue (and forgets skipped items).
 function PostView:reset()
   self:dropConfirm()
-  self.queue, self.busy = nil, nil
+  self.queue, self.busy, self.pending, self.emptyTries = nil, nil, {}, nil
   if self.editor then self.editor:Hide() end
   if self.ruleEditor then self.ruleEditor:Hide() end
 end
@@ -533,11 +533,22 @@ function PostView:refresh()
   self.asked = self.asked or {}
   local entries, why = ns.PostingAPI.readBags(self.env, self.known, self.asked)
   for _, e in ipairs(entries or {}) do self.known[e.item] = e.commodity end
+  self:logRead(entries, why)
+  -- A read that suddenly finds nothing is taken as the bags being busy (#82): read again after 1, 2, 4
+  -- and 8 seconds before believing it.
+  local before = self.queue.all and #self.queue.all or 0
+  if entries and #entries == 0 and before > 0 and (self.emptyTries or 0) < 4 then
+    self.emptyTries = (self.emptyTries or 0) + 1
+    self:later(2 ^ (self.emptyTries - 1), "reread")
+    return self:render()
+  end
+  self.emptyTries = nil
   self.unavailable = not entries and why or nil
   local need = self.queue:setEntries(entries or {})
   if api then
+    self.tries = self.tries or {}
     for _, e in ipairs(need) do
-      if not self.searching[e.item] then
+      if not self.searching[e.item] and (self.tries[e.item] or 0) <= PostView.RETRIES then
         self.searching[e.item] = true
         local queue = self.queue
         api:search(e, function(listings, reason)
@@ -553,13 +564,74 @@ function PostView:refresh()
             -- Only once it counted, so a later check that sees more listings can still count.
             self.recorded[e.item] = prices:recordSearch(self.key, self:now(), e.item, listings, e.name) or nil
           end
-          if listings then queue:setListings(e.item, listings) else queue:setListings(e.item, nil, reason) end
+          if listings then
+            queue:setListings(e.item, listings)
+          else
+            queue:setListings(e.item, nil, reason)
+            -- Look it up again by itself a little later (#82), not only when the bags change; a few
+            -- times per visit, as each try that gets no answer holds the search queue for a while.
+            self.tries[e.item] = (self.tries[e.item] or 0) + 1
+            if self.tries[e.item] <= PostView.RETRIES then self:later(PostView.RETRY, "retry") end
+          end
           self:render()
         end)
       end
     end
   end
   self:render()
+end
+
+PostView.RETRY = 15 -- seconds before failed price checks are tried again
+PostView.RETRIES = 3 -- tries again per item per visit
+PostView.LOG = 20 -- bag reads kept for /bah bags
+
+-- Runs refresh after a delay, once for any number of calls with the same tag in the meantime.
+function PostView:later(seconds, tag)
+  local timer = self.env.C_Timer
+  self.pending = self.pending or {}
+  if self.pending[tag] or not (timer and timer.After) then return end
+  self.pending[tag] = true
+  local queue = self.queue
+  timer.After(seconds, function()
+    self.pending[tag] = nil
+    if queue == self.queue then self:refresh() end
+  end)
+end
+
+-- What the last bag reads found, for /bah bags (#82): when, how many items, and the failure if any.
+function PostView:logRead(entries, why)
+  self.reads = self.reads or {}
+  local mats = 0
+  for _, e in ipairs(entries or {}) do
+    if ns.MatFloors and ns.MatFloors.material(e.item) then mats = mats + 1 end
+  end
+  local view = self.window.model and self.window.model.view
+  table.insert(self.reads, 1, { at = self:now(), items = entries and #entries, mats = mats, why = why, view = view })
+  self.reads[PostView.LOG + 1] = nil
+end
+
+-- Lines for /bah bags: the last bag reads, newest first, and the queue's rows.
+function PostView:debugLines()
+  local lines, now = {}, self:now()
+  for _, r in ipairs(self.reads or {}) do
+    lines[#lines + 1] = string.format("read %ds ago on %s: %s items, %d mats%s", now - r.at, tostring(r.view),
+      tostring(r.items), r.mats, r.why and (" (" .. r.why .. ")") or "")
+  end
+  if self.queue then
+    lines[#lines + 1] = "filter " .. self.queue.filter
+    for _, row in ipairs(self.queue:rows()) do
+      lines[#lines + 1] = string.format("%s: %s%s", row.name or row.item, row.state,
+        row.reason and (" (" .. tostring(row.reason) .. ")") or "")
+    end
+  else
+    lines[#lines + 1] = "no post queue (auction house closed?)"
+  end
+  return lines
+end
+
+-- A failed lookup that hasn't been tried again since the scan: a full scan just ended, try it now.
+function PostView:scanEnded()
+  self:refresh()
 end
 
 function PostView:scroll(by)

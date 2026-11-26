@@ -9,6 +9,14 @@ AuctionAPI.__index = AuctionAPI
 
 AuctionAPI.TIMEOUT = 120
 
+-- The server answers one full scan (ReplicateItems) per 15 minutes per Battle.net account, whichever
+-- addon or character asks (#114). A request inside that window gets no answer at all.
+AuctionAPI.THROTTLE = 15 * 60
+
+-- An answer nobody here asked for (another addon's request) is read as our scan, but repeat events for
+-- one answer within this many seconds are not read again.
+AuctionAPI.ANSWER_GAP = 60
+
 -- How often the replicate list is checked directly, in case the update event never comes.
 AuctionAPI.POLL = 1
 
@@ -26,12 +34,57 @@ AuctionAPI.NEUTRAL_MAPS = { [1446] = "Gadgetzan", [1434] = "Booty Bay", [1452] =
 
 -- env is the game's global table (_G in the client, a fake in specs).
 function AuctionAPI.new(env)
-  local self = setmetatable({ env = env }, AuctionAPI)
+  -- store: { askedAt, askedBy, answeredAt }: the last full scan request, ours ("us") or another addon's
+  -- ("other"), and when the server last answered one (for any addon).
+  local self = setmetatable({ env = env, store = {} }, AuctionAPI)
   self.events = env.CreateFrame("Frame")
   self.events:SetScript("OnEvent", function(_, event, ...) self:onEvent(event, ...) end)
   self.events:RegisterEvent("AUCTION_HOUSE_SHOW")
   self.events:RegisterEvent("AUCTION_HOUSE_CLOSED")
+  -- Always watched: the answer to another addon's request lands in the same replicate list.
+  self.events:RegisterEvent("REPLICATE_ITEM_LIST_UPDATE")
+  self:hookReplicate()
   return self
+end
+
+-- Keeps the last full scan request in saved variables, so the 15-minute wait survives a reload and a
+-- change of character (the limit is per account, like BetterAHDB). A request noted before the saved
+-- variables loaded is kept when it is newer.
+function AuctionAPI:useStore(store)
+  local early = self.store
+  self.store = store
+  if early.askedAt and (tonumber(store.askedAt) or 0) < early.askedAt then
+    store.askedAt, store.askedBy = early.askedAt, early.askedBy
+  end
+  if early.answeredAt and (tonumber(store.answeredAt) or 0) < early.answeredAt then
+    store.answeredAt = early.answeredAt
+  end
+end
+
+-- When the last full scan was asked for (server time) and by whom ("us" or "other"), or nil; and when
+-- the server last answered one, or nil.
+function AuctionAPI:lastAsk()
+  return tonumber(self.store.askedAt), self.store.askedBy, tonumber(self.store.answeredAt)
+end
+
+function AuctionAPI:noteAsk(by)
+  self.store.askedAt, self.store.askedBy = self:now(), by
+end
+
+-- Notices every ReplicateItems call, also other addons' (ForeverForge, TSM, Auctionator), because they
+-- use up the same 15 minutes. hooksecurefunc runs after the call and leaves it untouched.
+function AuctionAPI:hookReplicate()
+  local C, hook = self.env.C_AuctionHouse, self.env.hooksecurefunc
+  if not (C and type(C.ReplicateItems) == "function" and type(hook) == "function") then return end
+  pcall(hook, C, "ReplicateItems", function() self:onReplicateCall() end)
+end
+
+-- Another addon asked for a full scan: onOtherScan() is told, so the next scan of ours moves. Whether the
+-- server answers it shows when REPLICATE_ITEM_LIST_UPDATE comes (onOtherAnswer).
+function AuctionAPI:onReplicateCall()
+  if self.asking then return end
+  self:noteAsk("other")
+  if self.onOtherScan then pcall(self.onOtherScan) end
 end
 
 local function nonEmpty(value)
@@ -150,7 +203,9 @@ end
 -- Starts a full scan. onDone(listings, info) gets listings plus
 -- { listings, incomplete, skipped, seconds } on success, or (nil, message) on failure.
 -- Returns true when the scan started, or false and a message.
-function AuctionAPI:scan(onDone)
+-- opts.listen: don't ask; read the answer to another addon's request, which has just come.
+function AuctionAPI:scan(onDone, opts)
+  local listen = opts and opts.listen
   local C = self.env.C_AuctionHouse
   if self.pending then return false, "A scan is already running." end
   if not self.open then return false, "Open the auction house to scan." end
@@ -160,22 +215,38 @@ function AuctionAPI:scan(onDone)
   -- The client keeps the last replicate list, so remember its size: polling only accepts a
   -- list that differs from it, never an old one left over from an earlier or throttled scan.
   local pending = { onDone = onDone, started = self:now(), seen = {}, order = {}, first = {}, unknown = {},
-    before = try(C.GetNumReplicateItems) or 0, stable = 0 }
+    before = try(C.GetNumReplicateItems) or 0, stable = 0, listen = listen or nil }
   self.pending = pending
   for _, event in ipairs(AuctionAPI.TRACE_EVENTS) do
     if not pcall(self.events.RegisterEvent, self.events, event) then pending.unknown[#pending.unknown + 1] = event end
   end
-  local ok, err = pcall(C.ReplicateItems)
+  local ok, err = true, nil
+  if not listen then
+    self.asking = true
+    ok, err = pcall(C.ReplicateItems)
+    self.asking = false
+    -- Noted even when no answer comes: the server may count the request, so the next one waits 15 minutes.
+    if ok then self:noteAsk("us") end
+  end
   if not ok then
     self:finish(nil, "The auction house refused the scan: " .. tostring(err))
     return false, "The auction house refused the scan: " .. tostring(err)
+  end
+  if listen then
+    -- An event with an empty list is no answer: don't record it as a scan.
+    if pending.before == 0 then
+      self:finish(nil, "Another addon's full scan came back empty.")
+      return true
+    end
+    self:complete("another addon's request")
+    return true
   end
   if self.env.C_Timer then
     self:poll(pending)
     self.env.C_Timer.After(AuctionAPI.TIMEOUT, function()
       if self.pending == pending then
         self:finish(nil, "No reply from the auction house after " .. AuctionAPI.TIMEOUT
-          .. " seconds. Full scans may be limited to one every 15 minutes; try again later. "
+          .. " seconds. The server answers one full scan per 15 minutes per account, for all addons. "
           .. self:diagnosis(pending))
       end
     end)
@@ -217,11 +288,15 @@ end
 function AuctionAPI:finish(listings, info)
   local pending = self.pending
   self.pending = nil
-  for _, event in ipairs(AuctionAPI.TRACE_EVENTS) do pcall(self.events.UnregisterEvent, self.events, event) end
+  for _, event in ipairs(AuctionAPI.TRACE_EVENTS) do
+    -- REPLICATE_ITEM_LIST_UPDATE stays registered (another addon's answers).
+    if event ~= "REPLICATE_ITEM_LIST_UPDATE" then pcall(self.events.UnregisterEvent, self.events, event) end
+  end
   if pending and pending.onDone then pending.onDone(listings, info) end
 end
 
 function AuctionAPI:complete(via)
+  self.store.answeredAt = self:now()
   local listings, info = self:readReplicate()
   info.seconds = self:now() - self.pending.started
   info.via = via
@@ -256,6 +331,9 @@ function AuctionAPI:readReplicate()
 end
 
 function AuctionAPI:onEvent(event, ...)
+  if event == "REPLICATE_ITEM_LIST_UPDATE" and not self.pending then
+    return self:onUnaskedAnswer()
+  end
   if event == "AUCTION_HOUSE_SHOW" then
     self.open = true
     return
@@ -281,9 +359,18 @@ function AuctionAPI:onEvent(event, ...)
   if event == "REPLICATE_ITEM_LIST_UPDATE" then self:complete("event") end
 end
 
+-- A full scan answer came while no scan of ours waited: another addon's request (or a late answer to one
+-- of ours). It used up the 15 minutes either way; onOtherAnswer() may read it as our scan.
+function AuctionAPI:onUnaskedAnswer()
+  local now, answered = self:now(), tonumber(self.store.answeredAt)
+  if answered and now - answered < AuctionAPI.ANSWER_GAP then return end
+  self.store.answeredAt = now
+  if self.open and self.onOtherAnswer then pcall(self.onOtherAnswer) end
+end
+
 -- Runs a scan of the current market into the price database and keeps a report for the
--- self-test. onDone(ok, message) is called when it ends.
-function AuctionAPI.scanIntoPrices(addon, onDone)
+-- self-test. onDone(ok, message) is called when it ends. opts as for AuctionAPI:scan.
+function AuctionAPI.scanIntoPrices(addon, onDone, opts)
   local api = addon.auctionAPI
   local key, why = AuctionAPI.currentMarket(api.env)
   if not key then return false, why end
@@ -309,9 +396,9 @@ function AuctionAPI.scanIntoPrices(addon, onDone)
         first and string.format("%s x%s for %s", tostring(first.name or first.item), tostring(first.count),
           tostring(first.buyout)) or "none"),
     }
-    onDone(true, string.format("Scanned %d listings of %d items in %d seconds.", info.listings, items,
-      info.seconds))
-  end)
+    onDone(true, string.format("%s %d listings of %d items in %d seconds.",
+      opts and opts.listen and "Read another addon's full scan:" or "Scanned", info.listings, items, info.seconds))
+  end, opts)
 end
 
 function AuctionAPI.install(env, addon)

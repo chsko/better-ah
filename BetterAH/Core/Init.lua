@@ -19,6 +19,8 @@ frame:SetScript("OnEvent", function(self, event, loadedName)
     if ns.Posting then ns.posting = ns.Posting.Settings.new(BetterAHDB.posting) end
     BetterAHDB.disenchant = BetterAHDB.disenchant or {}
     ns.disenchant = BetterAHDB.disenchant
+    BetterAHDB.fullScan = BetterAHDB.fullScan or {}
+    if ns.auctionAPI then ns.auctionAPI:useStore(BetterAHDB.fullScan) end
     self:UnregisterEvent("ADDON_LOADED")
   end
 end)

@@ -263,4 +263,64 @@ describe("AuctionAPI", function()
     assert.is_false(ok)
     assert.equal("This client can't do a full scan (C_AuctionHouse.ReplicateItems is missing).", why)
   end)
+
+  describe("the 15-minute full scan limit (#114)", function()
+    -- hooksecurefunc as the client does it: the original runs first, then the hook, with the same arguments.
+    local function hooked()
+      local env, api, ns = setup()
+      env.hooksecurefunc = function(t, name, fn)
+        local orig = t[name]
+        t[name] = function(...) orig(...) fn(...) end
+      end
+      api:hookReplicate()
+      return env, api, ns
+    end
+
+    it("notes our own requests, other addons' ones, and the server's answers", function()
+      local env, api = hooked()
+      local told = 0
+      api.onOtherScan = function() told = told + 1 end
+      assert.is_true(api:scan(function() end))
+      assert.same({ env.now, "us" }, { api:lastAsk() })
+      assert.equal(0, told, "our own request isn't another addon's")
+      env.runTimers()
+      assert.equal(env.now, select(3, api:lastAsk()), "answered")
+      env.now = env.now + 60
+      env.C_AuctionHouse.ReplicateItems()
+      assert.equal(1, told)
+      assert.same({ env.now, "other", env.now - 60 }, { api:lastAsk() })
+    end)
+
+    it("offers another addon's answer when it comes, once, and keeps the event watched after our scan", function()
+      local env, api = hooked()
+      env.auctions = { { name = "Linen Cloth", count = 20, buyout = 4000, itemID = 2589 } }
+      api:scan(function() end)
+      env.runTimers()
+      local offered = 0
+      api.onOtherAnswer = function() offered = offered + 1 end
+      env.now = env.now + 20 * 60
+      env.C_AuctionHouse.ReplicateItems()
+      env.runTimers()
+      assert.equal(1, offered)
+      assert.equal(env.now, select(3, api:lastAsk()))
+      env.fire("REPLICATE_ITEM_LIST_UPDATE")
+      assert.equal(1, offered, "a repeat event for the same answer")
+      local calls, got = env.replicateCalls, nil
+      assert.is_true(api:scan(function(listings) got = listings end, { listen = true }))
+      assert.equal(calls, env.replicateCalls, "reading it asks for nothing")
+      assert.equal(1, #got)
+      assert.is_nil(api.pending)
+    end)
+
+    it("keeps the last request in saved variables, and a newer one noted before they loaded", function()
+      local env, api = setup()
+      api:scan(function() end)
+      local saved = { askedAt = env.now - 3600, askedBy = "other", answeredAt = env.now - 3600 }
+      api:useStore(saved)
+      assert.same({ askedAt = env.now, askedBy = "us", answeredAt = env.now - 3600 }, saved)
+      local newer = { askedAt = env.now + 5, askedBy = "other" }
+      api:useStore(newer)
+      assert.same({ env.now + 5, "other", env.now - 3600 }, { api:lastAsk() })
+    end)
+  end)
 end)

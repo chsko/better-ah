@@ -77,4 +77,33 @@ describe("DebugHooks (#99)", function()
     ns.DebugHooks.setOn(env, true)
     assert.matches("Lua errors can't be logged", table.concat(ns.debugLog.saved.lines, "\n"))
   end)
+
+  for _, on in ipairs({ false, true }) do
+    it("passes a listening full scan through with the log " .. (on and "on" or "off") .. " (#114)", function()
+      local env, _, ns = setup(on)
+      helper.load("BetterAH/Core/MarketKey.lua", ns)
+      helper.load("BetterAH/Game/AuctionAPI.lua", ns)
+      local api = ns.AuctionAPI.install(env, ns)
+      ns.DebugHooks.install(env, ns)
+      env.hooksecurefunc = function(t, name, fn)
+        local orig = t[name]
+        t[name] = function(...) orig(...) fn(...) end
+      end
+      api:hookReplicate()
+      env.openAuctionHouse()
+      env.auctions = { { name = "Linen Cloth", count = 20, buyout = 4000, itemID = 2589 } }
+      env.C_AuctionHouse.ReplicateItems()
+      env.runTimers()
+      local got
+      assert.is_true(api:scan(function(listings) got = listings end, { listen = true }))
+      assert.equal(1, env.replicateCalls, "only the other addon's request")
+      assert.equal(1, #got)
+      local text = table.concat(ns.debugLog.saved.lines, "\n")
+      if on then
+        assert.matches("another addon asked for a full scan", text, 1, true)
+        assert.matches("reading another addon's full scan", text, 1, true)
+        assert.matches("a full scan answer came that we didn't ask for", text, 1, true)
+      end
+    end)
+  end
 end)

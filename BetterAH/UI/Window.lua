@@ -672,10 +672,20 @@ end
 -- Looks up each disenchant material's listings (one search each, in the same queue as the Post view's
 -- checks) and records other sellers' listings like a full scan of those items, without counting as a
 -- full scan of the market.
+Window.MATERIALS_WAIT = "A full scan is running. Scan materials when it is done."
+
 function Window:scanMaterials()
   local addon = self.addon
   local api, key = addon.postingAPI, self:market()
   if self.materialScan then return end
+  -- Not beside a full scan: both would share the auction house's one query pipe, and the full scan
+  -- reads these materials anyway. The full scan waits for a materials scan the same way.
+  if addon.auctionAPI and addon.auctionAPI.pending then
+    self.statusMarket, self.materialMarket = key, key
+    self.statusText = Window.MATERIALS_WAIT
+    self.materialStatus = self.statusText
+    return self:renderMaterials()
+  end
   self.statusMarket, self.materialMarket = key, key
   if not (api and api.open and addon.prices and key) then
     self.statusText = "Open the auction house to scan materials."
@@ -745,8 +755,10 @@ function Window:renderMaterials()
   if self.model.view == "disenchant" and self.disenchantView then self.disenchantView:render() end
 end
 
-function Window:startScan()
+-- opts.listen: read the answer to another addon's full scan request, which has just come (#114).
+function Window:startScan(opts)
   local addon = self.addon
+  local listen = opts and opts.listen
   if not (addon.auctionAPI and addon.prices) then
     self.statusMarket = self:market()
     self.statusText = "Scanning isn't ready yet. Try again in a moment."
@@ -755,18 +767,19 @@ function Window:startScan()
   end
   -- Set the waiting text first: the reply may come before scanIntoPrices returns.
   self.statusMarket = self:market()
-  self.statusText = "Scanning the auction house (a minute or two)."
+  self.statusText = listen and "Reading another addon's full scan." or "Scanning the auction house (a minute or two)."
   self.materialStatus = nil -- a full scan supersedes the last materials scan's message
   local started, why = ns.AuctionAPI.scanIntoPrices(addon, function(ok, message)
     if ok then ns.DisenchantView.snapshot(addon, self.statusMarket, addon.auctionAPI:now()) end
+    if self.materialStatus == Window.MATERIALS_WAIT then self.materialStatus = nil end
     self.statusText = message
     self.offset = 0
-    self:scanEnded(ok, message)
+    self:scanEnded(ok, message, listen)
     self:renderMaterials()
-  end)
+  end, opts)
   if not started then
     self.statusText = why
-    self:scanEnded(false, why)
+    self:scanEnded(false, why, listen)
   end
   self:renderMaterials()
 end
@@ -780,7 +793,7 @@ function Window:scheduleAutoScan(delay)
   self.autoToken = token
   if not delay then
     local s = self:scanState()
-    delay = ns.AutoScan.wait(s.lastScan, s.now, s.failures, s.failedAt)
+    delay = ns.AutoScan.wait(s.lastScan, s.now, s.failures, s.failedAt, s.askedAt, s.answeredAt)
   end
   timer.After(math.max(delay, ns.AutoScan.FIRST_DELAY), function()
     if self.autoToken == token then self:autoScan() end
@@ -803,7 +816,9 @@ function Window:autoScan()
   local api = addon.auctionAPI
   if not (api and api.open) then return end
   local s = self:scanState()
-  if ns.AutoScan.wait(s.lastScan, s.now, s.failures, s.failedAt) > 0 then return self:scheduleAutoScan() end
+  if ns.AutoScan.wait(s.lastScan, s.now, s.failures, s.failedAt, s.askedAt, s.answeredAt) > 0 then
+    return self:scheduleAutoScan()
+  end
   -- Not in the middle of something: a running scan, a post or sniping waits for it. A full scan shares
   -- the auction house's query pipe with the snipe checks and buys, so it waits until sniping stops (#96).
   local snipe = self.disenchantView and self.disenchantView.snipe
@@ -814,12 +829,31 @@ function Window:autoScan()
   self:startScan()
 end
 
+-- Another addon asked for a full scan (#114): move the next scan of ours and the title's countdown.
+function Window:otherScan()
+  local api = self.addon.auctionAPI
+  if api and api.open and not api.pending then self:scheduleAutoScan() end
+  self:renderScanState()
+end
+
+-- The answer to another addon's full scan came (#114). It replaces the replicate list for every addon, so
+-- read it as our scan instead of asking again and waiting 15 minutes.
+function Window:otherAnswer()
+  local api = self.addon.auctionAPI
+  if self.addon.autoScan ~= false and api and api.open and not api.pending then
+    self:startScan({ listen = true })
+  else
+    self:otherScan()
+  end
+end
+
 -- A full scan ended (ok) or failed (why): count failures for the retry, then schedule the next one.
-function Window:scanEnded(ok, why)
+-- listened: it was another addon's scan; missing its answer isn't our failure.
+function Window:scanEnded(ok, why, listened)
   local api = self.addon.auctionAPI
   if ok then
     self.scanFailures, self.scanFailedAt, self.scanWhy = 0, nil, nil
-  elseif api and api.open then -- closing the auction house mid-scan isn't a failure
+  elseif api and api.open and not listened then -- closing the auction house mid-scan isn't a failure
     self.scanFailures = (self.scanFailures or 0) + 1
     self.scanFailedAt = api:now()
     self.scanWhy = Window.shortReason(why)
@@ -843,7 +877,10 @@ function Window:scanState()
   local api = addon.auctionAPI
   local key = self:market()
   local now = api and api:now() or 0
+  local askedAt, askedBy, answeredAt
+  if api and api.lastAsk then askedAt, askedBy, answeredAt = api:lastAsk() end
   return { open = api and api.open, scanning = api and api.pending ~= nil, now = now,
+    askedAt = askedAt, askedBy = askedBy, answeredAt = answeredAt,
     lastScan = key and addon.prices and addon.prices:lastScan(key), failures = self.scanFailures,
     failedAt = self.scanFailedAt, why = self.scanWhy,
     held = self.disenchantView and self.disenchantView.snipe and self.disenchantView.snipe.running or nil }
@@ -1083,6 +1120,10 @@ function Window.install(env, addon)
   events:RegisterEvent("AUCTION_HOUSE_CLOSED")
   events:SetScript("OnEvent", function(_, event) w:onEvent(event) end)
   addon.window = w
+  if addon.auctionAPI then
+    addon.auctionAPI.onOtherScan = function() w:otherScan() end
+    addon.auctionAPI.onOtherAnswer = function() w:otherAnswer() end
+  end
   -- Redraw the Alts view when the tracker reads bags, bank or auctions while it is on screen.
   if addon.tracker then
     addon.tracker.onChange = function()

@@ -36,4 +36,22 @@ describe("AutoScan", function()
       AutoScan.status({ open = true, now = now, failures = 1, failedAt = now,
         why = "no answer from the auction house" }))
   end)
+
+  it("never asks within 15 minutes of any addon's full scan request (#114)", function()
+    assert.equal(14 * 60, AutoScan.wait(now - 3600, now, 0, nil, now - 60), "another addon asked a minute ago")
+    assert.equal(15 * 60 - 10, AutoScan.wait(now - 3600, now, 1, now, now - 10), "a retry waits out the window")
+    assert.equal(0, AutoScan.wait(now - 3600, now, 0, nil, now - 15 * 60))
+    assert.equal(11 * 60, AutoScan.wait(now - 4 * 60, now, 0, nil, now - 5 * 60), "our own interval when longer")
+    assert.equal(10 * 60, AutoScan.wait(now - 3600, now, 0, nil, now - 60, now - 5 * 60),
+      "15 minutes from the last answer, not from an unanswered request")
+    assert.equal(14 * 60, AutoScan.wait(now - 3600, now, 1, now - 60, now - 60, now - 5 * 60),
+      "after our own failure, also 15 minutes from the last request")
+  end)
+
+  it("says when another addon's scan holds the next one back", function()
+    assert.equal("Scanned 1 h ago. Another addon ran a full scan 3 min ago. Next scan in 12 min.",
+      AutoScan.status({ open = true, lastScan = now - 3600, now = now, askedAt = now - 3 * 60, askedBy = "other" }))
+    assert.equal("Scanned just now. Next scan in 15 min.",
+      AutoScan.status({ open = true, lastScan = now, now = now, askedAt = now, askedBy = "us" }))
+  end)
 end)

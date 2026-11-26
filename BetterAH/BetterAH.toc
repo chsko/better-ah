@@ -12,6 +12,7 @@ Core/Time.lua
 Core/MarketKey.lua
 Core/MarketValue.lua
 Core/Disenchant.lua
+Core/ValueHistory.lua
 Core/Targets.lua
 Core/Sniper.lua
 Core/PriceDB.lua
@@ -35,6 +36,7 @@ Game/BrowseAPI.lua
 UI/Loading.lua
 UI/PostView.lua
 UI/SnipeView.lua
+UI/ValueChart.lua
 UI/DisenchantView.lua
 UI/SettingsView.lua
 UI/BrowseItemView.lua

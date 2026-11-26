@@ -6,8 +6,8 @@ local function setup(opts)
   local ns = helper.load("BetterAH/Core/WindowModel.lua")
   helper.load("BetterAH/Core/Browse.lua", ns)
   helper.load("BetterAH/Core/Buying.lua", ns)
-  local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "Targets", "Sniper", "PriceDB",
-    "CharacterRecords", "MatFloors", "Posting", "PostQueue", "SelfTest", "Probes" }
+  local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "ValueHistory", "Targets", "Sniper",
+    "PriceDB", "CharacterRecords", "MatFloors", "Posting", "PostQueue", "SelfTest", "Probes" }
   for _, file in ipairs(core) do
     helper.load("BetterAH/Core/" .. file .. ".lua", ns)
   end
@@ -18,6 +18,7 @@ local function setup(opts)
   helper.load("BetterAH/UI/Loading.lua", ns)
   helper.load("BetterAH/UI/PostView.lua", ns)
   helper.load("BetterAH/UI/SnipeView.lua", ns)
+  helper.load("BetterAH/UI/ValueChart.lua", ns)
   helper.load("BetterAH/UI/DisenchantView.lua", ns)
   helper.load("BetterAH/UI/SettingsView.lua", ns)
   helper.load("BetterAH/Game/BrowseAPI.lua", ns)
@@ -820,8 +821,8 @@ describe("Window", function()
         { line[1]:GetText(), line[2]:GetText(), line[3]:GetText(), line[4]:GetText() })
       assert.is_true(line.share > 0.4 and line.share < 0.5, "Soul Dust is under half of 14s 95c")
       assert.is_true(v.materialLines[3].track:IsShown())
-      assert.is_false(v.materialLines[4].track:IsShown(), "three materials")
-      assert.equal(math.floor(196 * line.share + 0.5), line.fill:GetWidth(), "the bar shows the share")
+      assert.equal(3, #v.materialLines, "a green gives at most three materials")
+      assert.equal(math.floor(276 * line.share + 0.5), line.fill:GetWidth(), "the bar shows the share")
       assert.equal("", v.materialsNote:GetText())
       assert.equal("Counts the Arcane Salvager's 50% chance of one extra dust or essence.", v.salvagerNote:GetText())
       assert.equal("", w.detailBody:GetText())
@@ -1009,6 +1010,52 @@ describe("Window", function()
       assert.equal("Materials: 1 updated, 23 not listed by others.", w.disenchantView.status:GetText())
       assert.is_true(w.disenchantView.materialsButton:IsEnabled())
       assert.are_not.equal("14s 20c", band(w, 4)[3], "the new Soul Dust price counts")
+    end)
+
+    it("marks what the last scan changed in green or red (#106)", function()
+      local env, w, ns = deSetup()
+      local v = w.disenchantView
+      env.listings[11083] = { { unitPrice = 500, quantity = 50 } }
+      v.materialsButton:Click()
+      env.runTimers()
+      assert.is_nil(band(w, 4)[3]:find("|c", 1, true), "nothing to compare the first scan with")
+      assert.is_nil(v.status:GetText():find("Green and red", 1, true))
+      env.listings[11083] = { { unitPrice = 900, quantity = 50 } }
+      v.materialsButton:Click()
+      env.runTimers()
+      assert.equal(2, #ns.disenchant.snapshots["/1/Horde"])
+      assert.matches("|cff1eff00+", band(w, 4)[3], 1, true)
+      assert.matches("Changes since the scan just now.", v.status:GetText(), 1, true)
+      v.rows[4].button:Click()
+      assert.matches("^|cff1eff00%+", v.classBoxes.armor.change:GetText())
+      assert.matches("^|cff1eff00%+", v.materialLines[1][5]:GetText(), "Soul Dust went up")
+      assert.equal("same", v.materialLines[2][5]:GetText(), "Greater Astral Essence didn't move")
+      env.listings[11083] = { { unitPrice = 100, quantity = 50 } }
+      v.materialsButton:Click()
+      env.runTimers()
+      assert.matches("^|cffff4a3a%-", v.materialLines[1][5]:GetText(), "and down again, in red")
+    end)
+
+    it("charts the chosen class's daily value with a trend line (#106)", function()
+      local env, w, ns = deSetup()
+      local v = w.disenchantView
+      v.rows[4].button:Click()
+      assert.equal(1, #v.chartSeries)
+      assert.equal("One day of prices so far: no trend yet.", v.trendText:GetText())
+      assert.equal("Armor: daily value", v.chartTitle:GetText())
+      ns.prices:importPrices("/1/Horde", env.now - 2 * 86400, { ["i:11083"] = { value = 300 },
+        ["i:11082"] = { value = 1200 }, ["i:11084"] = { value = 3000 } })
+      v:render()
+      assert.equal(3, #v.chartSeries, "yesterday carries the day before's prices")
+      assert.matches("^Trend |cff1eff00%+.* over 2 days$", v.trendText:GetText(), "the days it covers")
+      local shown = 0
+      for _, dot in ipairs(v.chart.pools.dot) do if dot:IsShown() then shown = shown + 1 end end
+      assert.is_true(shown > 2, "drawn as dots without CreateLine")
+      v.chartButtons[7]:Click()
+      assert.equal(7, ns.disenchant.chartDays)
+      assert.equal(3, #v.chartSeries, "all within a week")
+      v.classBoxes.weapon:Click()
+      assert.equal("Weapons: daily value", v.chartTitle:GetText())
     end)
 
     describe("Snipe", function()

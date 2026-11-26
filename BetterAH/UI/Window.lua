@@ -705,6 +705,10 @@ function Window:scanMaterials()
         self.statusText = string.format("Scanning materials: %d of %d.", scan.done, scan.total)
       else
         self.materialScan = nil
+        -- The values' changes (#106) are measured from one finished scan to the next.
+        if scan.found > 0 then
+          ns.DisenchantView.snapshot(addon, key, addon.auctionAPI and addon.auctionAPI:now() or 0)
+        end
         self.statusText = string.format("Materials: %d updated, %d not listed by others", scan.found, scan.empty)
         if scan.failed > 0 then
           self.statusText = self.statusText .. string.format(", %d failed (%s%s)", scan.failed, tostring(scan.why),
@@ -739,6 +743,7 @@ function Window:startScan()
   self.statusText = "Scanning the auction house (a minute or two)."
   self.materialStatus = nil -- a full scan supersedes the last materials scan's message
   local started, why = ns.AuctionAPI.scanIntoPrices(addon, function(ok, message)
+    if ok then ns.DisenchantView.snapshot(addon, self.statusMarket, addon.auctionAPI:now()) end
     self.statusText = message
     self.offset = 0
     self:scanEnded(ok, message)

@@ -575,6 +575,7 @@ function SnipeView:tick(run)
       self.session:lookedUp(c.itemKey, c.minPrice, self:now())
       api:auctions(c.itemKey, function(listings)
         if self.run ~= run then return end
+        if listings then self.session:sawListings(c.itemKey, listings) end
         local found = false
         for _, l in ipairs(ns.Sniper.buys(listings, c.max)) do
           local auctionAPI = self.addon.auctionAPI
@@ -651,11 +652,20 @@ function SnipeView:renderNear()
       for k, n in pairs(self.why[entry.target] or {}) do why[k] = (why[k] or 0) + n end
       local list, fresh = self.near[entry.target], {}
       local name = ns.DisenchantView.targetName(entry.target, entry.row)
+      local now = self:now()
       for _, e in ipairs(list or {}) do
         local max = self:maxFor(entry, e.itemKey.itemID)
-        if max and max > 0 then
-          fresh[#fresh + 1] = { itemKey = e.itemKey, minPrice = e.minPrice, max = max, delta = max - e.minPrice,
-            name = e.name, target = name, quantity = e.quantity }
+        -- The browse's cheapest can lag behind what was just bought or found gone (#145). While the
+        -- item's lookup still matches this browse's cheapest (Session:fresh), its listings, less what
+        -- was bought or written off since, say what is left. Nothing left drops the row.
+        local price = e.minPrice
+        if self.session and self.session:fresh(e.itemKey, e.minPrice, now) then
+          local left = self.session:cheapest(e.itemKey)
+          if left ~= nil then price = left end
+        end
+        if max and max > 0 and price then
+          fresh[#fresh + 1] = { itemKey = e.itemKey, minPrice = price, browsePrice = e.minPrice, max = max,
+            delta = max - price, name = e.name, target = name, quantity = e.quantity }
         end
       end
       lists[#lists + 1] = fresh
@@ -669,7 +679,7 @@ function SnipeView:renderNear()
   local now = self:now()
   local function buyable(e)
     if e.delta < 0 then return false end
-    return queued[e.itemKey.itemID] or not (self.session and self.session:fresh(e.itemKey, e.minPrice, now))
+    return queued[e.itemKey.itemID] or not (self.session and self.session:fresh(e.itemKey, e.browsePrice, now))
   end
   if self.running then
     local finds = self.session and self.session.finds or {}

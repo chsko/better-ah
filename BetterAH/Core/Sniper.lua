@@ -164,7 +164,9 @@ function Session.new(saved, now)
   saved.started = saved.started or now
   saved.spent, saved.bought, saved.worth = saved.spent or 0, saved.bought or 0, saved.worth or 0
   saved.log = saved.log or {}
-  return setmetatable({ saved = saved, finds = {}, seen = {}, looked = {} }, Session)
+  -- taken: per auction ID, how many of its items were bought this session; math.huge once it is written
+  -- off (refused, gone). Treated as no longer buyable (#145).
+  return setmetatable({ saved = saved, finds = {}, seen = {}, looked = {}, taken = {} }, Session)
 end
 
 Sniper.RELOOK = 60 -- seconds before an item whose cheapest price hasn't changed is looked up again
@@ -176,6 +178,31 @@ end
 -- Remembers that an item's auctions were looked up when its cheapest was minPrice.
 function Session:lookedUp(key, minPrice, time)
   self.looked[keyText(key)] = { price = minPrice, time = time }
+end
+
+-- Keeps what an item's lookup saw (listings as Sniper.buys takes them): other sellers' buyouts at any
+-- price, so Session:cheapest can say what is left once some are bought or gone (#145).
+function Session:sawListings(key, listings)
+  local l = self.looked[keyText(key)]
+  if not l then return end
+  l.left = {}
+  for _, x in ipairs(listings or {}) do
+    if x.auctionID and (x.ownCount or 0) == 0 and x.unit and x.unit > 0 then
+      l.left[#l.left + 1] = { auctionID = x.auctionID, unit = x.unit, count = math.max(1, x.count or 1) }
+    end
+  end
+end
+
+-- The cheapest other seller's buyout left from an item's last lookup, leaving out what was bought or
+-- written off since. nil: no lookup to go by. false: nothing left from it.
+function Session:cheapest(key)
+  local l = self.looked[keyText(key)]
+  if not (l and l.left) then return nil end
+  local best = false
+  for _, x in ipairs(l.left) do
+    if (self.taken[x.auctionID] or 0) < x.count and (not best or x.unit < best) then best = x.unit end
+  end
+  return best
 end
 
 -- Whether an item was looked up in the last RELOOK seconds with the same cheapest price: its auctions
@@ -226,6 +253,7 @@ end
 -- The auction house took the buyout.
 function Session:bought(time, find)
   drop(self, find.auctionID)
+  self.taken[find.auctionID] = (self.taken[find.auctionID] or 0) + 1
   local s = self.saved
   s.spent, s.bought, s.worth = s.spent + find.price, s.bought + 1, s.worth + (find.worth or 0)
   self:log(time, "bought", find)
@@ -251,6 +279,7 @@ function Session:missed(time, find, why, kind)
     return 0
   end
   drop(self, find.auctionID)
+  if kind == "refused" or kind == "gone" then self.taken[find.auctionID] = math.huge end
   local dropped = 0
   if kind == "unknown" or kind == "closed" then
     self.seen[find.auctionID] = nil

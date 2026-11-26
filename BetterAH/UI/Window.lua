@@ -319,7 +319,8 @@ function Window:buildPrices(f)
   mats:SetText("Scan materials")
   mats:SetScript("OnClick", function() self:scanMaterials() end)
   Window.tooltip(env, mats, "Scan materials",
-    "Look up the 24 disenchant materials only, so disenchant values use fresh prices without a full scan.")
+    "Look up the 24 disenchant materials only. A full scan updates their prices too; this is for fresh "
+      .. "prices between full scans, which the auction house allows once every 15 minutes.")
   self.materialsButton = mats
 
   local status = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -773,7 +774,7 @@ function Window:scanMaterials()
         self.materialScan = nil
         -- The values' changes (#106) are measured from one finished scan to the next.
         if scan.found > 0 then
-          ns.DisenchantView.snapshot(addon, key, addon.auctionAPI and addon.auctionAPI:now() or 0)
+          ns.DisenchantView.snapshot(addon, key, addon.auctionAPI and addon.auctionAPI:now() or 0, "materials")
         end
         self.statusText = string.format("Materials: %d updated, %d not listed by others", scan.found, scan.empty)
         if scan.failed > 0 then
@@ -811,7 +812,7 @@ function Window:startScan(opts)
   self.statusText = listen and "Reading another addon's full scan." or "Scanning the auction house (a minute or two)."
   self.materialStatus = nil -- a full scan supersedes the last materials scan's message
   local started, why = ns.AuctionAPI.scanIntoPrices(addon, function(ok, message)
-    if ok then ns.DisenchantView.snapshot(addon, self.statusMarket, addon.auctionAPI:now()) end
+    if ok then ns.DisenchantView.snapshot(addon, self.statusMarket, addon.auctionAPI:now(), "full") end
     if self.materialStatus == Window.MATERIALS_WAIT then self.materialStatus = nil end
     self.statusText = message
     self.offset = 0

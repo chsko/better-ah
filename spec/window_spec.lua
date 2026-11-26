@@ -982,7 +982,7 @@ describe("Window", function()
       assert.matches("Materials: ", w.disenchantView.status:GetText(), 1, true)
       w:startScan()
       env.runTimers()
-      assert.equal("Prices from ruleset 1, Horde.", w.disenchantView.status:GetText())
+      assert.equal("Prices for ruleset 1, Horde from the full scan just now.", w.disenchantView.status:GetText())
     end)
 
     local function typeIn(box, text)
@@ -1126,6 +1126,29 @@ describe("Window", function()
       assert.are_not.equal("14s 20c", band(w, 4)[3], "the new Soul Dust price counts")
     end)
 
+    it("a full scan updates the values and the status line names it (#143)", function()
+      local env, w, ns = deSetup()
+      local v = w.disenchantView
+      env.auctions = { { name = "Soul Dust", count = 50, buyout = 25000, itemID = 11083 } }
+      w:startScan()
+      env.runTimers()
+      assert.equal(1, #ns.disenchant.snapshots["/1/Horde"])
+      assert.equal("full", ns.disenchant.snapshots["/1/Horde"][1].kind)
+      w:select("disenchant")
+      assert.equal("Prices for ruleset 1, Horde from the full scan just now.", v.status:GetText())
+      v.materialsButton:Click()
+      env.runTimers()
+      assert.equal("Materials: 0 updated, 24 not listed by others. Prices from the full scan just now.",
+        v.status:GetText(), "a materials scan that found nothing leaves the full scan's prices")
+      env.now = env.now + 2 * 3600
+      w.addon.auctionAPI.store.answeredAt = nil
+      w:startScan()
+      env.runTimers()
+      w:select("disenchant")
+      assert.equal("Prices for ruleset 1, Horde from the full scan just now. Green and red: change from the full "
+        .. "scan 2 h ago.", v.status:GetText())
+    end)
+
     it("marks what the last scan changed in green or red (#106)", function()
       local env, w, ns = deSetup()
       local v = w.disenchantView
@@ -1139,7 +1162,8 @@ describe("Window", function()
       env.runTimers()
       assert.equal(2, #ns.disenchant.snapshots["/1/Horde"])
       assert.matches("|cff1eff00+", band(w, 4)[3], 1, true)
-      assert.matches("Changes since the scan just now.", v.status:GetText(), 1, true)
+      assert.equal("Materials: 1 updated, 23 not listed by others. Green and red: change from the materials "
+        .. "scan just now.", v.status:GetText())
       v.rows[4].button:Click()
       assert.matches("^|cff1eff00%+", v.classBoxes.armor.change:GetText())
       assert.matches("^|cff1eff00%+", v.materialLines[1][5]:GetText(), "Soul Dust went up")

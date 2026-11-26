@@ -179,17 +179,23 @@ local function snapshots(addon, create)
 end
 
 -- Saves the materials' market values on a market now, when a materials scan or full scan has finished.
-function DisenchantView.snapshot(addon, key, now)
+-- kind: "full" or "materials", which the status line names (#143).
+function DisenchantView.snapshot(addon, key, now, kind)
   if not (key and addon and addon.prices) then return end
   local prices = addon.prices
   ns.ValueHistory.record(snapshots(addon, true), key, now, function(id)
     return (prices:marketValue(key, "i:" .. id, now))
-  end, ns.Disenchant.MATERIALS)
+  end, ns.Disenchant.MATERIALS, kind)
 end
 
 -- The snapshot the shown changes are measured against, or nil.
 function DisenchantView.baseline(addon, key)
   return ns.ValueHistory.baseline(snapshots(addon), key)
+end
+
+-- The snapshot the shown prices come from, or nil.
+function DisenchantView.latest(addon, key)
+  return ns.ValueHistory.latest(snapshots(addon), key)
 end
 
 function DisenchantView.new(window, addon)
@@ -253,7 +259,8 @@ function DisenchantView:buildValues(p, width)
   mats:SetText("Scan materials")
   mats:SetScript("OnClick", function() self.window:scanMaterials() end)
   ns.Window.tooltip(env, mats, "Scan materials",
-    "Look up the 24 disenchant materials only, so these values use fresh prices without a full scan.")
+    "Look up the 24 disenchant materials only. A full scan updates these values too; this is for fresh "
+      .. "prices between full scans, which the auction house allows once every 15 minutes.")
   self.materialsButton = mats
 
   local status = p:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -272,7 +279,8 @@ function DisenchantView:buildValues(p, width)
   note:SetJustifyH("LEFT")
   note:SetText("What one green of each band is worth disenchanted, after the 5% auction house cut. "
     .. "Required level is usually 5 below item level. * Some of its materials have no price yet, so the "
-    .. "value is too low. Scan materials to price them. Green and red: what the last scan changed.")
+    .. "value is too low. Scan materials to price them. A full scan updates these values too. "
+    .. "Green and red: what the latest scan changed.")
   self.note = note
 end
 
@@ -374,7 +382,7 @@ function DisenchantView:buildBandDetail()
     b.before:SetWordWrap(true)
     b:SetScript("OnClick", function() self.detailClass = c[1]; self:render() end)
     ns.Window.tooltip(env, b, c[2], "What one green of this band is worth disenchanted, after the 5% auction "
-      .. "house cut. Green or red: what the last scan changed. Click to see its history and materials.")
+      .. "house cut. Green or red: what the latest scan changed. Click to see its history and materials.")
     self.classBoxes[c[1]] = b
   end
 
@@ -773,6 +781,7 @@ function DisenchantView:render()
   local base = DisenchantView.baseline(addon, key)
   self.list = DisenchantView.rows(priceOf, opts, dayOf, base and ns.ValueHistory.priceLookup(base))
   self.base = base
+  self.newest = DisenchantView.latest(addon, key)
   self.now = now
   self.today = ns.MarketValue.day(now)
   self.salvagerButton:SetChecked(opts.salvager)
@@ -802,17 +811,26 @@ function DisenchantView:renderValues(key, opts)
   local scanning = (addon.auctionAPI and addon.auctionAPI.pending) or w.materialScan
   if scanning then self.materialsButton:Disable() else self.materialsButton:Enable() end
   w:showProgress(self.loading)
+  -- Where the prices come from and what the green and red compare with (#143): a full scan updates these
+  -- values too, so the line names the scan rather than leaving "the scan 2 h ago" to read as stale prices.
   local text
-  if w.materialStatus and w.materialMarket == key then
+  -- A materials scan's own message comes first. It needn't name its own prices again, nor the ones it is
+  -- replacing while it runs; when it found nothing, the prices are still the earlier scan's, so say so.
+  local own = w.materialStatus and w.materialMarket == key
+  local source = ns.ValueHistory.sourceText(self.newest, self.base, self.now, {
+    skipSource = own and (w.materialScan ~= nil or (self.newest and self.newest.kind == "materials")),
+    market = not own and key and ns.MarketKey.describe(key) or nil,
+  })
+  if own then
     text = w.materialStatus
+  elseif key and source ~= "" then
+    text = ""
   elseif key then
     text = "Prices from " .. ns.MarketKey.describe(key) .. "."
   else
     text = "Open the auction house to see prices."
   end
-  if self.base then
-    text = text .. " Changes since the scan " .. ns.Time.ago(self.base.time, self.now) .. "."
-  end
+  if source ~= "" then text = text == "" and source or (text .. " " .. source) end
   self.status:SetText(text)
 
   local chosen

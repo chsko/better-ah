@@ -2,9 +2,11 @@
 -- My auctions view hands in the auctions the client reports and what each item's price check found, and
 -- gets rows, counts and totals back. Takes over the cancel scan of #9.
 --
--- An auction is { id, item = "i:id", key = check key, name, quantity, unit = buyout per unit (or nil),
+-- An auction is { id, uid = unique row id (id, unless rows share it), item = "i:id", key = check key, name,
+--   quantity, unit = buyout per unit (or nil),
 --   bid = current bid (or nil), bidder = true when someone has bid, sold = true once it sold,
---   timeLeft = seconds left (or nil), band = Enum.AuctionHouseTimeLeftBand (or nil) }.
+--   timeLeft = seconds left (or nil), band = Enum.AuctionHouseTimeLeftBand (or nil),
+--   total = what a sold auction sold for (or nil) }.
 -- A check (one per check key) is { listings = { { unit, count, ownCount } }, at = time } once found,
 -- { pending = true } while it runs, or { failed = reason }.
 --
@@ -134,7 +136,7 @@ function MyAuctions.totals(rows, marketValue, cancelCost)
     local quantity = a.quantity or 1
     if r.kind == "sold" then
       t.sold = t.sold + 1
-      local price = a.unit and a.unit * quantity or a.bid or 0
+      local price = a.total or (a.unit and math.floor(a.unit * quantity + 0.5)) or a.bid or 0
       t.soldGold = t.soldGold + MyAuctions.net(price)
     else
       t.active, t.units = t.active + 1, t.units + quantity

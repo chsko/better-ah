@@ -29,8 +29,8 @@ end
 -- The status cell for a row; cancelling = a cancel for it was sent.
 function MyAuctionsView.statusText(row, cancelling)
   local c = MyAuctionsView.COLORS
-  if cancelling then return color(c.dim, "Cancelling...") end
   local k, a = row.kind, row.auction
+  if cancelling and k ~= "sold" then return color(c.dim, "Cancelling...") end
   if k == "undercut" then return color(c.undercut, "Undercut by " .. money(row.by)) end
   if k == "lowest" then return color(c.lowest, row.cheapest and "Lowest" or "Only one listed") end
   if k == "bid" then return "Has a bid" .. (a.bid and (": " .. money(a.bid)) or "") end
@@ -60,7 +60,7 @@ function MyAuctionsView.detailText(row, info)
   if row.kind == "sold" then
     add(units .. " · sold")
     add("")
-    local price = a.unit and a.unit * q or a.bid
+    local price = a.total or (a.unit and math.floor(a.unit * q + 0.5)) or a.bid
     if price then add("You get " .. money(ns.MyAuctions.net(price)) .. " after the 5% cut.") end
     add("The gold comes by mail" .. (a.timeLeft and a.timeLeft > 0 and (" in about "
       .. ns.MyAuctions.timeLeft(a.timeLeft)) or "") .. ".")
@@ -91,7 +91,7 @@ function MyAuctionsView.detailText(row, info)
   if a.bidder then add("Someone has bid" .. (a.bid and (" " .. money(a.bid)) or "") .. ".") end
   add("")
   add("If you cancel")
-  if info.cost then add("Deposit you lose: " .. money(info.cost)) end
+  if info.cost then add("Deposit you lose: " .. (info.cost > 0 and money(info.cost) or "nothing")) end
   local plan = info.plan
   if plan and plan.action == "post" then
     add("Post would repost it at " .. money(plan.price) .. (q > 1 and " each" or ""))
@@ -259,12 +259,19 @@ function MyAuctionsView:read()
   local api = self.addon.auctionAPI
   local nameOf = api and function(item) return api:itemName(item) end
   local auctions, complete
-  if ns.MyAuctionsAPI then auctions, complete = ns.MyAuctionsAPI.read(self.env, nameOf) end
+  local myApi = self.addon.myAuctionsAPI
+  if myApi then
+    auctions, complete = myApi:read(nameOf)
+  elseif ns.MyAuctionsAPI then
+    auctions, complete = ns.MyAuctionsAPI.readOwned(self.env, nameOf)
+  end
   self.auctions, self.complete = auctions or {}, auctions ~= nil and complete
   -- A cancel the list no longer shows has done its part.
   if self.visit then
     local up = {}
-    for _, a in ipairs(self.auctions) do up[a.id] = true end
+    for _, a in ipairs(self.auctions) do
+      if not a.sold then up[a.id] = true end -- a sold part keeps the id of an auction that is gone
+    end
     for id, state in pairs(self.visit.sent) do
       if state == "done" and not up[id] then self.visit.sent[id] = nil end
     end
@@ -351,7 +358,7 @@ end
 function MyAuctionsView:selectRow(r)
   local row = self.shown and self.shown[r + self.offset]
   if not row then return end
-  self.selected = row.auction.id
+  self.selected = row.auction.uid
   self:render()
 end
 
@@ -383,7 +390,7 @@ function MyAuctionsView:cancel(row)
     self.message = "Cancelling " .. name .. "..."
     -- Move on to the next undercut, so the next click cancels that one.
     local nextRow = ns.MyAuctions.nextUndercut(self:rowsNow(), visit.sent)
-    if self.selected == a.id and nextRow then self.selected = nextRow.auction.id end
+    if self.selected == a.uid and nextRow then self.selected = nextRow.auction.uid end
   else
     self.message = string.format("Couldn't cancel %s: %s.", name, tostring(why))
   end
@@ -392,7 +399,7 @@ end
 
 function MyAuctionsView:selectedRow(rows)
   for _, r in ipairs(rows or self:rowsNow()) do
-    if r.auction.id == self.selected then return r end
+    if r.auction.uid == self.selected then return r end
   end
   return nil
 end
@@ -405,7 +412,7 @@ function MyAuctionsView:cancelNext()
   local visit = self.visit
   local row = visit and ns.MyAuctions.nextUndercut(self:rowsNow(), visit.sent)
   if not row then return end
-  self.selected = row.auction.id
+  self.selected = row.auction.uid
   self:cancel(row)
 end
 
@@ -475,7 +482,7 @@ function MyAuctionsView:render()
       local a = row.auction
       cells[1]:SetText(MyAuctionsView.itemText(a))
       cells[2]:SetText(tostring(a.quantity or 1))
-      cells[3]:SetText(a.unit and money(a.unit) or "-")
+      cells[3]:SetText(a.unit and money(math.floor(a.unit + 0.5)) or "-")
       local lowest = "-"
       if row.kind == "lowest" and row.cheapest == nil then
         lowest = "yours"
@@ -490,7 +497,7 @@ function MyAuctionsView:render()
       for _, cell in ipairs(cells) do cell:SetText("") end
       cells.button:Hide()
     end
-    cells.button.selectedTexture:SetShown(row ~= nil and row.auction.id == self.selected)
+    cells.button.selectedTexture:SetShown(row ~= nil and row.auction.uid == self.selected)
   end
 
   local totals = ns.MyAuctions.totals(rows, function(item) return self:marketValue(item) end, function(a)

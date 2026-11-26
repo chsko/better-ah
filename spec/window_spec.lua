@@ -2939,3 +2939,94 @@ describe("My auctions view, after review (#123)", function()
     assert.equal(2, env.ownedQueries, "one more after the cancel")
   end)
 end)
+
+describe("My auctions view, in-game fixes (#123)", function()
+  local ESSENCE, SOUL = 11175, 11083
+  local function open()
+    local env, w, ns = setup()
+    env.itemNames = { [SOUL] = "Soul Dust" }
+    env.itemQualities = { [SOUL] = 1 }
+    -- As Forever lists a partly sold commodity auction: the rest and each sale share one auction id, and a
+    -- sale's buyoutAmount is the whole sale.
+    env.owned = {
+      { id = 7, itemID = ESSENCE, quantity = 54, buyout = 1444, timeLeftSeconds = 25200,
+        link = "|cff1eff00|Hitem:11175|h[Greater Astral Essence]|h|r" },
+      { id = 7, itemID = ESSENCE, quantity = 2, buyout = 2888, status = 1, timeLeftSeconds = 1860,
+        link = "|cff1eff00|Hitem:11175|h[Greater Astral Essence]|h|r" },
+      { id = 9, itemID = SOUL, quantity = 2, buyout = 830, status = 1, timeLeftSeconds = 1860 },
+    }
+    env.listings[ESSENCE] = { { unitPrice = 1444, quantity = 60, numOwnerItems = 54 } }
+    env.openAuctionHouse()
+    env.runTimers()
+    w:select("auctions")
+    env.runTimers()
+    return env, w, ns, w.myAuctionsView
+  end
+
+  local function rowFor(v, qty)
+    for _, cells in ipairs(v.rows) do
+      if cells[2]:GetText() == tostring(qty) then return cells end
+    end
+  end
+
+  it("names an auction without a link from the auction house's item info, in its quality colour", function()
+    local _, _, _, v = open()
+    assert.equal("|cffffffffSoul Dust|r", v.rows[3][1]:GetText(), "sold rows sort by name; it has no link")
+  end)
+
+  it("selects one row when a sale shares its auction id with the rest of the auction", function()
+    local _, w, _, v = open()
+    rowFor(v, 54).button:Click()
+    local selected = 0
+    for _, cells in ipairs(v.rows) do
+      if cells.button.selectedTexture:IsShown() then selected = selected + 1 end
+    end
+    assert.equal(1, selected)
+    assert.matches("54 units", w.detailBody:GetText())
+  end)
+
+  it("reads a sale's buyout as the whole sale", function()
+    local _, w, _, v = open()
+    local sale = v.rows[2]
+    assert.matches("Greater Astral Essence", sale[1]:GetText())
+    assert.equal("14s 44c", sale[3]:GetText(), "the price per unit, like the other rows")
+    sale.button:Click()
+    assert.matches("You get 27s 44c after the 5%% cut", w.detailBody:GetText())
+  end)
+
+  it("keeps the active part selected when a new sale of it is listed first", function()
+    local env, w, _, v = open()
+    rowFor(v, 54).button:Click()
+    table.insert(env.owned, 1, { id = 7, itemID = ESSENCE, quantity = 3, buyout = 4332, status = 1,
+      timeLeftSeconds = 3600 })
+    env.owned[2].quantity = 51
+    env.fire("OWNED_AUCTIONS_UPDATED")
+    assert.matches("51 units · 7 h left", w.detailBody:GetText())
+    assert.is_true(v.cancelButton:IsEnabled())
+  end)
+
+  it("names an item once the client loads it, asking only once", function()
+    local env, _, _, v = open()
+    local asked = 0
+    env.C_Item.RequestLoadItemDataByID = function(id)
+      asked = asked + 1
+      env.C_Timer.After(0, function() env.fire("GET_ITEM_INFO_RECEIVED", id, false) end)
+    end
+    env.owned[#env.owned + 1] = { id = 12, itemID = 99999, quantity = 1, buyout = 100, status = 1 }
+    env.fire("OWNED_AUCTIONS_UPDATED")
+    env.runTimers()
+    env.runTimers()
+    assert.equal(1, asked, "an item that never loads isn't asked for again and again")
+    env.itemNames[99999] = "Mystery Dust"
+    env.fire("OWNED_AUCTIONS_UPDATED")
+    local names = {}
+    for _, cells in ipairs(v.rows) do names[#names + 1] = cells[1]:GetText() or "" end
+    assert.matches("Mystery Dust", table.concat(names, ","))
+  end)
+
+  it("says a cancel that costs nothing loses nothing", function()
+    local _, w, _, v = open()
+    rowFor(v, 54).button:Click()
+    assert.matches("Deposit you lose: nothing", w.detailBody:GetText())
+  end)
+end)

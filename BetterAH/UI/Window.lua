@@ -794,6 +794,8 @@ function Window:scanEnded(ok, why)
   end
   if api and api.open then self:scheduleAutoScan() end
   self:renderScanState()
+  -- Price checks that got no answer while the scan ran get another go (#82).
+  if ok and self.postView and api and api.open then self.postView:scanEnded() end
 end
 
 -- The first sentence of a scan failure, for the title bar (the Prices status line keeps all of it).

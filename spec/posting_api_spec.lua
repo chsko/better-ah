@@ -52,6 +52,11 @@ describe("PostingAPI", function()
     assert.equal(1, #entries)
     assert.equal(5, entries[1].have)
     assert.is_true(entries[1].commodity)
+    -- Also when the client says it can't be sold while its data is gone.
+    for _, it in ipairs(env.containers[0]) do it.unknown, it.unsellable = nil, true end
+    assert.equal(1, #ns.PostingAPI.readBags(env, { ["i:9"] = true }))
+    assert.same({}, ns.PostingAPI.readBags(env, {}), "but not an item never seen sellable")
+    assert.matches("Not Loaded x2: not sellable", table.concat(ns.PostingAPI.slotReport(env), "\n"), 1, true)
   end)
 
   it("says what is missing on a client without the functions", function()

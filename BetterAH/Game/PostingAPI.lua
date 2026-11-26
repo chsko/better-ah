@@ -49,7 +49,8 @@ end
 --     slots = { { bag, slot, location, count } } }
 -- Locked slots (mid-post or being moved) are left out; they show up on the next read. An item whose
 -- commodity status the client doesn't know yet (its data isn't loaded) takes it from known[item], what
--- an earlier read said (#82), else it is left out and its data is asked for once: asked[itemID] is set,
+-- an earlier read said (#82), as does one seen earlier that now reads as not sellable; either way its data
+-- is asked for once, and an item never seen is left out until it loads: asked[itemID] is set,
 -- and ITEM_DATA_LOAD_RESULT follows. Pass the same asked table across reads so an item whose data
 -- never loads isn't asked for again. Returns nil and a reason when the client lacks a needed function.
 function PostingAPI.readBags(env, known, asked)
@@ -71,10 +72,13 @@ function PostingAPI.readBags(env, known, asked)
         local valid = location and try(ah.IsSellItemValid, location, false)
         local status = valid and try(ah.GetItemCommodityStatus, location)
         local item = "i:" .. info.itemID
+        -- An item seen sellable earlier this visit whose data the client dropped can read as not
+        -- sellable or of unknown kind (#82): keep it as it was, and ask for its data again.
+        local seen = known and known[item] ~= nil
+        if seen and not valid then valid = true end
         if valid and status ~= ITEM and status ~= COMMODITY then
-          if known and known[item] ~= nil then
-            status = known[item] and COMMODITY or ITEM
-          elseif not asked[info.itemID] then
+          if seen then status = known[item] and COMMODITY or ITEM end
+          if not asked[info.itemID] then
             asked[info.itemID] = true
             local items = env.C_Item
             if items and items.RequestLoadItemDataByID then try(items.RequestLoadItemDataByID, info.itemID) end
@@ -103,6 +107,35 @@ function PostingAPI.readBags(env, known, asked)
     if an ~= bn then return an < bn end
     return a.itemID < b.itemID
   end)
+  return out
+end
+
+-- One line per filled bag slot, for /bah bags (#82): what readBags sees of it.
+function PostingAPI.slotReport(env)
+  local container, ah, loc = env.C_Container, env.C_AuctionHouse, env.ItemLocation
+  local out = {}
+  if not (container and ah and loc and loc.CreateFromBagAndSlot) then return { "bag functions missing" } end
+  local STATUS = { [0] = "unknown", [1] = "item", [2] = "commodity" }
+  local fine = 0
+  for _, bag in ipairs(PostingAPI.BAGS) do
+    for slot = 1, try(container.GetContainerNumSlots, bag) or 0 do
+      local info = try(container.GetContainerItemInfo, bag, slot)
+      if type(info) == "table" and info.itemID then
+        local location = try(loc.CreateFromBagAndSlot, loc, bag, slot)
+        local valid = location and try(ah.IsSellItemValid, location, false)
+        local status = valid and try(ah.GetItemCommodityStatus, location)
+        if valid and (status == ITEM or status == COMMODITY) and not info.isLocked then
+          fine = fine + 1
+        elseif not info.isBound then
+          out[#out + 1] = string.format("%d/%d %s x%d: %s%s", bag, slot, tostring(info.itemName or info.itemID),
+            info.stackCount or 1, info.isLocked and "locked, " or "",
+            valid and (STATUS[status] or tostring(status)) or "not sellable")
+        end
+      end
+    end
+  end
+  table.insert(out, 1, string.format("Bags: %d slots sellable as they are%s", fine,
+    #out > 0 and ", these others aren't:" or "."))
   return out
 end
 

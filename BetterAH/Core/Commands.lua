@@ -10,6 +10,7 @@ local commands = {}
 
 commands.help = function()
   say("/bah selftest - check what this client supports (never buys, posts or cancels)")
+  say("/bah bags - list what the Post view sees in your bags (for bug reports)")
   say("/bah help - show this list")
 end
 
@@ -17,6 +18,19 @@ commands.selftest = function()
   local results = ns.Probes.suite():run(_G, ns)
   for _, line in ipairs(ns.SelfTest.format(results)) do
     say(line)
+  end
+end
+
+commands.bags = function()
+  local view = ns.window and ns.window.postView
+  if view then
+    for _, line in ipairs(view:debugLines()) do say(line) end
+  end
+  if ns.PostingAPI then
+    if not (ns.postingAPI and ns.postingAPI.open) then
+      say("The auction house is closed, so nothing reads as sellable: open it first.")
+    end
+    for _, line in ipairs(ns.PostingAPI.slotReport(_G)) do say(line) end
   end
 end
 

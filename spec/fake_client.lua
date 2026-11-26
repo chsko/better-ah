@@ -308,7 +308,10 @@ function M.new(opts)
   }
   local function slotAt(loc) return env.containers[loc.bag] and env.containers[loc.bag][loc.slot] end
   local ah = env.C_AuctionHouse
-  ah.IsSellItemValid = function(loc) local it = slotAt(loc) return it and not it.soulbound or false end
+  ah.IsSellItemValid = function(loc)
+    local it = slotAt(loc)
+    return it and not it.soulbound and not it.unsellable or false
+  end
   ah.MakeItemKey = function(itemID)
     return { itemID = itemID, itemLevel = 0, itemSuffix = 0, battlePetSpeciesID = 0 }
   end

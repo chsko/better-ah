@@ -5,9 +5,9 @@
 -- player's. With no other listings the item is priced at its market value. If the price is below the
 -- item's floor price (its own floor on this market, else 80% of market value) the item is skipped and
 -- stays in the bags, with the reason. Otherwise it posts everything in the bags, or at most the
--- profile's limit, for the profile's duration (24 hours without one). A commodity goes up as one post
--- of any size, since C_AuctionHouse.PostCommodity takes units from every bag slot; other items post
--- one auction per bag stack.
+-- profile's limit, for the profile's duration (without one, the player's default duration, #87). A
+-- commodity goes up as one post of any size, since C_AuctionHouse.PostCommodity takes units from every
+-- bag slot; other items post one auction per bag stack.
 local _, ns = ...
 ns = ns or {}
 
@@ -17,6 +17,7 @@ Posting.FLOOR_SHARE = 0.8
 -- C_AuctionHouse durations are indices 1-3 into the client's own list (AUCTION_DURATION_ONE..THREE).
 -- Forever's are 2, 8 and 24 hours (self-test, build 1.60.1.71139), so 24 hours is 3.
 Posting.DURATIONS = { 1, 2, 3 }
+-- The default duration until the player picks another on the Settings view (#87).
 Posting.DEFAULT_DURATION = 3
 
 local function finite(n)
@@ -54,6 +55,7 @@ end
 -- args: { have = units in bags, listings = {...}, marketValue = copper or nil, floor = own floor or nil,
 --         ruleFloor = the floor a rule gives when there's no own floor (or nil),
 --         profile = { limit, duration } or nil, commodity = true for a commodity,
+--         defaultDuration = the duration for an item whose profile has none (DEFAULT_DURATION if nil),
 --         stacks = the counts of the item's bag stacks in bag order (a non-commodity posts one per click),
 --         maxStack = the item's stack size or nil (caps a non-commodity post when stacks is nil),
 --         posted = units of the item already posted this visit (they count toward the limit), or nil,
@@ -90,7 +92,8 @@ function Posting.plan(args)
   if not floor then return { action = "skip", price = price, reason = "no-floor" } end
   if price < floor then return { action = "skip", price = price, floor = floor, reason = "below-floor" } end
 
-  local duration = Posting.duration(profile.duration) or Posting.DEFAULT_DURATION
+  local duration = Posting.duration(profile.duration) or Posting.duration(args.defaultDuration)
+    or Posting.DEFAULT_DURATION
   local total = math.min(have, due)
   local quantity, posts = total, 1
   if not args.commodity then
@@ -137,6 +140,7 @@ end
 --   floors[marketKey][item] = copper          a price, so per market like all prices (ADR 0003)
 --   mats = { kind, percent, convert }          the floor rule for disenchant materials (MatFloors.rule)
 --   filter = "all" or "mats"                   which items the Post view shows
+--   duration = 1, 2 or 3                       the default duration (Settings view, #87); nil is 24 hours
 local Settings = {}
 Settings.__index = Settings
 Posting.Settings = Settings
@@ -179,18 +183,40 @@ function Settings:setFilter(filter)
   self.store.filter = filter == "mats" and "mats" or "all"
 end
 
+-- The duration an item without its own posts for: the player's choice, else DEFAULT_DURATION.
+function Settings:defaultDuration()
+  return Posting.duration(self.store.duration) or Posting.DEFAULT_DURATION
+end
+
+-- Returns false (and changes nothing) for a duration the client doesn't offer.
+function Settings:setDefaultDuration(duration)
+  duration = Posting.duration(duration)
+  if not duration then return false end
+  self.store.duration = duration
+  return true
+end
+
+-- The duration an item posts for: its profile's, else the default.
+function Settings:durationFor(item)
+  local profile = self.store.profiles[item]
+  return profile and Posting.duration(profile.duration) or self:defaultDuration()
+end
+
 function Settings:profile(item)
   return self.store.profiles[item]
 end
 
--- limit is empty (or nil) for no limit, else a whole number of 1 or more. Returns false (and changes
--- nothing) for any other limit, or a duration the client doesn't offer.
+-- limit is empty (or nil) for no limit, else a whole number of 1 or more. duration nil saves none, so
+-- the item follows the default duration (#87). Returns false (and changes nothing) for any other limit,
+-- or a duration the client doesn't offer.
 function Settings:setProfile(item, limit, duration)
   local text = limit == nil and "" or tostring(limit):match("^%s*(.-)%s*$")
   local n = tonumber(text)
   if not (text == "" or n and finite(n) and n >= 1 and n == math.floor(n)) then return false end
-  duration = Posting.duration(duration)
-  if not duration then return false end
+  if duration ~= nil then
+    duration = Posting.duration(duration)
+    if not duration then return false end
+  end
   self.store.profiles[item] = { limit = text ~= "" and n or nil, duration = duration }
   return true
 end

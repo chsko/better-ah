@@ -112,7 +112,7 @@ function PostQueue:row(e)
     have = e.have, listings = found.listings, marketValue = self.marketValue(e.item),
     floor = own, ruleFloor = row.matFloor and row.matFloor.floor, profile = settings and settings:profile(e.item),
     commodity = e.commodity, stacks = stacks(e), maxStack = e.maxStack, posted = self.posted[e.item],
-    step = self.step,
+    step = self.step, defaultDuration = settings and settings:defaultDuration(),
   })
   if self.skipped[e.item] then
     row.state, row.skipped = "skipped", "you"

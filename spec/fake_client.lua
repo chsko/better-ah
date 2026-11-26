@@ -121,6 +121,7 @@ function Frame:SetChecked(on) self.checked = on and true or false end
 function Frame:GetChecked() return self.checked == true end
 -- Like the client, a click on a check button flips it before OnClick runs.
 function Frame:Click()
+  if self.enabled == false then return end -- a disabled button ignores clicks, as in the client
   if self.kind == "CheckButton" then self.checked = not self.checked end
   if self.scripts.OnClick then self.scripts.OnClick(self) end
 end

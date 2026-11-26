@@ -32,5 +32,6 @@ UI/Loading.lua
 UI/PostView.lua
 UI/SnipeView.lua
 UI/DisenchantView.lua
+UI/SettingsView.lua
 UI/WindowResize.lua
 UI/Window.lua

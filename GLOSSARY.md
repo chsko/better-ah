@@ -35,8 +35,12 @@ Listing 1 copper below the cheapest competing listing (one that isn't yours). Wi
 
 **Posting profile**:
 The optional post limit ("Post at most") and duration remembered for an item. Without one, an item posts
-everything in your bags for 24 hours.
+everything in your bags for the default duration.
 _Avoid_: operation, group settings
+
+**Default duration**:
+How long an item without its own duration in a posting profile is posted for. 24 hours until you pick 2 or 8
+hours on the Settings view.
 
 **Post limit**:
 The most of an item to post per visit to the auction house ("Post at most"); the rest stay in your bags.

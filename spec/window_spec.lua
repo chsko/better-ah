@@ -9,6 +9,7 @@ local function setup(opts)
   for _, file in ipairs(core) do
     helper.load("BetterAH/Core/" .. file .. ".lua", ns)
   end
+  helper.load("BetterAH/Core/AutoScan.lua", ns)
   helper.load("BetterAH/Game/AuctionAPI.lua", ns)
   helper.load("BetterAH/Game/PostingAPI.lua", ns)
   helper.load("BetterAH/Game/SnipeAPI.lua", ns)
@@ -18,6 +19,8 @@ local function setup(opts)
   helper.load("BetterAH/UI/DisenchantView.lua", ns)
   helper.load("BetterAH/UI/Window.lua", ns)
   ns.prices = ns.PriceDB.new({})
+  -- Auto scan (#30) is off unless a spec turns it on, so scans start only where a spec starts one.
+  ns.autoScan = false
   ns.characters = ns.CharacterRecords.new({})
   ns.posting = ns.Posting.Settings.new({})
   ns.AuctionAPI.install(env, ns)
@@ -285,10 +288,10 @@ describe("Window", function()
       w:select("prices")
       assert.is_true(w.pricesPanel:IsShown())
       assert.is_false(w.placeholder:IsShown())
-      assert.equal("No scan of this market yet. Press Scan to record its prices.", w.scanStatus:GetText())
+      assert.equal("No scan of this market yet. One starts when the auction house is open.", w.scanStatus:GetText())
     end)
 
-    it("scans from the Scan button and lists items with lowest buyout, quantity and seen time", function()
+    it("scans and lists items with lowest buyout, quantity and seen time", function()
       local env, w = setup()
       env.auctions = {
         { name = "Wool Cloth", count = 10, buyout = 30500, itemID = 2592 },
@@ -296,9 +299,8 @@ describe("Window", function()
       }
       env.openAuctionHouse()
       w:select("prices")
-      w.scanButton:Click()
+      w:startScan()
       assert.equal("Scanning the auction house (a minute or two).", w.scanStatus:GetText())
-      assert.is_false(w.scanButton:IsEnabled())
       local bar = w.scanLoading.barFrame
       assert.is_true(bar:IsShown(), "a bar that sweeps: the auction house doesn't say how far along it is")
       bar.scripts.OnUpdate(bar, 0.7)
@@ -306,10 +308,84 @@ describe("Window", function()
       env.runTimers()
       assert.equal("Scanned 2 listings of 2 items in 0 seconds.", w.scanStatus:GetText())
       assert.is_false(bar:IsShown())
-      assert.is_true(w.scanButton:IsEnabled())
       assert.same({ "Linen Cloth", "2s 0c", "2s 0c", "20", "just now" }, rowText(w, 1))
       assert.same({ "Wool Cloth", "30s 50c", "30s 50c", "10", "just now" }, rowText(w, 2))
       assert.same({ "", "", "", "", "" }, rowText(w, 3))
+    end)
+
+    it("scans by itself when the auction house opens and the last scan is old, and says so", function()
+      local env, w, ns = setup()
+      ns.autoScan = nil
+      ns.prices:recordScan("/1/Horde", env.now - 3600, { { item = "i:1", name = "Thing", count = 1, buyout = 1 } })
+      env.auctions = { { name = "Linen Cloth", count = 20, buyout = 4000, itemID = 2589 } }
+      local replicate, scans = env.C_AuctionHouse.ReplicateItems, 0
+      env.C_AuctionHouse.ReplicateItems = function() scans = scans + 1 return replicate() end
+      env.replicateSilent = true
+      env.openAuctionHouse()
+      assert.equal("Scanned 1 h ago. Next scan in a moment.", w.scanStateText:GetText())
+      env.runTimers(2)
+      assert.equal(1, scans)
+      assert.equal("Scanning the auction house...", w.scanStateText:GetText())
+      assert.is_true(w.scanSpinner:IsShown())
+      env.replicateSilent = false
+      env.fire("REPLICATE_ITEM_LIST_UPDATE")
+      env.runTimers(5)
+      assert.equal("Scanned just now. Next scan in 15 min.", w.scanStateText:GetText())
+      assert.is_false(w.scanSpinner:IsShown())
+      env.runTimers(14 * 60)
+      assert.equal(1, scans, "not before 15 minutes")
+      env.runTimers(60)
+      assert.equal(2, scans, "again 15 minutes after the last one")
+    end)
+
+    it("doesn't scan when the last scan is fresh, and stops when the auction house closes", function()
+      local env, w, ns = setup()
+      ns.autoScan = nil
+      ns.prices:recordScan("/1/Horde", env.now - 4 * 60, { { item = "i:1", name = "Thing", count = 1, buyout = 1 } })
+      local replicate, scans = env.C_AuctionHouse.ReplicateItems, 0
+      env.C_AuctionHouse.ReplicateItems = function() scans = scans + 1 return replicate() end
+      env.openAuctionHouse()
+      env.runTimers(5)
+      assert.equal(0, scans)
+      assert.equal("Scanned 4 min ago. Next scan in 11 min.", w.scanStateText:GetText())
+      env.CloseAuctionHouse()
+      env.runTimers(20 * 60)
+      assert.equal(0, scans, "nothing while the auction house is closed")
+      w:renderScanState()
+      assert.equal("Scanned 24 min ago. Open the auction house to scan.", w.scanStateText:GetText())
+    end)
+
+    it("tries a failed scan again after 2 minutes, then 5", function()
+      local env, w, ns = setup()
+      ns.autoScan = nil
+      local calls = 0
+      env.C_AuctionHouse.ReplicateItems = nil
+      local get = env.C_AuctionHouse
+      setmetatable(get, { __index = function(_, k) if k == "ReplicateItems" then calls = calls + 1 end end })
+      env.openAuctionHouse()
+      env.runTimers(2)
+      assert.equal("Scan failed: this client can't do a full scan (C_AuctionHouse.ReplicateItems is missing). "
+        .. "Trying again in 2 min.", w.scanStateText:GetText())
+      local before = calls
+      env.runTimers(119)
+      assert.equal(before, calls)
+      env.runTimers(2)
+      assert.is_true(calls > before, "tried again")
+      assert.matches("Trying again in 5 min.", w.scanStateText:GetText(), 1, true)
+    end)
+
+    it("doesn't count closing the auction house mid-scan as a failure, and keeps the title short", function()
+      local env, w, ns = setup()
+      ns.autoScan = nil
+      env.replicateSilent = true
+      env.openAuctionHouse()
+      env.runTimers(2)
+      env.CloseAuctionHouse()
+      assert.is_nil(w.scanWhy)
+      assert.equal(0, w.scanFailures or 0)
+      assert.equal("no reply from the auction house after 120 seconds",
+        ns.Window.shortReason("Scan failed. No reply from the auction house after 120 seconds. Full scans may be "
+          .. "limited (replicate list: 0 listings before)."))
     end)
 
     it("shows the result when the auction house replies before the scan call returns", function()
@@ -321,7 +397,7 @@ describe("Window", function()
         replicate()
         env.runTimers()
       end
-      w.scanButton:Click()
+      w:startScan()
       assert.equal("Scanned 0 listings of 0 items in 0 seconds.", w.scanStatus:GetText())
     end)
 
@@ -330,21 +406,20 @@ describe("Window", function()
       env.openAuctionHouse()
       w:select("prices")
       env.C_AuctionHouse.ReplicateItems = nil
-      w.scanButton:Click()
+      w:startScan()
       assert.equal("This client can't do a full scan (C_AuctionHouse.ReplicateItems is missing).",
         w.scanStatus:GetText())
-      assert.is_true(w.scanButton:IsEnabled())
     end)
 
     it("drops the last scan message when the player is on another market", function()
       local env, w = setup()
       env.openAuctionHouse()
       w:select("prices")
-      w.scanButton:Click()
+      w:startScan()
       env.runTimers()
       env.C_Map = { GetBestMapForUnit = function() return 1446 end }
       w:renderPrices()
-      assert.equal("No scan of this market yet. Press Scan to record its prices.", w.scanStatus:GetText())
+      assert.equal("No scan of this market yet. One starts when the auction house is open.", w.scanStatus:GetText())
     end)
 
     it("shows only the current market's items", function()
@@ -468,7 +543,6 @@ describe("Window", function()
       w:select("prices")
       w.materialsButton:Click()
       assert.is_false(w.materialsButton:IsEnabled(), "one materials scan at a time")
-      assert.is_false(w.scanButton:IsEnabled(), "and no full scan during it")
       assert.matches("Scanning materials: 0 of 24.", w.scanStatus:GetText(), 1, true)
       local bar = w.scanLoading.barFrame
       assert.is_true(bar:IsShown())
@@ -757,7 +831,7 @@ describe("Window", function()
       env.auctions = { { name = "Soul Dust", count = 10, buyout = 5000, itemID = 11083 } }
       env.openAuctionHouse()
       w:select("prices")
-      w.scanButton:Click()
+      w:startScan()
       w:select("disenchant")
       assert.is_false(w.disenchantView.materialsButton:IsEnabled(), "no materials scan during a full scan")
       w.disenchantView.rows[4].button:Click()

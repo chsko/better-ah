@@ -15,6 +15,7 @@ Core/Targets.lua
 Core/Sniper.lua
 Core/PriceDB.lua
 Core/CharacterRecords.lua
+Core/MatFloors.lua
 Core/Posting.lua
 Core/PostQueue.lua
 Core/SelfTest.lua

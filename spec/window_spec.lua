@@ -5,7 +5,7 @@ local function setup(opts)
   local env = fake.new(opts)
   local ns = helper.load("BetterAH/Core/WindowModel.lua")
   local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "Targets", "Sniper", "PriceDB",
-    "CharacterRecords", "Posting", "PostQueue", "SelfTest", "Probes" }
+    "CharacterRecords", "MatFloors", "Posting", "PostQueue", "SelfTest", "Probes" }
   for _, file in ipairs(core) do
     helper.load("BetterAH/Core/" .. file .. ".lua", ns)
   end
@@ -1390,6 +1390,69 @@ describe("Window", function()
       assert.same({ "Silk Cloth", "10", "20s 0c", "16s 0c", "Needs setup" }, cells(w, 2))
       assert.same({ "Wool Cloth", "3", "", "8s 0c", "Below floor" }, cells(w, 3))
       assert.equal("Post next: Linen Cloth, 20 for 9s 49c each", w.postView.postButton:GetText())
+    end)
+
+    it("shows only disenchant materials with their floors from the rule (#71)", function()
+      local env, w, ns = postSetup()
+      env.containers[1] = { { itemID = 10938, count = 9, name = "Lesser Magic Essence" },
+        { itemID = 10940, count = 40, name = "Strange Dust" } }
+      env.listings[10938] = { { unitPrice = 699, quantity = 20 } }
+      env.listings[10940] = { { unitPrice = 1800, quantity = 60 } }
+      ns.prices:importPrices("/1/Horde", env.now, { ["i:10938"] = { value = 900 }, ["i:10939"] = { value = 2800 },
+        ["i:10940"] = { value = 2000 } })
+      ns.disenchant = { targets = { { enabled = true, band = 21, types = { cloth = true },
+        profit = { kind = "percent", amount = 25 } } } }
+      ns.posting:setProfile("i:10940", 20, 3)
+      env.openAuctionHouse()
+      local pv = w.postView
+      assert.is_false(pv.ruleButton:IsShown())
+      assert.equal("All items (5)", pv.filterButtons.all:GetText())
+      assert.equal("Disenchant mats (2)", pv.filterButtons.mats:GetText())
+      pv.filterButtons.mats:Click()
+      assert.equal("mats", ns.posting:filter(), "remembered")
+      assert.equal("2 disenchant materials in your bags.", pv.status:GetText())
+      -- Break-even at a 25% profit: 75% of market value. A lesser essence keeps a third of the greater's.
+      assert.same({ "Lesser Magic Essence", "9", "", "7s 0c", "Below floor" }, cells(w, 1))
+      assert.same({ "Strange Dust", "40", "17s 99c", "15s 0c", "Ready: 2 x 20" }, cells(w, 2))
+      assert.equal("Post next: Strange Dust, 20 for 17s 99c each", pv.postButton:GetText())
+      pv.rows[1].button:Click()
+      assert.matches("a third of Greater Magic Essence's floor of 21s 0c", w.detailBody:GetText(), 1, true)
+      assert.matches("Combine them in threes into Greater Magic Essence instead.", w.detailBody:GetText(), 1, true)
+      pv.rows[2].button:Click()
+      assert.matches("75% of the 20s 0c market value: break-even for your snipes at a 25% profit",
+        w.detailBody:GetText(), 1, true)
+
+      assert.is_true(pv.ruleButton:IsShown())
+      pv.ruleButton:Click()
+      assert.equal("Floor rule for all mats", w.detailTitle:GetText())
+      assert.is_true(pv.ruleEditor:IsShown())
+      assert.is_true(pv.ruleBreakEven:GetChecked())
+      assert.matches("Your smallest snipe profit is 25%", w.detailBody:GetText(), 1, true)
+      pv.rulePercentInput:SetText("60")
+      pv.rulePercentInput.scripts.OnEnterPressed(pv.rulePercentInput)
+      assert.is_true(pv.rulePercent:GetChecked())
+      assert.equal("12s 0c", cells(w, 2)[4])
+      pv.ruleConvert:Click()
+      assert.equal("5s 40c", cells(w, 1)[4], "60% of its own 9s, without the essence rule")
+
+      -- A gold profit is weighed against the band's worth from this market, without the Disenchant view,
+      -- and against the class worth most: that one pays the most, so it needs the highest floor.
+      local both = { enabled = true, band = 21, types = { cloth = true, onehand = true } }
+      local D = ns.DisenchantView
+      local list = D.rows(function(id) return pv:marketValue("i:" .. id) end, D.options(ns))
+      local row
+      for _, r in ipairs(list) do if r.band.min == 21 then row = r end end
+      assert.is_true(row.armor.net ~= row.weapon.net)
+      assert.equal(math.max(row.armor.net, row.weapon.net), pv:targetWorth(both))
+      pv.rulePercentInput:SetText("0")
+      pv.rulePercentInput.scripts.OnEnterPressed(pv.rulePercentInput)
+      assert.equal("Type a whole percent from 1 to 1000.", pv.ruleStatus:GetText())
+      assert.equal(60, ns.posting:matRule().percent)
+
+      pv.filterButtons.all:Click()
+      assert.equal(5, #pv.queue:rows())
+      assert.is_false(pv.ruleButton:IsShown())
+      assert.is_false(pv.ruleEditor:IsShown())
     end)
 
     it("posts one auction per click and moves on as the bags empty", function()

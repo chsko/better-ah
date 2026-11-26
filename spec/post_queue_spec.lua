@@ -86,4 +86,49 @@ describe("PostQueue", function()
     q:setListings("i:1", { { unit = 95050, count = 1 } })
     assert.equal(95000, q:nextPost().plan.price)
   end)
+
+  describe("with disenchant materials", function()
+    local mns = helper.load("BetterAH/Core/Disenchant.lua")
+    helper.load("BetterAH/Core/MatFloors.lua", mns)
+    helper.load("BetterAH/Core/Posting.lua", mns)
+    helper.load("BetterAH/Core/PostQueue.lua", mns)
+
+    local function matQueue()
+      local settings = mns.Posting.Settings.new({})
+      settings:setProfile("i:10940", 20, 3)
+      local q = mns.PostQueue.new({ settings = settings, key = "/Normal/Horde",
+        marketValue = function() return 1000 end,
+        matFloor = function(item) return item == "i:10940" and { floor = 900 } or nil end })
+      q:setEntries({ { item = "i:2589", name = "Linen Cloth", have = 20 },
+        { item = "i:10940", name = "Strange Dust", have = 40 } })
+      return q, settings
+    end
+
+    it("shows only the materials with the mats filter, and looks up only those", function()
+      local q = matQueue()
+      local need = q:setFilter("mats")
+      assert.equal(1, #need)
+      assert.equal("i:10940", need[1].item)
+      assert.equal(1, #q:rows())
+      assert.same({ 1, 2 }, { q:counts() })
+      local done, total = q:progress()
+      assert.same({ 0, 1 }, { done, total })
+      q:setListings("i:10940", { { unit = 950, count = 20 } })
+      assert.equal("i:10940", q:nextPost().item)
+      assert.equal(1, #q:setFilter("all"), "linen still needs its lookup")
+      assert.equal(2, #q:rows())
+    end)
+
+    it("uses the rule's floor for a material without its own", function()
+      local q, settings = matQueue()
+      q:setListings("i:10940", { { unit = 880, count = 20 } })
+      local row = q:rows()[2]
+      assert.equal("below-floor", row.plan.reason)
+      assert.equal(900, row.plan.floor)
+      settings:setFloor("/Normal/Horde", "i:10940", 500)
+      row = q:rows()[2]
+      assert.equal("ready", row.state, "your own floor wins")
+      assert.equal(500, row.own)
+    end)
+  end)
 end)

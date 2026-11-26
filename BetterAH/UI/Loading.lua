@@ -61,7 +61,8 @@ end
 -- Puts a spinner and a bar in front of a status line. at = { point, rel, relPoint, x, y, width, slot }:
 -- the point the line's left edge is set with (text:SetPoint(point, rel, relPoint, x, y)), its width when
 -- it has a fixed one, and slot = true to keep the spinner's space in front of the line at all times.
--- Then :show(done, total) for a bar (total nil or 0: a bar that sweeps, for a wait with no count yet),
+-- Then :show(done, total) for a bar (total nil or 0: a bar that sweeps; no caller uses that since #83,
+-- because a bar that keeps restarting looks stuck: use :spin() for a wait with no count),
 -- :spin() for a spinner, :clear() for neither. The line moves right of whichever is shown (and narrows by
 -- as much, when it has a width). With a slot, the spinner's space is kept while no bar shows, so neither
 -- the text nor the spinner moves when the spinner starts, stops or the text changes. A slot is meant for

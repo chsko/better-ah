@@ -106,6 +106,8 @@ describe("Posting", function()
     assert.equal(8, Posting.floor(9))
     assert.equal(3, Posting.floor(3, 3.7))
     assert.is_nil(Posting.floor(nil, 0))
+    assert.equal(5, Posting.floor(9, nil, 4.2), "a rule's floor beats the default share")
+    assert.equal(3, Posting.floor(9, 3, 5), "and your own floor beats the rule")
   end)
 
   describe("Settings", function()

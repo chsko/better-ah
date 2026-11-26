@@ -914,7 +914,10 @@ function Window:renderView()
   self.disenchantPanel:SetShown(view == "disenchant")
   self.altsPanel:SetShown(view == "alts")
   self.postPanel:SetShown(view == "post")
-  if view ~= "post" then self.postView.editor:Hide() end
+  if view ~= "post" then
+    self.postView.editor:Hide()
+    if self.postView.ruleEditor then self.postView.ruleEditor:Hide() end
+  end
   if view ~= "disenchant" then self.disenchantView:hideEditors() end
   if view == "prices" then
     self:renderPrices()

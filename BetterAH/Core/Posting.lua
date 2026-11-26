@@ -56,15 +56,17 @@ function Posting.commonStack(listings)
   return best
 end
 
--- The item's floor price in copper: its own floor if set, else FLOOR_SHARE of market value rounded up.
--- nil when neither is known.
-function Posting.floor(marketValue, ownFloor)
+-- The item's floor price in copper: its own floor if set, else the rule's floor (disenchant materials,
+-- Core/MatFloors.lua), else FLOOR_SHARE of market value rounded up. nil when none is known.
+function Posting.floor(marketValue, ownFloor, ruleFloor)
   if ownFloor and ownFloor > 0 then return math.floor(ownFloor) end
+  if ruleFloor and ruleFloor > 0 then return math.ceil(ruleFloor) end
   if marketValue and marketValue > 0 then return math.ceil(marketValue * Posting.FLOOR_SHARE) end
   return nil
 end
 
 -- args: { have = units in bags, listings = {...}, marketValue = copper or nil, floor = own floor or nil,
+--         ruleFloor = the floor a rule gives when there's no own floor (or nil),
 --         profile = { stack, duration } or nil, maxStack = the item's stack size or nil,
 --         step = the smallest price step the client takes, 1 copper (default) or 100 (whole silver) }
 -- Returns a plan, one of
@@ -80,7 +82,7 @@ function Posting.plan(args)
   local listings = args.listings or {}
 
   local step = math.max(1, math.floor(tonumber(args.step) or 1))
-  local floor = Posting.floor(args.marketValue, args.floor)
+  local floor = Posting.floor(args.marketValue, args.floor, args.ruleFloor)
   local other = Posting.cheapestOther(listings)
   local price
   if other then
@@ -114,6 +116,8 @@ end
 -- Posting settings, kept across sessions in BetterAHDB.posting:
 --   profiles[item] = { stack, duration }      the same on every market
 --   floors[marketKey][item] = copper          a price, so per market like all prices (ADR 0003)
+--   mats = { kind, percent, convert }          the floor rule for disenchant materials (MatFloors.rule)
+--   filter = "all" or "mats"                   which items the Post view shows
 local Settings = {}
 Settings.__index = Settings
 Posting.Settings = Settings
@@ -123,6 +127,37 @@ function Settings.new(store)
   store.profiles = store.profiles or {}
   store.floors = store.floors or {}
   return setmetatable({ store = store }, Settings)
+end
+
+function Settings:matRule()
+  return ns.MatFloors and ns.MatFloors.rule(self.store.mats) or nil
+end
+
+-- Changes part of the material floor rule: kind ("breakeven" or "percent"), percent (1-1000) or convert.
+-- Returns false (and changes nothing) for a value that doesn't fit.
+function Settings:setMatRule(field, value)
+  local mats = type(self.store.mats) == "table" and self.store.mats or {}
+  if field == "kind" and (value == "breakeven" or value == "percent") then
+    mats.kind = value
+  elseif field == "percent" then
+    local n = tonumber(value)
+    if not (n and finite(n) and n >= 1 and n <= 1000) then return false end
+    mats.percent = math.floor(n + 0.5)
+  elseif field == "convert" and type(value) == "boolean" then
+    mats.convert = value
+  else
+    return false
+  end
+  self.store.mats = mats
+  return true
+end
+
+function Settings:filter()
+  return self.store.filter == "mats" and "mats" or "all"
+end
+
+function Settings:setFilter(filter)
+  self.store.filter = filter == "mats" and "mats" or "all"
 end
 
 function Settings:profile(item)

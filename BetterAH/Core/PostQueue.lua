@@ -15,24 +15,50 @@ local PostQueue = {}
 PostQueue.__index = PostQueue
 
 -- opts: { settings = Posting.Settings, key = market key, marketValue = function(item) -> copper or nil,
---         step = price step (1 or 100) }
+--         step = price step (1 or 100),
+--         matFloor = function(item) -> a MatFloors.floor result for a disenchant material, or nil }
 function PostQueue.new(opts)
   return setmetatable({
     settings = opts.settings, key = opts.key, marketValue = opts.marketValue or function() return nil end,
-    step = opts.step or 1, entries = {}, found = {}, skipped = {}, kept = {},
+    matFloor = opts.matFloor or function() return nil end,
+    step = opts.step or 1, entries = {}, all = {}, found = {}, skipped = {}, kept = {}, filter = "all",
   }, PostQueue)
+end
+
+local function shows(filter, e)
+  return filter ~= "mats" or (ns.MatFloors and ns.MatFloors.material(e.item)) ~= nil
+end
+
+-- Which items the queue covers: "all" or "mats" (disenchant materials only). Rows, the next post and
+-- the progress only count those. Returns the items that now need a lookup, as setEntries does.
+function PostQueue:setFilter(filter)
+  self.filter = filter == "mats" and "mats" or "all"
+  return self:setEntries(self.all)
+end
+
+-- How many of the bags' items the filter shows, and how many there are.
+function PostQueue:counts()
+  local mats = 0
+  for _, e in ipairs(self.all) do
+    if shows("mats", e) then mats = mats + 1 end
+  end
+  return mats, #self.all
 end
 
 -- entries: from PostingAPI.readBags ({ item, name, have, maxStack, ... }). Listings already found for an
 -- item are kept; items that left the bags drop out. Returns the items that still need a lookup,
 -- including ones whose lookup failed (so they are tried again).
 function PostQueue:setEntries(entries)
-  self.entries = entries or {}
+  self.all = entries or {}
+  self.entries = {}
   local need, present = {}, {}
-  for _, e in ipairs(self.entries) do
+  for _, e in ipairs(self.all) do
     present[e.item] = true
-    local found = self.found[e.item]
-    if not found or found.failed then need[#need + 1] = e end
+    if shows(self.filter, e) then
+      self.entries[#self.entries + 1] = e
+      local found = self.found[e.item]
+      if not found or found.failed then need[#need + 1] = e end
+    end
   end
   for item in pairs(self.found) do
     if not present[item] then self.found[item] = nil end
@@ -73,9 +99,12 @@ function PostQueue:row(e)
     return row
   end
   local settings = self.settings
+  local own = settings and settings:floor(self.key, e.item)
+  row.own = own
+  row.matFloor = self.matFloor(e.item)
   row.plan = ns.Posting.plan({
     have = e.have, listings = found.listings, marketValue = self.marketValue(e.item),
-    floor = settings and settings:floor(self.key, e.item), profile = settings and settings:profile(e.item),
+    floor = own, ruleFloor = row.matFloor and row.matFloor.floor, profile = settings and settings:profile(e.item),
     maxStack = e.maxStack, step = self.step,
   })
   if self.skipped[e.item] then

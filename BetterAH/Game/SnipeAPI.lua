@@ -16,7 +16,7 @@ SnipeAPI.TIMEOUT = 10
 SnipeAPI.EVENTS = {
   "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED", "AUCTION_HOUSE_BROWSE_FAILURE", "AUCTION_HOUSE_PURCHASE_COMPLETED",
   "AUCTION_HOUSE_SHOW_ERROR", "AUCTION_HOUSE_CLOSED", "AUCTION_HOUSE_THROTTLED_SYSTEM_READY",
-  "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED",
+  "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED", "ADDON_ACTION_BLOCKED", "ADDON_ACTION_FORBIDDEN",
 }
 
 local function try(fn, ...)
@@ -96,8 +96,9 @@ function SnipeAPI:buy(auctionID, price, done)
       self:finishBuy(job, false, "no answer from the auction house")
     end
   end)
-  local ok, err = pcall(ah.PlaceBid, auctionID, price)
-  if not ok then self:finishBuy(job, false, "the auction house refused: " .. tostring(err)) end
+  -- Called directly, in the click's own call stack, the way Blizzard's UI and TSM do: the game only lets
+  -- an addon buy inside a hardware event. An error here is a real error; the timeout ends the buy.
+  ah.PlaceBid(auctionID, price)
 end
 
 function SnipeAPI:finishBuy(job, ok, why)
@@ -108,9 +109,17 @@ function SnipeAPI:finishBuy(job, ok, why)
   if not fine and self.env.geterrorhandler then try(self.env.geterrorhandler(), err) end
 end
 
-function SnipeAPI:onEvent(event, arg)
+function SnipeAPI:onEvent(event, arg, arg2)
   local ah = self.env.C_AuctionHouse
-  if event == "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED" then
+  if event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
+    -- The game stopped a call (arg: the tainted addon, arg2: the function). Name it on the buy that was
+    -- waiting, so the session log says what the game refused.
+    -- The event fires inside the blocked call, so it is PlaceBid's only when it names PlaceBid.
+    if self.buying and tostring(arg2 or ""):find("PlaceBid", 1, true) then
+      self:finishBuy(self.buying, false, string.format("the game %s %s", event == "ADDON_ACTION_FORBIDDEN"
+        and "forbids addons to call" or "blocked", tostring(arg2 or "a protected call")))
+    end
+  elseif event == "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED" then
     local job = self.browsing
     if job and job.sent then self:finishBrowse(job, try(ah.GetBrowseResults) or {}) end
   elseif event == "AUCTION_HOUSE_BROWSE_FAILURE" then

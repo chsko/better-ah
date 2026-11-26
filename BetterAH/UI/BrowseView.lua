@@ -8,7 +8,7 @@ ns = ns or {}
 local BrowseView = {}
 BrowseView.__index = BrowseView
 
-BrowseView.WIDTH = 768 -- the main and detail panels together: Browse has no detail panel
+BrowseView.WIDTH = 848 -- the main and detail panels together: Browse has no detail panel
 -- { header, x, width, justify, sort column }
 BrowseView.COLUMNS = {
   { "Item", 4, 300, "LEFT", "name" }, { "Req.", 310, 40, nil, "level" }, { "Listed", 356, 56, nil, "listed" },

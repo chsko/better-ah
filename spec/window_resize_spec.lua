@@ -1,5 +1,7 @@
 local helper = require("spec.helper")
 local fake = require("spec.fake_client")
+-- The window's width at 1x (Window.WIDTH).
+local W = 1060
 
 -- The files that need the real client at load time.
 local CLIENT_ONLY = { ["Core/Init.lua"] = true, ["Core/Commands.lua"] = true }
@@ -40,7 +42,7 @@ local function dragGrip(env, w, x, y)
   local grip = w.resize.grip
   local f = env.BetterAHFrame
   local left, top = corner(f)
-  moveTo(env, left + 980 * f:GetScale(), top - 470 * f:GetScale())
+  moveTo(env, left + W * f:GetScale(), top - 470 * f:GetScale())
   grip.scripts.OnMouseDown(grip, "LeftButton")
   moveTo(env, x, y)
   grip.scripts.OnUpdate(grip, 0)
@@ -69,7 +71,7 @@ describe("Window resize grip", function()
   it("scales the window while dragging, keeping its top-left corner, and saves the scale", function()
     local env, w, ns = setup()
     local f = env.BetterAHFrame
-    local grip = dragGrip(env, w, 16 + 980 * 1.2, 652 - 470 * 1.2)
+    local grip = dragGrip(env, w, 16 + W * 1.2, 652 - 470 * 1.2)
     assert.near(1.2, f:GetScale(), 1e-9)
     local left, top = corner(f)
     assert.near(16, left, 1e-9)
@@ -87,23 +89,23 @@ describe("Window resize grip", function()
     assert.equal(0.7, f:GetScale())
     moveTo(env, 5000, -5000)
     grip.scripts.OnUpdate(grip, 0)
-    assert.near(1365 / 980, f:GetScale(), 1e-9)
+    assert.near(1365 / W, f:GetScale(), 1e-9)
     local left = corner(f)
     assert.near(0, left, 1e-9, "moved left to keep the window on screen")
     grip.scripts.OnMouseUp(grip, "LeftButton")
-    assert.near(1365 / 980, ns.db.window.scale, 1e-9)
+    assert.near(1365 / W, ns.db.window.scale, 1e-9)
   end)
 
   it("ends the drag when the window hides", function()
     local env, w, ns = setup()
-    local grip = dragGrip(env, w, 16 + 980 * 0.8, 652 - 470 * 0.8)
+    local grip = dragGrip(env, w, 16 + W * 0.8, 652 - 470 * 0.8)
     grip.scripts.OnHide(grip)
     assert.is_nil(grip.scripts.OnUpdate)
     assert.near(0.8, ns.db.window.scale, 1e-9)
   end)
 
   it("resets to 1x on a double-click", function()
-    local env, w, ns = setup({ window = { scale = 1.3 } })
+    local env, w, ns = setup({ window = { scale = 1.25 } })
     local grip = w.resize.grip
     grip.scripts.OnDoubleClick(grip, "LeftButton")
     assert.equal(1, env.BetterAHFrame:GetScale())
@@ -111,10 +113,10 @@ describe("Window resize grip", function()
   end)
 
   it("restores the saved scale, clamped to what fits on this screen", function()
-    local env = setup({ window = { scale = 1.3 } })
-    assert.equal(1.3, env.BetterAHFrame:GetScale())
+    local env = setup({ window = { scale = 1.25 } })
+    assert.equal(1.25, env.BetterAHFrame:GetScale())
     env = setup({ window = { scale = 1.5 } })
-    assert.near(1365 / 980, env.BetterAHFrame:GetScale(), 1e-9)
+    assert.near(1365 / W, env.BetterAHFrame:GetScale(), 1e-9)
   end)
 
   it("doesn't overwrite the saved scale just because this screen is too small for it", function()
@@ -125,13 +127,13 @@ describe("Window resize grip", function()
   it("fits the saved scale to the screen again each time the window opens", function()
     local env, w = setup({ window = { scale = 1.5 } })
     local f = env.BetterAHFrame
-    assert.near(1365 / 980, f:GetScale(), 1e-9)
+    assert.near(1365 / W, f:GetScale(), 1e-9)
     env.screenWidth, env.screenHeight = 2560, 1440
     w.resize.grip.scripts.OnShow(w.resize.grip)
     assert.equal(1.5, f:GetScale())
     env.screenWidth, env.screenHeight = 1000, 600
     w.resize.grip.scripts.OnShow(w.resize.grip)
-    assert.near(1000 / 980, f:GetScale(), 1e-9)
+    assert.near(1000 / W, f:GetScale(), 1e-9)
     assert.same({ 0, 600 }, { corner(f) }, "and keeps it on screen")
   end)
 
@@ -139,7 +141,7 @@ describe("Window resize grip", function()
     local env, w = setup()
     local f = env.BetterAHFrame
     f:SetPoint("TOPLEFT", env.UIParent, "BOTTOMLEFT", 300, 700)
-    dragGrip(env, w, 300 + 980 * 0.9, 700 - 470 * 0.9)
+    dragGrip(env, w, 300 + W * 0.9, 700 - 470 * 0.9)
     assert.near(0.9, f:GetScale(), 1e-9)
     local left, top = corner(f)
     assert.near(300, left, 1e-9)
@@ -148,9 +150,9 @@ describe("Window resize grip", function()
 
   it("ends the drag when the button came up unheard", function()
     local env, w, ns = setup()
-    local grip = dragGrip(env, w, 16 + 980 * 0.8, 652 - 470 * 0.8)
+    local grip = dragGrip(env, w, 16 + W * 0.8, 652 - 470 * 0.8)
     env.mouseDown = false
-    moveTo(env, 16 + 980 * 1.3, 652 - 470 * 1.3)
+    moveTo(env, 16 + W * 1.25, 652 - 470 * 1.25)
     grip.scripts.OnUpdate(grip, 0)
     assert.is_nil(grip.scripts.OnUpdate)
     assert.near(0.8, env.BetterAHFrame:GetScale(), 1e-9)
@@ -162,7 +164,7 @@ describe("Window resize grip", function()
     local shown = 0
     env.GameTooltip = { SetOwner = function() end, SetText = function() end, AddLine = function() end,
       Show = function() shown = shown + 1 end, Hide = function() end }
-    local grip = dragGrip(env, w, 16 + 980 * 0.8, 652 - 470 * 0.8)
+    local grip = dragGrip(env, w, 16 + W * 0.8, 652 - 470 * 0.8)
     grip.scripts.OnMouseUp(grip, "RightButton")
     assert.is_function(grip.scripts.OnUpdate)
     grip.scripts.OnEnter(grip)

@@ -6,7 +6,9 @@ ns = ns or {}
 
 local Window = {}
 
-local WIDTH, HEIGHT, SIDEBAR, DETAIL = 980, 470, 180, 220
+-- The detail panel is 300 wide (#101: the snipe session log needed the room); the window grew with it,
+-- so the main panel kept its size.
+local WIDTH, HEIGHT, SIDEBAR, DETAIL = 1060, 470, 180, 300
 local ROWS, ROW_HEIGHT, LIST_WIDTH = 14, 18, 540
 -- A list with a scroll bar gives up this much width on its right, so the bar has room from the rows and
 -- from the panel's edge (#53).
@@ -17,6 +19,7 @@ local COLUMNS = {
 }
 local ALT_COLUMNS = { { "Item", 4, 300 }, { "Total", 310, 90 }, { "Characters", 405, 90 } }
 local HISTORY_LINES = 7
+Window.WIDTH, Window.HEIGHT, Window.DETAIL = WIDTH, HEIGHT, DETAIL
 local BLIZZARD_FRAMES = { "AuctionFrame", "AuctionHouseFrame" }
 local TOP = -60 -- where the panels start, below the title bar and the toggle button
 

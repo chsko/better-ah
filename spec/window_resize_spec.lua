@@ -104,12 +104,112 @@ describe("Window resize grip", function()
     assert.near(0.8, ns.db.window.scale, 1e-9)
   end)
 
-  it("resets to 1x on a double-click", function()
-    local env, w, ns = setup({ window = { scale = 1.25 } })
+  it("resets to 1x in the default spot on a double-click", function()
+    local env, w, ns = setup({ window = { scale = 1.25, left = 400, top = -168 } })
     local grip = w.resize.grip
     grip.scripts.OnDoubleClick(grip, "LeftButton")
-    assert.equal(1, env.BetterAHFrame:GetScale())
+    local f = env.BetterAHFrame
+    assert.equal(1, f:GetScale())
+    assert.same({ 16, 768 - 116 }, { corner(f) })
     assert.equal(1, ns.db.window.scale)
+    assert.is_nil(ns.db.window.left)
+    assert.is_nil(ns.db.window.top)
+  end)
+
+  describe("position", function()
+    -- Drag the window by its title bar so its top-left corner ends at (left, top) in UIParent units.
+    local function moveWindow(env, left, top)
+      local f = env.BetterAHFrame
+      f.scripts.OnDragStart(f, "LeftButton")
+      f:ClearAllPoints()
+      f:SetPoint("TOPLEFT", env.UIParent, "BOTTOMLEFT", left / f:GetScale(), top / f:GetScale())
+      f.scripts.OnDragStop(f)
+    end
+
+    it("saves where the player drags the window", function()
+      local env, _, ns = setup()
+      moveWindow(env, 400, 600)
+      assert.same({ 400, 600 - 768 }, { ns.db.window.left, ns.db.window.top }, "the top from the screen's top")
+      assert.is_false(env.BetterAHFrame.userPlaced, "kept out of the client's layout cache")
+    end)
+
+    it("saves it in UIParent units when the window is scaled", function()
+      local env, _, ns = setup({ window = { scale = 1.25 } })
+      moveWindow(env, 100, 700)
+      assert.near(100, ns.db.window.left, 1e-9)
+      assert.near(700 - 768, ns.db.window.top, 1e-9)
+    end)
+
+    it("opens where it was left after a reload, at the saved scale", function()
+      local env = setup({ window = { scale = 0.8, left = 400, top = -168 } })
+      local f = env.BetterAHFrame
+      assert.equal(0.8, f:GetScale())
+      local left, top = corner(f)
+      assert.near(400, left, 1e-9)
+      assert.near(600, top, 1e-9)
+    end)
+
+    it("goes back there each time the window opens", function()
+      local env, w = setup()
+      moveWindow(env, 200, 600)
+      local f = env.BetterAHFrame
+      f:ClearAllPoints()
+      f:SetPoint("TOPLEFT", env.UIParent, "BOTTOMLEFT", 16, 652)
+      w.resize.grip.scripts.OnShow(w.resize.grip)
+      assert.same({ 200, 600 }, { corner(f) })
+    end)
+
+    it("keeps a saved spot on a screen that got smaller, without forgetting it", function()
+      local env, w, ns = setup({ window = { left = 900, top = -8 } })
+      local f = env.BetterAHFrame
+      assert.same({ 1365 - W, 760 }, { corner(f) })
+      env.screenWidth, env.screenHeight = 1200, 500
+      w.resize.grip.scripts.OnShow(w.resize.grip)
+      assert.same({ 1200 - W, 492 }, { corner(f) }, "pulled in from the right")
+      assert.same({ 900, -8 }, { ns.db.window.left, ns.db.window.top })
+    end)
+
+    it("saves the spot after a resize that had to move the window", function()
+      local env, w, ns = setup()
+      local grip = dragGrip(env, w, 5000, -5000)
+      grip.scripts.OnMouseUp(grip, "LeftButton")
+      local left, top = corner(env.BetterAHFrame)
+      assert.near(left, ns.db.window.left, 1e-9)
+      assert.near(top - 768, ns.db.window.top, 1e-9)
+    end)
+
+    it("stays the same distance from the top on a taller screen", function()
+      local env, w = setup()
+      moveWindow(env, 200, 700)
+      env.screenWidth, env.screenHeight = 2560, 1440
+      w.resize.grip.scripts.OnShow(w.resize.grip)
+      assert.same({ 200, 1440 - 68 }, { corner(env.BetterAHFrame) })
+    end)
+
+    it("ends a move and keeps the spot when the window hides mid-move", function()
+      local env, _, ns = setup()
+      local f = env.BetterAHFrame
+      f.scripts.OnDragStart(f, "LeftButton")
+      f:ClearAllPoints()
+      f:SetPoint("TOPLEFT", env.UIParent, "BOTTOMLEFT", 250, 650)
+      f.scripts.OnHide(f)
+      assert.equal(1, f.stoppedMoving)
+      assert.is_false(f.userPlaced)
+      assert.same({ 250, 650 - 768 }, { ns.db.window.left, ns.db.window.top })
+    end)
+
+    it("leaves the position alone when the window hides without a move", function()
+      local env, _, ns = setup()
+      local f = env.BetterAHFrame
+      f.scripts.OnHide(f)
+      assert.is_nil(f.stoppedMoving)
+      assert.is_nil(ns.db.window.left)
+    end)
+
+    it("ignores a broken saved spot", function()
+      local env = setup({ window = { left = "x", top = 0 / 0 } })
+      assert.same({ 16, 768 - 116 }, { corner(env.BetterAHFrame) })
+    end)
   end)
 
   it("restores the saved scale, clamped to what fits on this screen", function()

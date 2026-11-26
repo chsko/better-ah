@@ -2,7 +2,7 @@
 -- browses share its paging and the throttled message queue; item names come from
 -- C_AuctionHouse.GetItemKeyInfo, which answers nil until ITEM_KEY_ITEM_INFO_RECEIVED. Thin on purpose;
 -- the rules live in Core/Browse.lua. Checked in game; specs use spec/fake_client.lua.
-local _, ns = ...
+local addonName, ns = ...
 ns = ns or {}
 
 local BrowseAPI = {}
@@ -149,18 +149,24 @@ function BrowseAPI:bid(auctionID, amount, done)
   local why = self:blocked()
   if why then return done(false, why) end
   if not (ah and ah.PlaceBid) then return done(false, "C_AuctionHouse.PlaceBid is missing") end
-  local job = { done = done }
+  local job = { done = done, call = "PlaceBid" }
   self.bidding = job
   local posting = self:posting()
   posting.buying = true -- an error now is the bid's, not a failed post
-  after(self.env, BrowseAPI.BID_SETTLE, function() self:finishBid(job, true) end)
-  -- While placing, a block the game reports is this call's (the event fires inside it).
+  -- A bid whose call threw was never sent: it doesn't count as placed.
+  after(self.env, BrowseAPI.BID_SETTLE, function()
+    self:finishBid(job, job.sent == true, not job.sent and "the bid could not be sent" or nil)
+  end)
+  -- While placing, a block the game reports is this call's (the event fires inside it). Called directly
+  -- in the click (no pcall), as SnipeAPI calls PlaceBid.
   self.placing = job
   ah.PlaceBid(auctionID, amount)
   self.placing = nil
+  job.sent = true
 end
 
 function BrowseAPI:finishBid(job, ok, why)
+  if self.placing == job then self.placing = nil end
   if self.bidding ~= job then return end
   self.bidding = nil
   local posting = self:posting()
@@ -170,7 +176,8 @@ function BrowseAPI:finishBid(job, ok, why)
 end
 
 -- Asks for a price quote on quantity of a commodity (C_AuctionHouse.StartCommoditiesPurchase, which has
--- restrictions: call it inside a click). done(unitPrice, totalPrice) with the quote, or done(nil, why).
+-- restrictions, like PlaceBid: call it inside a click, and directly, as Blizzard's UI does. Called
+-- through pcall it was blocked in game, #108). done(unitPrice, totalPrice) with the quote, or done(nil, why).
 -- confirmCommodity buys at it.
 function BrowseAPI:quoteCommodity(itemID, quantity, done)
   local ah = self.env.C_AuctionHouse
@@ -179,26 +186,27 @@ function BrowseAPI:quoteCommodity(itemID, quantity, done)
   if not (ah and ah.StartCommoditiesPurchase and ah.ConfirmCommoditiesPurchase) then
     return done(nil, "C_AuctionHouse.StartCommoditiesPurchase is missing")
   end
-  local job = { itemID = itemID, quantity = quantity, quote = done, step = "quote" }
+  local job = { itemID = itemID, quantity = quantity, quote = done, step = "quote", call = "StartCommoditiesPurchase" }
   self.commodity = job
   local posting = self:posting()
   if posting then posting.buying = true end -- an error now is the quote's, not a failed post
   after(self.env, BrowseAPI.TIMEOUT, function()
     if self.commodity == job and job.step == "quote" then
-      self:endCommodity(job, nil, "no answer from the auction house")
+      self:endCommodity(job, nil, job.sent and "no answer from the auction house" or "the price request failed")
     end
   end)
+  -- No pcall: if the call throws, the error shows and the timeout above ends the job.
   job.placing = true
-  local ok, err = pcall(ah.StartCommoditiesPurchase, itemID, quantity)
+  ah.StartCommoditiesPurchase(itemID, quantity)
   job.placing = nil
-  if not ok then self:endCommodity(job, nil, "the quote failed: " .. tostring(err)) end
+  job.sent = true
 end
 
 -- Buys the quoted commodity. Must run inside a click. done(ok, why).
 function BrowseAPI:confirmCommodity(done)
   local job, ah = self.commodity, self.env.C_AuctionHouse
   if not (job and job.step == "quoted") then return done(false, "the price quote ran out. Ask again") end
-  job.step, job.buy = "buying", done
+  job.step, job.buy, job.call = "buying", done, "ConfirmCommoditiesPurchase"
   local posting = self:posting()
   if posting then posting.buying = true end
   after(self.env, BrowseAPI.TIMEOUT, function()
@@ -246,16 +254,24 @@ function BrowseAPI:me()
   return try(self.env.UnitGUID, "player")
 end
 
+-- The blocked call's name: the game often says only "UNKNOWN()", so name the call that was running.
+local function blockedName(job, what)
+  if what == nil or tostring(what):find("UNKNOWN", 1, true) then return job.call or "the purchase" end
+  return tostring(what)
+end
+
 function BrowseAPI:onEvent(event, a, b)
   if (event == "ITEM_KEY_ITEM_INFO_RECEIVED" or event == "GET_ITEM_INFO_RECEIVED") and self.onInfo then
     pcall(self.onInfo)
   elseif event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
+    -- a is the addon the game blames (only blocks of ours count), b the function it names.
+    if a ~= nil and a ~= addonName then return end
     local job = self.placing or (self.commodity and self.commodity.placing and self.commodity)
+    local verb = event == "ADDON_ACTION_FORBIDDEN" and "the game forbids addons to call " or "the game blocked "
     if job == self.bidding and job then
-      self:finishBid(job, false, "the game blocked " .. tostring(b or "the bid"))
+      self:finishBid(job, false, verb .. blockedName(job, b))
     elseif job and job == self.commodity then
-      local why = "the game blocked " .. tostring(b or "the purchase")
-      self:endCommodity(job, job.step == "buying" and false or nil, why)
+      self:endCommodity(job, job.step == "buying" and false or nil, verb .. blockedName(job, b))
     end
   elseif event == "PLAYER_MONEY" then
     if self.onMoney then pcall(self.onMoney) end

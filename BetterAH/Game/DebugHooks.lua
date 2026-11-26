@@ -160,6 +160,37 @@ function DebugHooks.install(env, addon)
     end, source)
   end)
 
+  -- Browse purchases (#93, #94), logged before the call so a block that follows has its context.
+  local BrowseAPI = addon.BrowseAPI
+  around(BrowseAPI, "bid", function(original, self, auctionID, amount, done)
+    if not log() then return original(self, auctionID, amount, done) end
+    add("buy", "bid %s copper on auction %s (from Browse)", tostring(amount), tostring(auctionID))
+    return original(self, auctionID, amount, function(ok, why)
+      add("buy", "bid on auction %s: %s", tostring(auctionID), ok and "placed" or tostring(why))
+      return done(ok, why)
+    end)
+  end)
+  around(BrowseAPI, "quoteCommodity", function(original, self, itemID, quantity, done)
+    if not log() then return original(self, itemID, quantity, done) end
+    add("buy", "price quote for item %s x%s (from Browse, StartCommoditiesPurchase)", tostring(itemID),
+      tostring(quantity))
+    return original(self, itemID, quantity, function(unit, total)
+      add("buy", "quote for item %s: %s", tostring(itemID),
+        unit and string.format("%s each, %s total", tostring(unit), tostring(total)) or tostring(total))
+      return done(unit, total)
+    end)
+  end)
+  around(BrowseAPI, "confirmCommodity", function(original, self, done)
+    if not log() then return original(self, done) end
+    local job = self.commodity
+    add("buy", "confirm item %s x%s (from Browse, ConfirmCommoditiesPurchase)", tostring(job and job.itemID),
+      tostring(job and job.quantity))
+    return original(self, function(ok, why)
+      add("buy", "commodity buy: %s", ok and "bought" or tostring(why))
+      return done(ok, why)
+    end)
+  end)
+
   -- One item's listings (Post view prices, snipe lookups, material prices).
   around(PostingAPI, "search", function(original, self, entry, done)
     if not log() then return original(self, entry, done) end

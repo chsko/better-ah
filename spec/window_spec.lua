@@ -2451,4 +2451,59 @@ describe("Browse item page, after review", function()
     assert.is_nil(ns.postingAPI.buying)
     assert.is_nil(ns.browseAPI.commodity)
   end)
+
+  it("names the price quote when the game blocks it as UNKNOWN(), and frees the buttons (#108)", function()
+    local env, _, ns, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    local c = item.commodityControls
+    c.quantity:SetText("1")
+    item:quantityChanged()
+    env.blockQuote = { "BetterAH", "UNKNOWN()" }
+    c.buy:Click()
+    assert.equal("No price: the game blocked StartCommoditiesPurchase. Click Buy to try again.",
+      item.messageText:GetText())
+    assert.is_nil(item.busy)
+    assert.is_nil(ns.browseAPI.commodity)
+    assert.is_nil(ns.postingAPI.buying)
+    env.blockQuote = nil
+    env.quote = function(_, qty) return 98, qty * 98 end
+    c.buy:Click()
+    env.runTimers()
+    assert.is_true(c.confirm:IsShown(), "a second try works")
+  end)
+
+  it("calls StartCommoditiesPurchase directly, so its errors are not swallowed (#108)", function()
+    local env, _, ns, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    item.commodityControls.quantity:SetText("1")
+    item:quantityChanged()
+    env.C_AuctionHouse.StartCommoditiesPurchase = function() error("boom") end
+    assert.has_error(function() item.commodityControls.buy:Click() end)
+    env.runTimers(ns.BrowseAPI.TIMEOUT + 1)
+    assert.truthy(item.messageText:GetText():find("the price request failed", 1, true))
+    assert.is_nil(item.busy)
+  end)
+
+  it("does not count a bid whose call threw as placed", function()
+    local env, _, ns, view = setupItem()
+    local item = open(view, env, "Battleforge Shoulderpads")
+    item.itemRows[1].button:Click()
+    assert.is_true(item.itemControls.bid:IsEnabled(), "the lowest bid is filled in")
+    env.C_AuctionHouse.PlaceBid = function() error("boom") end
+    assert.has_error(function() item.itemControls.bid:Click() end)
+    env.runTimers(ns.BrowseAPI.BID_SETTLE + 1)
+    assert.is_nil(ns.browseAPI.placing)
+    assert.is_nil(ns.browseAPI.bidding)
+    assert.truthy(item.messageText:GetText():find("^Bid not placed"))
+  end)
+
+  it("ignores another addon's block while a quote is asked for (#108)", function()
+    local env, _, _, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    item.commodityControls.quantity:SetText("1")
+    item:quantityChanged()
+    env.blockQuote = { "OtherAddon", "Foo()" }
+    item.commodityControls.buy:Click()
+    assert.is_true(item.busy, "still waiting for the quote")
+  end)
 end)

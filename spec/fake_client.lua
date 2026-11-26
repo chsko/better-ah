@@ -467,10 +467,12 @@ function M.new(opts)
   end
   env.GetMoney = function() return env.money end
   -- Commodity buying: StartCommoditiesPurchase quotes env.quote(itemID, quantity) -> unit, total (nil: no
-  -- quote) on the next tick; ConfirmCommoditiesPurchase succeeds unless env.commodityFails.
+  -- quote) on the next tick, unless env.blockQuote; ConfirmCommoditiesPurchase succeeds unless env.commodityFails.
   env.commodityBuys = {}
   ah.StartCommoditiesPurchase = function(itemID, quantity, extra)
     assert(extra == nil, "StartCommoditiesPurchase takes two arguments")
+    -- env.blockQuote = { addon, function name }: the game blocks the call, as it did in game (#108).
+    if env.blockQuote then return env.fire("ADDON_ACTION_BLOCKED", env.blockQuote[1], env.blockQuote[2]) end
     env.quoted = { itemID = itemID, quantity = quantity }
     env.C_Timer.After(0, function()
       local unit, total

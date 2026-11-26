@@ -2507,6 +2507,8 @@ describe("Browse item page, after review", function()
     item:quantityChanged()
     env.blockQuote = { "BetterAH", "UNKNOWN()" }
     c.buy:Click()
+    assert.is_true(item.busy, "a price may still come for a while")
+    env.runTimers(ns.BrowseAPI.BLOCK_GRACE + 1)
     assert.equal("No price: the game blocked StartCommoditiesPurchase. Click Buy to try again.",
       item.messageText:GetText())
     assert.is_nil(item.busy)
@@ -2542,6 +2544,25 @@ describe("Browse item page, after review", function()
     assert.is_nil(ns.browseAPI.placing)
     assert.is_nil(ns.browseAPI.bidding)
     assert.truthy(item.messageText:GetText():find("^Bid not placed"))
+  end)
+
+  it("still shows a price that comes after a block (#112)", function()
+    local env, _, ns, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    local c = item.commodityControls
+    c.quantity:SetText("2")
+    item:quantityChanged()
+    local start = env.C_AuctionHouse.StartCommoditiesPurchase
+    env.C_AuctionHouse.StartCommoditiesPurchase = function(itemID, quantity)
+      env.fire("ADDON_ACTION_BLOCKED", "BetterAH", "UNKNOWN()")
+      return start(itemID, quantity)
+    end
+    env.quote = function(_, qty) return 98, qty * 98 end
+    c.buy:Click()
+    env.runTimers()
+    assert.is_true(c.confirm:IsShown(), "the price came: Confirm is offered")
+    env.runTimers(ns.BrowseAPI.BLOCK_GRACE + 1)
+    assert.is_true(c.confirm:IsShown(), "the block doesn't undo the quote")
   end)
 
   it("ignores another addon's block while a quote is asked for (#108)", function()

@@ -16,6 +16,9 @@ BrowseAPI.EVENTS = {
 }
 -- How long to wait for the auction house to answer a bid or a commodity quote or purchase, in seconds.
 BrowseAPI.TIMEOUT = 10
+-- After the game reports a block while the quote is asked for, how long a price may still come, in seconds:
+-- in game (#112) the block may not be the quote's own call, so the quote isn't given up at once.
+BrowseAPI.BLOCK_GRACE = 3
 -- A bid has no event of its own when it works: no error within this many seconds counts as placed.
 BrowseAPI.BID_SETTLE = 4
 
@@ -270,6 +273,13 @@ function BrowseAPI:onEvent(event, a, b)
     local verb = event == "ADDON_ACTION_FORBIDDEN" and "the game forbids addons to call " or "the game blocked "
     if job == self.bidding and job then
       self:finishBid(job, false, verb .. blockedName(job, b))
+    elseif job and job == self.commodity and job.step == "quote" then
+      -- A price that still comes wins; without one, the block is the answer.
+      local why = verb .. blockedName(job, b)
+      job.blocked = job.blocked or why
+      after(self.env, BrowseAPI.BLOCK_GRACE, function()
+        if self.commodity == job and job.step == "quote" then self:endCommodity(job, nil, job.blocked) end
+      end)
     elseif job and job == self.commodity then
       self:endCommodity(job, job.step == "buying" and false or nil, verb .. blockedName(job, b))
     end

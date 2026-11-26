@@ -67,11 +67,26 @@ end
 -- auction house. It stays loaded, just invisible and out of the way.
 function Window:concealBlizzard()
   local frame = self:blizzardFrame()
-  if not frame or self.concealed[frame] then return end
+  if not frame then return end
+  self:hookBlizzard(frame)
+  if self.concealed[frame] then return end
   self.concealed[frame] = { alpha = frame:GetAlpha(), scale = frame:GetScale(), mouse = frame:IsMouseEnabled() }
   frame:SetAlpha(0)
   frame:SetScale(0.001)
   frame:EnableMouse(false)
+end
+
+-- Conceal Blizzard's window as soon as it shows, unless the player switched to it, so it is never
+-- drawn for a frame in its own spot before ours appears in the saved one (issue #107). It can show
+-- before our AUCTION_HOUSE_SHOW handler runs, while the mode still says "closed"; every visit starts
+-- in our window, so conceal then too.
+function Window:hookBlizzard(frame)
+  self.hooked = self.hooked or {}
+  if self.hooked[frame] or not frame.HookScript then return end
+  self.hooked[frame] = true
+  frame:HookScript("OnShow", function()
+    if self.model.mode ~= "blizzard" then self:concealBlizzard() end
+  end)
 end
 
 function Window:revealBlizzard()
@@ -1006,7 +1021,9 @@ function Window:onEvent(event)
     -- A new visit (maybe another market): earlier failures don't carry over.
     self.scanFailures, self.scanFailedAt, self.scanWhy = 0, nil, nil
     self:scheduleAutoScan(ns.AutoScan.FIRST_DELAY)
-    -- Blizzard shows its own window on the same event; let it finish first.
+    -- Blizzard shows its own window on the same event. Conceal it now, before it is drawn (issue
+    -- #107), but let Blizzard finish before ours renders.
+    self:concealBlizzard()
     if self.env.C_Timer then
       self.env.C_Timer.After(0, function() self:render() end)
     else

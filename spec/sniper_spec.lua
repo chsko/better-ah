@@ -228,6 +228,15 @@ describe("Sniper", function()
       assert.equal(1000, s:cheapest(key))
     end)
 
+    it("keeps an item's full name from a lookup's links (#147)", function()
+      local s = Sniper.Session.new(nil, 100)
+      local key = { itemID = 5, itemSuffix = 3 }
+      assert.is_nil(s:nameOf(key))
+      s:sawListings(key, { { auctionID = 1, unit = 900, link = "|cff1eff00|Hitem:5::|h[Gloves of the Eagle]|h|r" } })
+      assert.equal("Gloves of the Eagle", s:nameOf(key), "kept even without a lookup to price from")
+      assert.is_nil(s:nameOf({ itemID = 5 }), "another suffix is another key")
+    end)
+
     it("keeps the log short", function()
       local s = Sniper.Session.new(nil, 0)
       for i = 1, Sniper.LOG_LINES + 5 do s:log(i, "passed", { name = "X" .. i }) end

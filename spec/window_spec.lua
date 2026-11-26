@@ -2617,6 +2617,51 @@ describe("Browse item page, after review", function()
     assert.is_true(c.confirm:IsShown(), "the block doesn't undo the quote")
   end)
 
+  it("sends the purchase before redrawing, so the clicked button is still as clicked (#120)", function()
+    local env, _, _, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    local c = item.commodityControls
+    c.quantity:SetText("1")
+    item:quantityChanged()
+    local start, seen = env.C_AuctionHouse.StartCommoditiesPurchase, nil
+    env.C_AuctionHouse.StartCommoditiesPurchase = function(...)
+      seen = { enabled = c.buy:IsEnabled(), message = item.messageText:GetText() }
+      return start(...)
+    end
+    env.quote = function(_, qty) return 98, qty * 98 end
+    c.buy:Click()
+    assert.is_true(seen.enabled, "Buy is still enabled when the game is asked")
+    assert.are_not.equal("Asking for the price...", seen.message, "nothing redrawn yet")
+    assert.equal("Asking for the price...", item.messageText:GetText(), "drawn right after")
+    assert.is_false(c.buy:IsEnabled())
+    local item2 = open(view, env, "Battleforge Shoulderpads")
+    item2.itemRows[1].button:Click()
+    local placeBid, bidSeen = env.C_AuctionHouse.PlaceBid, nil
+    env.C_AuctionHouse.PlaceBid = function(...)
+      bidSeen = item2.itemControls.buy:IsEnabled()
+      return placeBid(...)
+    end
+    item2.itemControls.buy:Click()
+    assert.is_true(bidSeen, "Buy out is still enabled when PlaceBid runs")
+  end)
+
+  it("asks for the price on Enter in the quantity box (#120)", function()
+    local env, _, _, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    local c = item.commodityControls
+    c.quantity:SetText("2")
+    item:quantityChanged()
+    env.quote = function(_, qty) return 98, qty * 98 end
+    c.quantity.scripts.OnEnterPressed(c.quantity)
+    env.runTimers()
+    assert.is_true(c.confirm:IsShown())
+    local asked = 0
+    local start = env.C_AuctionHouse.StartCommoditiesPurchase
+    env.C_AuctionHouse.StartCommoditiesPurchase = function(...) asked = asked + 1 return start(...) end
+    c.quantity.scripts.OnEnterPressed(c.quantity)
+    assert.equal(0, asked, "Enter doesn't ask again over a quote that is showing")
+  end)
+
   it("ignores another addon's block while a quote is asked for (#108)", function()
     local env, _, _, view = setupItem()
     local item = open(view, env, "Strange Dust")

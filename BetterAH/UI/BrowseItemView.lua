@@ -166,7 +166,11 @@ function ItemView:buildCommodityControls()
   local qty = input(env, layer, 80, 6)
   qty:SetPoint("BOTTOMLEFT", layer, "BOTTOMLEFT", 16, 156)
   qty:SetScript("OnTextChanged", function() self:quantityChanged() end)
-  qty:SetScript("OnEnterPressed", function(b) b:ClearFocus() end)
+  -- Enter asks for the price too: a key press is a hardware event the game has let through (#120).
+  qty:SetScript("OnEnterPressed", function(b)
+    b:ClearFocus()
+    if c.buy:IsEnabled() then self:quote() end
+  end)
   c.quantity = qty
   local max = button(env, layer, "Max", 60)
   max:SetPoint("LEFT", qty, "RIGHT", 8, 0)
@@ -177,7 +181,8 @@ function ItemView:buildCommodityControls()
   buy:SetPoint("BOTTOMLEFT", layer, "BOTTOMLEFT", 12, 124)
   buy:SetPoint("BOTTOMRIGHT", layer, "BOTTOMRIGHT", -12, 124)
   buy:SetScript("OnClick", function() self:quote() end)
-  ns.Window.tooltip(env, buy, "Buy", "Ask the auction house for the price of this many, then confirm.")
+  ns.Window.tooltip(env, buy, "Buy",
+    "Ask the auction house for the price of this many, then confirm. Or press Enter in the quantity box.")
   c.buy = buy
   local confirmText = layer:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   confirmText:SetPoint("BOTTOMLEFT", layer, "BOTTOMLEFT", 12, 92)
@@ -328,14 +333,23 @@ function ItemView:say(text)
   self:render()
 end
 
+-- Sends a purchase before the page is redrawn. In game the Buy click's StartCommoditiesPurchase was blocked
+-- when the page (and the clicked button) was redrawn first, though the same code from a key press got its
+-- price (#120); not redrawing first is the guess, as other addons' Buy buttons do. The message is set before
+-- the call and drawn after it. A callback that answers at once has already drawn its own message.
+function ItemView:sendThenDraw(text, send)
+  self.message = text
+  send()
+  self:render()
+end
+
 function ItemView:buyout()
   local api, row = self:api(), self.selected
   local ok, why = ns.Buying.canBuyout(row, api and api:money())
   if not ok then return self:say(why) end
   local name, price = self.row.name or "the item", row.buyout
   self.busy = true
-  self:say("Buying...")
-  api:buyout(row.auctionID, price, function(bought, reason, kind)
+  self:sendThenDraw("Buying...", function() api:buyout(row.auctionID, price, function(bought, reason, kind)
     self.busy = nil
     if bought then
       self:say(string.format("Bought %s for %s.", name, money(price)))
@@ -346,7 +360,7 @@ function ItemView:buyout()
       self:say("Not bought: " .. tostring(reason) .. ".")
     end
     self:load()
-  end)
+  end) end)
 end
 
 function ItemView:placeBid()
@@ -355,8 +369,7 @@ function ItemView:placeBid()
   local ok, why = ns.Buying.canBid(row, amount, api and api:money())
   if not ok then return self:say(why) end
   self.busy = true
-  self:say("Bidding...")
-  api:bid(row.auctionID, amount, function(placed, reason)
+  self:sendThenDraw("Bidding...", function() api:bid(row.auctionID, amount, function(placed, reason)
     self.busy = nil
     if placed then
       self:say(string.format("Bid %s sent. If someone outbids you, your gold comes back by mail.", money(amount)))
@@ -364,7 +377,7 @@ function ItemView:placeBid()
       self:say("Bid not placed: " .. tostring(reason) .. ".")
     end
     self:load()
-  end)
+  end) end)
 end
 
 function ItemView:quote()
@@ -375,9 +388,8 @@ function ItemView:quote()
   local shown, qty = ladder.total, ladder.quantity
   local token = {}
   self.busy, self.quoting = true, token
-  self:say("Asking for the price...")
   -- The auction house can send the quote again (a new price): each one replaces the last.
-  api:quoteCommodity(self.row.itemID, qty, function(unit, total)
+  self:sendThenDraw("Asking for the price...", function() api:quoteCommodity(self.row.itemID, qty, function(unit, total)
     if self.quoting ~= token then return end
     self.busy = nil
     if not unit then
@@ -388,7 +400,7 @@ function ItemView:quote()
       change = ns.Buying.quote(shown, total) }
     self.message = nil
     self:render()
-  end)
+  end) end)
 end
 
 function ItemView:confirm()
@@ -396,8 +408,7 @@ function ItemView:confirm()
   if not q or q.quantity ~= self:quantity() then return self:cancelQuote() end
   local name = self.row.name or "the item"
   self.busy, self.quoted, self.quoting = true, nil, nil
-  self:say("Buying...")
-  api:confirmCommodity(function(bought, reason)
+  self:sendThenDraw("Buying...", function() api:confirmCommodity(function(bought, reason)
     self.busy = nil
     if bought then
       self:say(string.format("Bought %d %s for %s.", q.quantity, name, money(q.total)))
@@ -409,7 +420,7 @@ function ItemView:confirm()
       self:say("Not bought: " .. tostring(reason) .. ".")
     end
     self:load()
-  end)
+  end) end)
 end
 
 function ItemView:cancelQuote()

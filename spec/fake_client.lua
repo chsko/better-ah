@@ -408,6 +408,16 @@ function M.new(opts)
     env.C_Timer.After(0, function() env.fire("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED") end)
   end
   ah.GetBrowseResults = function() return env.browseResults end
+  -- More pages: env.browsePages is a list of pages still to come, each answered on the next tick with
+  -- AUCTION_HOUSE_BROWSE_RESULTS_ADDED. HasFullBrowseResults is true once it is empty.
+  env.browsePages = {}
+  ah.HasFullBrowseResults = function() return #env.browsePages == 0 end
+  ah.RequestMoreBrowseResults = function()
+    env.moreBrowses = (env.moreBrowses or 0) + 1
+    local page = table.remove(env.browsePages, 1)
+    if not page or env.browseSilent then return end
+    env.C_Timer.After(0, function() env.fire("AUCTION_HOUSE_BROWSE_RESULTS_ADDED", page) end)
+  end
   -- Buying: PlaceBid answers with AUCTION_HOUSE_PURCHASE_COMPLETED on the next tick, or with
   -- AUCTION_HOUSE_SHOW_ERROR when env.bidFails. env.money is the character's gold.
   env.bids, env.money = {}, 1000000

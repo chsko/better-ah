@@ -13,8 +13,12 @@ local SnipeAPI = {}
 SnipeAPI.__index = SnipeAPI
 
 SnipeAPI.TIMEOUT = 10
+-- The auction house answers a browse a page at a time (500 results here). A check reads the first page
+-- and up to this many more, so cheap listings past the first page are seen too.
+SnipeAPI.MAX_PAGES = 10
 SnipeAPI.EVENTS = {
-  "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED", "AUCTION_HOUSE_BROWSE_FAILURE", "AUCTION_HOUSE_PURCHASE_COMPLETED",
+  "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED", "AUCTION_HOUSE_BROWSE_RESULTS_ADDED", "AUCTION_HOUSE_BROWSE_FAILURE",
+  "AUCTION_HOUSE_PURCHASE_COMPLETED",
   "AUCTION_HOUSE_SHOW_ERROR", "AUCTION_HOUSE_CLOSED", "AUCTION_HOUSE_THROTTLED_SYSTEM_READY",
   "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED", "ADDON_ACTION_BLOCKED", "ADDON_ACTION_FORBIDDEN",
 }
@@ -52,12 +56,40 @@ function SnipeAPI:browse(query, done)
   if not (ah and ah.SendBrowseQuery and ah.GetBrowseResults) then
     return done(nil, "C_AuctionHouse.SendBrowseQuery is missing")
   end
-  local job = { query = query, done = done }
+  local job = { query = query, done = done, pages = 0 }
   self.browsing = job
-  after(self, function()
-    if self.browsing == job then self:finishBrowse(job, nil, "no answer from the auction house") end
-  end)
+  self:waitFor(job)
   if self.posting:ready() then self:sendBrowse(job) end
+end
+
+-- Each page gets its own TIMEOUT. A page that never comes ends the browse with the pages read so far.
+function SnipeAPI:waitFor(job)
+  local stamp = {}
+  job.stamp = stamp
+  after(self, function()
+    if self.browsing ~= job or job.stamp ~= stamp then return end
+    if job.results then return self:finishBrowse(job, job.results) end
+    self:finishBrowse(job, nil, "no answer from the auction house")
+  end)
+end
+
+-- After a page: ask for the next one while the auction house has more, up to MAX_PAGES.
+function SnipeAPI:more(job)
+  local ah = self.env.C_AuctionHouse
+  local full = try(ah.HasFullBrowseResults)
+  if full ~= false or type(ah.RequestMoreBrowseResults) ~= "function" or job.pages >= SnipeAPI.MAX_PAGES then
+    return self:finishBrowse(job, job.results)
+  end
+  job.wantMore = true
+  self:waitFor(job)
+  if self.posting:ready() then self:requestMore(job) end
+end
+
+function SnipeAPI:requestMore(job)
+  job.wantMore, job.paging = false, true
+  job.pages = job.pages + 1
+  local ok = pcall(self.env.C_AuctionHouse.RequestMoreBrowseResults)
+  if not ok then self:finishBrowse(job, job.results) end
 end
 
 function SnipeAPI:sendBrowse(job)
@@ -121,16 +153,39 @@ function SnipeAPI:onEvent(event, arg, arg2)
     end
   elseif event == "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED" then
     local job = self.browsing
-    if job and job.sent then self:finishBrowse(job, try(ah.GetBrowseResults) or {}) end
+    -- Only the first answer: a later UPDATED during paging comes from another query (an item search).
+    if job and job.sent and not job.paging and not job.results then
+      -- A copy: later pages are added to it.
+      job.results = {}
+      for _, r in ipairs(try(ah.GetBrowseResults) or {}) do job.results[#job.results + 1] = r end
+      self:more(job)
+    end
+  elseif event == "AUCTION_HOUSE_BROWSE_RESULTS_ADDED" then
+    local job = self.browsing
+    if job and job.paging then
+      job.paging = false
+      for _, r in ipairs(type(arg) == "table" and arg or {}) do job.results[#job.results + 1] = r end
+      self:more(job)
+    end
   elseif event == "AUCTION_HOUSE_BROWSE_FAILURE" then
     if self.browsing then self:finishBrowse(self.browsing, nil, "the auction house couldn't browse") end
   elseif event == "AUCTION_HOUSE_THROTTLED_SYSTEM_READY" then
     local job = self.browsing
-    if job and not job.sent then self:sendBrowse(job) end
+    if job and not job.sent then
+      self:sendBrowse(job)
+    elseif job and job.wantMore then
+      self:requestMore(job)
+    end
   elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" then
     -- The client dropped a query, maybe this browse: send it again once, when the system is ready.
     local job = self.browsing
-    if job and job.sent and not job.resent then
+    if job and job.paging and not job.reasked then
+      -- Maybe the request for the next page: ask for it again once, when the system is ready.
+      job.paging, job.reasked = false, true
+      job.pages = job.pages - 1
+      job.wantMore = true
+      if self.posting:ready() then self:requestMore(job) end
+    elseif job and job.sent and not job.results and not job.resent then
       job.sent, job.resent = false, true
       if self.posting:ready() then self:sendBrowse(job) end
     end

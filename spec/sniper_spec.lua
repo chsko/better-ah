@@ -190,6 +190,60 @@ describe("SnipeAPI", function()
     assert.is_nil(why)
   end)
 
+  it("reads every page of a browse, up to a cap", function()
+    local env, api = setup()
+    env.openAuctionHouse()
+    env.browseResults = { { itemKey = { itemID = 1 }, minPrice = 5 } }
+    env.browsePages = { { { itemKey = { itemID = 2 }, minPrice = 6 } }, { { itemKey = { itemID = 3 }, minPrice = 7 } } }
+    local got
+    api:browse({}, function(r) got = r end)
+    env.runTimers()
+    assert.equal(3, #got, "the first page and two more")
+    assert.equal(3, got[3].itemKey.itemID)
+    assert.equal(2, env.moreBrowses)
+    env.browsePages = {}
+    for i = 1, api.MAX_PAGES + 2 do env.browsePages[i] = { { itemKey = { itemID = 100 + i }, minPrice = 1 } } end
+    api:browse({}, function(r) got = r end)
+    env.runTimers()
+    assert.equal(1 + api.MAX_PAGES, #got, "no more than MAX_PAGES extra pages")
+  end)
+
+  it("asks again for a page the client dropped", function()
+    local env, api = setup()
+    env.openAuctionHouse()
+    env.browseResults = { { itemKey = { itemID = 1 }, minPrice = 5 } }
+    local page = { { itemKey = { itemID = 2 }, minPrice = 6 } }
+    env.browsePages = { page }
+    local requestMore = env.C_AuctionHouse.RequestMoreBrowseResults
+    local dropped = false
+    env.C_AuctionHouse.RequestMoreBrowseResults = function()
+      if not dropped then
+        dropped = true
+        env.C_Timer.After(0, function() env.fire("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED") end)
+        return
+      end
+      return requestMore()
+    end
+    local got
+    api:browse({}, function(r) got = r end)
+    env.runTimers()
+    assert.equal(1, #env.browses, "the browse isn't sent again")
+    assert.equal(2, #got)
+  end)
+
+  it("keeps the pages read when a later page never comes", function()
+    local env, api = setup()
+    env.openAuctionHouse()
+    env.browseResults = { { itemKey = { itemID = 1 }, minPrice = 5 } }
+    env.browsePages = { { { itemKey = { itemID = 2 }, minPrice = 6 } } }
+    local got, why
+    api:browse({}, function(r, w) got, why = r, w end)
+    env.browseSilent = true
+    env.runTimers(10)
+    assert.equal(1, #got)
+    assert.is_nil(why)
+  end)
+
   it("waits for the throttle and gives up when nothing answers", function()
     local env, api = setup()
     env.openAuctionHouse()

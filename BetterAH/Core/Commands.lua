@@ -1,5 +1,5 @@
 -- Slash commands. Thin glue between the chat frame and the pure modules.
-local _, ns = ...
+local addonName, ns = ...
 
 -- Chat treats "|" as an escape, so it is doubled in the line to print it as typed.
 -- What it prints also goes in the debug log (#99), so /bah bags and /bah selftest reach a bug report.
@@ -66,36 +66,62 @@ end
 -- click, to find out why the game blocks Buy. "/bah quote" goes through Browse's own code; "/bah quote raw"
 -- calls the game directly from here, as other addons do, and drops the quote once it comes. Never buys.
 local StartCommoditiesPurchase = C_AuctionHouse and C_AuctionHouse.StartCommoditiesPurchase
-local rawWatch
+local RAW_WAIT = 10
+local rawWatch, rawArmed
+
+local function disarm()
+  rawArmed = nil
+  if rawWatch then rawWatch:UnregisterAllEvents() end
+end
+
 commands.quote = function(rest)
   local view = ns.window and ns.window.browseView
   local item = view and view.item
   local row = item and item.row
-  if not (row and item.list and item.list.commodity) then
+  if not (row and item.list and item.list.commodity and item:showing()) then
     return say("Open a commodity in Browse first, then type /bah quote (or /bah quote raw).")
   end
+  local api = ns.browseAPI
+  local why = api and api:blocked()
+  if why then return say("Not now: " .. why .. ".") end
   if rest:lower() ~= "raw" then
-    say("Asking for a price on 1 " .. tostring(row.name) .. " through Browse (from a key press)...")
+    say("Asking for a price on 1 " .. tostring(row.name) .. " through Browse (from a key press). "
+      .. "It shows in Browse; Confirm would buy it, Cancel drops it.")
     item.commodityControls.quantity:SetText("1")
     item:quantityChanged()
     return item:quote()
   end
   if not StartCommoditiesPurchase then return say("C_AuctionHouse.StartCommoditiesPurchase is missing.") end
+  if rawArmed then return say("Still waiting for the last raw quote.") end
   if not rawWatch then
     rawWatch = CreateFrame("Frame")
-    rawWatch:SetScript("OnEvent", function(f, event, unit, total)
-      f:UnregisterAllEvents()
+    rawWatch:SetScript("OnEvent", function(_, event, a, b)
+      if event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
+        if a ~= nil and a ~= addonName then return end
+        say("Raw quote: " .. event .. " " .. tostring(b) .. ".")
+        return disarm()
+      end
+      disarm()
       if event == "COMMODITY_PRICE_UPDATED" then
-        say(string.format("Raw quote came: %s each, %s in all. Dropped, nothing bought.", tostring(unit),
-          tostring(total)))
+        say(string.format("Raw quote came: %s each, %s in all. Dropped, nothing bought.", tostring(a), tostring(b)))
         if C_AuctionHouse.CancelCommoditiesPurchase then C_AuctionHouse.CancelCommoditiesPurchase() end
       else
         say("Raw quote: " .. event .. ".")
       end
     end)
   end
-  rawWatch:RegisterEvent("COMMODITY_PRICE_UPDATED")
-  rawWatch:RegisterEvent("COMMODITY_PRICE_UNAVAILABLE")
+  for _, e in ipairs({ "COMMODITY_PRICE_UPDATED", "COMMODITY_PRICE_UNAVAILABLE", "AUCTION_HOUSE_CLOSED",
+    "ADDON_ACTION_BLOCKED", "ADDON_ACTION_FORBIDDEN" }) do
+    rawWatch:RegisterEvent(e)
+  end
+  local token = {}
+  rawArmed = token
+  C_Timer.After(RAW_WAIT, function()
+    if rawArmed == token then
+      disarm()
+      say("Raw quote: no answer in " .. RAW_WAIT .. " s.")
+    end
+  end)
   say("Asking the game directly for a price on 1 " .. tostring(row.name) .. " (item " .. tostring(row.itemID) .. ")...")
   StartCommoditiesPurchase(row.itemID, 1)
 end

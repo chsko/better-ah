@@ -831,14 +831,15 @@ function Window:placeScanSpinner()
   self.scanSpinner:SetPoint("RIGHT", text, "RIGHT", -width - 6, 0)
 end
 
--- A scan's progress on a status line's loading indicator: a bar of materials looked up, or a sweeping
--- bar while a full scan runs (the auction house doesn't say how far along it is).
+-- A scan's progress on a status line's loading indicator: a bar of materials looked up, or a spinner
+-- while a full scan runs. The auction house doesn't say how far along a full scan is, and a bar that
+-- sweeps over and over looked stuck (#83).
 function Window:showProgress(loading)
   local scan = self.materialScan
   if scan then
     loading:show(scan.done, scan.total)
   elseif self.addon.auctionAPI and self.addon.auctionAPI.pending then
-    loading:show()
+    loading:spin()
   else
     loading:clear()
   end

@@ -2,7 +2,10 @@ local helper = require("spec.helper")
 
 describe("Browse", function()
   local Browse
-  before_each(function() Browse = helper.load("BetterAH/Core/Browse.lua").Browse end)
+  before_each(function()
+    local ns = helper.load("BetterAH/Core/BrowseFilters.lua")
+    Browse = helper.load("BetterAH/Core/Browse.lua", ns).Browse
+  end)
 
   describe("query", function()
     it("searches the name as typed, trimmed, with no level limits by default", function()
@@ -27,6 +30,18 @@ describe("Browse", function()
       q = Browse.query({ minLevel = 25 })
       assert.equal(25, q.minLevel)
       assert.equal(0, q.maxLevel)
+    end)
+
+    it("searches a category with its item class filters, chips and implicit filter", function()
+      local category = { name = "Mail", filters = { { classID = 4, subClassID = 3 } }, implicitFilter = 99 }
+      local q = Browse.query({ text = "", category = category, path = { "Armor", "Mail" },
+        chips = { usable = true, rarity = { poor = false } } })
+      assert.same({ { classID = 4, subClassID = 3 } }, q.itemClassFilters)
+      assert.same({ 2, 7, 8, 9, 10, 11, 99 }, q.filters)
+      assert.same({ "Armor", "Mail" }, q.path)
+      assert.equal('3 items in Armor / Mail, level 21-30', Browse.summary(3, { searchString = "", minLevel = 21,
+        maxLevel = 30, path = { "Armor", "Mail" } }))
+      assert.same({ 6, 7, 8, 9, 10, 11 }, Browse.query({ chips = {} }).filters, "chips alone send the rarities")
     end)
 
     it("refuses levels that aren't whole numbers in range", function()

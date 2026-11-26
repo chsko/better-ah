@@ -50,13 +50,26 @@ function Browse.query(input)
     return nil, string.format("Levels are whole numbers from 0 to %d.", Browse.MAX_LEVEL)
   end
   if lo and hi and lo > hi then lo, hi = hi, lo end
-  return { searchString = Browse.searchText(input.text), minLevel = lo or 0, maxLevel = hi or 0,
+  local query = { searchString = Browse.searchText(input.text), minLevel = lo or 0, maxLevel = hi or 0,
     filters = {}, itemClassFilters = {}, sorts = Browse.PRICE_SORT }
+  -- Categories and filter chips (#92): input.category is a category from BrowseFilters.tree (its item
+  -- class filters, and its implicit filter), input.chips the chip state, input.path the category's names.
+  local F = ns.BrowseFilters
+  local category = type(input.category) == "table" and input.category or nil
+  if category then
+    for i, f in ipairs(category.filters or {}) do
+      query.itemClassFilters[i] = { classID = f.classID, subClassID = f.subClassID, inventoryType = f.inventoryType }
+    end
+  end
+  if F and (input.chips or category) then query.filters = F.filters(input.chips, category) end
+  if type(input.path) == "table" and #input.path > 0 then query.path = input.path end
+  return query
 end
 
 -- The search history panel beside the results (#129): how wide it starts, and how far the divider
 -- between the two can be dragged. The results get the rest of Browse's width.
-Browse.HISTORY_WIDTH, Browse.HISTORY_MIN, Browse.HISTORY_MAX = 260, 160, 360
+-- (At most 320, so the search row, with the Category button, keeps room for its search box.)
+Browse.HISTORY_WIDTH, Browse.HISTORY_MIN, Browse.HISTORY_MAX = 260, 160, 320
 
 -- A history panel width to use: a saved or dragged width rounded and kept in range, else the default.
 function Browse.historyWidth(width)
@@ -172,6 +185,9 @@ function Browse.summary(count, query, truncated)
   local parts = {}
   local text = query and query.searchString or ""
   if text ~= "" then parts[#parts + 1] = string.format("for \"%s\"", text) end
+  if query and query.path and ns.BrowseFilters then
+    parts[#parts + 1] = "in " .. ns.BrowseFilters.label(query.path)
+  end
   local lo, hi = query and query.minLevel or 0, query and query.maxLevel or 0
   if lo > 0 and hi > 0 then
     parts[#parts + 1] = lo == hi and ("level " .. lo) or string.format("level %d-%d", lo, hi)

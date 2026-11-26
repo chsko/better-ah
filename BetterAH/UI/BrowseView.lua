@@ -29,6 +29,12 @@ function BrowseView:settings()
   return self.addon.browseSettings
 end
 
+-- This character's key for its saved category and filters, or nil while the game hasn't said.
+function BrowseView:characterKey()
+  local tracker = ns.CharacterTracker
+  return tracker and tracker.characterKey and tracker.characterKey(self.env) or nil
+end
+
 function BrowseView:api()
   return self.addon.browseAPI
 end
@@ -52,6 +58,8 @@ function BrowseView:build(f, x, y, width, height)
   container:SetSize(width, height)
   self.container = container
   self.width, self.height = width, height
+  -- A menu left open doesn't come back open with the window.
+  container:SetScript("OnHide", function() self:closeMenus() end)
   local panel = env.CreateFrame("Frame", nil, container)
   panel:SetPoint("TOPLEFT", container, "TOPLEFT", 0, 0)
   panel:SetSize(width, height)
@@ -91,6 +99,19 @@ function BrowseView:build(f, x, y, width, height)
   search:SetScript("OnTabPressed", function() lo:SetFocus() end)
   self.minLevel, self.maxLevel = lo, hi
 
+  -- The Category button and the filter row under the search row (#92).
+  local top = 0
+  if ns.BrowseFilterBar then
+    self.filterBar = ns.BrowseFilterBar.new(self)
+    self.filterBar:build(panel, hi)
+    top = ns.BrowseFilterBar.TOP
+  end
+  -- The results table sits under them.
+  local list = env.CreateFrame("Frame", nil, panel)
+  list:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -top)
+  list:SetSize(width, height - top)
+  self.list = list
+
   local go = env.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
   go:SetSize(80, 22)
   go:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -4, -1)
@@ -100,9 +121,9 @@ function BrowseView:build(f, x, y, width, height)
   self.searchButton = go
 
   local w = self.window
-  self.rows = w:buildRows(panel, BrowseView.COLUMNS, function(index) self:selectRow(index) end,
+  self.rows = w:buildRows(list, BrowseView.COLUMNS, function(index) self:selectRow(index) end,
     function(offset) self.offset = offset; self:render() end, width)
-  self:buildHeaders(panel)
+  self:buildHeaders(list)
 
   local status = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   status:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 4, 4)
@@ -200,11 +221,14 @@ function BrowseView:layout(historyWidth)
   local listWidth = self.width - BrowseView.DIVIDER - historyWidth
   self.listWidth = listWidth
   self.panel:SetWidth(listWidth)
-  self.searchBox:SetWidth(math.min(260, listWidth - 250))
+  -- The search box gives up room for the level boxes, the Category button and Search.
+  local fixed = self.filterBar and 380 or 250
+  self.searchBox:SetWidth(math.max(120, math.min(260, listWidth - fixed)))
+  self.list:SetWidth(listWidth)
   -- The status line's width, spinner room included, is set by Loading when the view renders.
   if self.loading and self.loading.at then self.loading.at[6] = listWidth - 8 end
   self.columns = ns.Browse.columns(listWidth - 22)
-  ns.Window.layoutRows(self.rows, self.panel, self.columns, listWidth)
+  ns.Window.layoutRows(self.rows, self.list, self.columns, listWidth)
   self:layoutHeaders()
   self.divider:ClearAllPoints()
   self.divider:SetPoint("TOPLEFT", self.container, "TOPLEFT", listWidth, 0)
@@ -219,6 +243,7 @@ end
 
 -- Opens a result's page: its auctions or price ladder, with the buy controls on the detail panel.
 function BrowseView:openItem(row)
+  self:closeMenus()
   self:showHistory(false)
   self.panel:Hide()
   self.item:open(row)
@@ -238,6 +263,7 @@ end
 
 -- Another view is showing: the buy controls on the shared detail panel go.
 function BrowseView:hide()
+  self:closeMenus()
   if not self.item then return end
   -- An open quote would hold up buys elsewhere (the sniper's): drop it.
   if self.item.quoted or self.item.quoting then self.item:cancelQuote() end
@@ -270,7 +296,7 @@ function BrowseView:layoutHeaders()
   for c, b in ipairs(self.headers) do
     local col = self.columns[c]
     b:ClearAllPoints()
-    b:SetPoint("TOPLEFT", self.panel, "TOPLEFT", col[2], -29)
+    b:SetPoint("TOPLEFT", self.list, "TOPLEFT", col[2], -29)
     b:SetWidth(col[3])
   end
 end
@@ -320,15 +346,24 @@ function BrowseView:sortBy(column)
   self:render()
 end
 
-function BrowseView:search()
+-- keepMenu: the category menu stays open (a category was picked that has subcategories to show).
+function BrowseView:search(keepMenu)
   local api = self:api()
   -- Enter or a shift-click during our own search does nothing, like the disabled Search button.
   if self.searching then return end
+  if not keepMenu then self:closeMenus() end
   self.searchBox:ClearFocus()
   self.minLevel:ClearFocus()
   self.maxLevel:ClearFocus()
-  local query, why = ns.Browse.query({ text = self.searchBox:GetText(), minLevel = self.minLevel:GetText(),
-    maxLevel = self.maxLevel:GetText() })
+  local typed = { text = self.searchBox:GetText(), minLevel = self.minLevel:GetText(),
+    maxLevel = self.maxLevel:GetText() }
+  local note
+  if self.filterBar then
+    local filters
+    filters, note = self.filterBar:input()
+    typed.category, typed.path, typed.chips = filters.category, filters.path, filters.chips
+  end
+  local query, why = ns.Browse.query(typed)
   if not query then
     self.message = why
     return self:render()
@@ -341,7 +376,11 @@ function BrowseView:search()
     self.message = "Disenchant sniping is checking the auction house. Try again in a moment."
     return self:render()
   end
-  local job = { query = query }
+  -- What the history keeps is what was searched, not what the bar says when the answer comes.
+  local category, filters
+  if self.filterBar then category, filters = self.filterBar:history() end
+  local job = { query = query, note = note, category = category, filters = filters }
+  self.searchAfter = nil
   self.searching, self.message = job, nil
   self:render()
   api:search(query, function(results, truncated)
@@ -352,20 +391,27 @@ function BrowseView:search()
       self.message = "The search failed: " .. tostring(truncated) .. "."
     else
       job.raw, job.truncated, job.at, job.values = results, truncated, self:now(), {}
-      self:remember(query, job.at)
+      self:remember(job)
       self.results, self.message = job, nil
       self.selected, self.offset = nil, 0
       self:rebuild()
     end
     self:render()
+    local after = self.searchAfter
+    if after then
+      self.searchAfter = nil
+      self:search(after.keepMenu)
+    end
   end)
 end
 
 -- Saves a search that ran in the search history (a blank one is not kept).
-function BrowseView:remember(query, at)
+function BrowseView:remember(job)
   local history = self.addon.searchHistory
   if not history then return end
-  history:add({ text = query.searchString, minLevel = query.minLevel, maxLevel = query.maxLevel }, at)
+  local query = job.query
+  history:add({ text = query.searchString, minLevel = query.minLevel, maxLevel = query.maxLevel,
+    category = query.path and job.category or nil, filters = job.filters }, job.at)
   if self.history then self.history:render() end
 end
 
@@ -375,7 +421,24 @@ function BrowseView:searchAgain(search)
   self.searchBox:SetText(search.text or "")
   self.minLevel:SetText((search.minLevel or 0) > 0 and tostring(search.minLevel) or "")
   self.maxLevel:SetText((search.maxLevel or 0) > 0 and tostring(search.maxLevel) or "")
+  if self.filterBar then self.filterBar:restore(search) end
   self:search()
+end
+
+-- The category or a filter changed: a new category searches at once (as in Blizzard's window), a
+-- filter waits for Search or Enter.
+function BrowseView:filtersChanged(searchNow, keepMenu)
+  -- A category picked while a search runs is searched as soon as that one ends.
+  if searchNow and self.searching then
+    self.searchAfter = { keepMenu = keepMenu }
+    return self:render()
+  end
+  if searchNow then return self:search(keepMenu) end
+  self:render()
+end
+
+function BrowseView:closeMenus()
+  if self.filterBar then self.filterBar:closeMenus() end
 end
 
 function BrowseView:showHistory(on)
@@ -423,6 +486,7 @@ end
 
 -- The auction house closed: its results are gone with it.
 function BrowseView:reset()
+  self:closeMenus()
   self.results, self.searching, self.selected, self.message, self.offset = nil, nil, nil, nil, 0
   if self.item and self.item.row then
     self.item:close()
@@ -479,7 +543,9 @@ function BrowseView:statusText()
   if not job then return "Type a name and press Enter, or search with the box blank to list everything." end
   if #job.rows == 0 then return "Nothing on the auction house matches that search." end
   local line = ns.Browse.summary(#job.rows, job.query, job.truncated)
-  return line .. ". Searched " .. ns.Time.ago(job.at, self:now()) .. "."
+  line = line .. ". Searched " .. ns.Time.ago(job.at, self:now()) .. "."
+  if job.note then line = job.note .. " " .. line end
+  return line
 end
 
 function BrowseView:render()
@@ -495,6 +561,7 @@ function BrowseView:render()
   if self.searching then self.searchButton:Disable() else self.searchButton:Enable() end
   if self.searching then self.loading:spin() else self.loading:clear() end
   self.status:SetText(self:statusText())
+  if self.filterBar then self.filterBar:render() end
   self:renderHint()
   self:renderHeaders()
   for r, cells in ipairs(self.rows) do

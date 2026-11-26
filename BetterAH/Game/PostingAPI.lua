@@ -156,7 +156,8 @@ function PostingAPI.readListings(env, entry)
     local r = try(ah.GetItemSearchResultInfo, entry.itemKey, i)
     if type(r) == "table" and r.buyoutAmount and r.buyoutAmount > 0 then
       -- buyoutAmount is per item (Blizzard's sell frame totals quantity * buyout); a result with
-      -- quantity above 1 is that many single auctions at that price.
+      -- quantity above 1 is that many single auctions at that price. containsOwnerItem only says one
+      -- of them is the player's, so all of them count as the player's: a heuristic.
       local count = math.max(1, r.quantity or 1)
       listings[#listings + 1] = { unit = r.buyoutAmount, count = count,
         ownCount = r.containsOwnerItem and count or 0, auctionID = r.auctionID, link = r.itemLink }

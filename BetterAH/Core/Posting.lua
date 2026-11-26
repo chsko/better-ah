@@ -2,7 +2,10 @@
 -- current listings, its market value and the player's settings, and gets a plan back.
 --
 -- The price is an undercut: the highest whole copper below the cheapest unit price that isn't the
--- player's. With no other listings the item is priced at its market value. If the price is below the
+-- player's. When the player's own auction is the cheapest (strictly below everyone else's), the price
+-- matches it instead (rounded up to the price step), so a new post never goes under the player's own
+-- (#132); unless that would be below the floor, when the own auction is passed over. With no listings at all
+-- the item is priced at its market value. If the price is below the
 -- item's floor price (its own floor on this market, else 80% of market value) the item is skipped and
 -- stays in the bags, with the reason. Otherwise it posts everything in the bags, or at most the
 -- profile's limit, for the profile's duration (without one, the player's default duration, #87). A
@@ -43,6 +46,58 @@ function Posting.cheapestOther(listings)
   return cheapest
 end
 
+-- The cheapest unit price with units that are the player's, or nil.
+function Posting.cheapestOwn(listings)
+  local cheapest
+  for _, l in ipairs(listings or {}) do
+    local unit = tonumber(l.unit)
+    local mine = math.min(tonumber(l.count) or 0, tonumber(l.ownCount) or 0)
+    if mine > 0 and unit and unit > 0 and (not cheapest or unit < cheapest) then cheapest = unit end
+  end
+  return cheapest
+end
+
+-- Marks the player's units in listings by the player's own auctions too (#132), so a search result
+-- whose ownership fields don't mark them can't make Post undercut the player. own: array of
+-- { unit = copper per unit, quantity = units }, from the owned auctions list. At each price, the units
+-- the owned list holds beyond what the listings already mark as the player's are taken from other
+-- sellers' units at exactly that price (never more than are there). Returns new listings; the ones
+-- passed in are left as they were.
+function Posting.markOwn(listings, own)
+  local out = {}
+  for i, l in ipairs(listings or {}) do
+    out[i] = { unit = l.unit, count = l.count, ownCount = l.ownCount, auctionID = l.auctionID, link = l.link }
+  end
+  if type(own) ~= "table" then return out end
+  local owned = {}
+  for _, a in ipairs(own) do
+    local unit, quantity = tonumber(a.unit), tonumber(a.quantity)
+    if unit and unit > 0 and finite(unit) and quantity and quantity > 0 and finite(quantity) then
+      owned[unit] = (owned[unit] or 0) + math.floor(quantity)
+    end
+  end
+  for unit, units in pairs(owned) do
+    local marked = 0
+    for _, l in ipairs(out) do
+      if tonumber(l.unit) == unit then
+        marked = marked + math.min(tonumber(l.count) or 0, tonumber(l.ownCount) or 0)
+      end
+    end
+    local need = units - marked
+    for _, l in ipairs(out) do
+      if need <= 0 then break end
+      if tonumber(l.unit) == unit then
+        local add = math.min(others(l), need)
+        if add > 0 then
+          l.ownCount = math.min(tonumber(l.count) or 0, tonumber(l.ownCount) or 0) + add
+          need = need - add
+        end
+      end
+    end
+  end
+  return out
+end
+
 -- The item's floor price in copper: its own floor if set, else the rule's floor (disenchant materials,
 -- Core/MatFloors.lua), else FLOOR_SHARE of market value rounded up. nil when none is known.
 function Posting.floor(marketValue, ownFloor, ruleFloor)
@@ -59,15 +114,17 @@ end
 --         stacks = the counts of the item's bag stacks in bag order (a non-commodity posts one per click),
 --         maxStack = the item's stack size or nil (caps a non-commodity post when stacks is nil),
 --         posted = units of the item already posted this visit (they count toward the limit), or nil,
---         step = the smallest price step the client takes, 1 copper (default) or 100 (whole silver) }
+--         step = the smallest price step the client takes, 1 copper (default) or 100 (whole silver),
+--         own = the player's own auctions of the item, { unit, quantity } each (see markOwn), or nil }
 -- Returns a plan, one of
 --   { action = "skip", reason = why, price, floor }      stays in the bags, where why is
 --     "none-left", "limit" (this visit already posted the profile's limit), "no-floor" (no market value
 --     and no own floor) or "below-floor"
---   { action = "post", price, floor, undercut, quantity, posts, remainder, duration, limit }
+--   { action = "post", price, floor, undercut, matched, quantity, posts, remainder, duration, limit }
 -- price is per unit. Posting makes posts auctions of quantity units each (the last of a non-commodity
 -- run may be smaller) and leaves remainder in the bags. undercut is the competing unit price it went
--- under (nil when priced at market value). limit is the profile's limit, or nil for everything.
+-- under (nil when priced at market value or matched). matched is the player's own cheapest unit price
+-- when the post matches it (nil otherwise). limit is the profile's limit, or nil for everything.
 function Posting.plan(args)
   local have = math.floor(tonumber(args.have) or 0)
   if have <= 0 then return { action = "skip", reason = "none-left" } end
@@ -75,13 +132,24 @@ function Posting.plan(args)
   local limit = Posting.limit(profile.limit)
   local due = limit and limit - math.max(0, math.floor(tonumber(args.posted) or 0)) or have
   if due <= 0 then return { action = "skip", reason = "limit", limit = limit } end
-  local listings = args.listings or {}
+  local listings = Posting.markOwn(args.listings, args.own)
 
   local step = math.max(1, math.floor(tonumber(args.step) or 1))
   local floor = Posting.floor(args.marketValue, args.floor, args.ruleFloor)
   local other = Posting.cheapestOther(listings)
+  local mine = Posting.cheapestOwn(listings)
+  local matched
+  if mine and not (other and other <= mine) then
+    -- The player's own auction is the cheapest: post beside it, not under it (rounded up to the price
+    -- step, so never under it either). An own auction below the floor doesn't hold the new post down
+    -- there: it is priced as if that auction weren't there.
+    local beside = math.max(step, math.ceil(mine / step) * step)
+    if not (floor and beside < floor) then matched, other = mine, nil end
+  end
   local price
-  if other then
+  if matched then
+    price = math.max(step, math.ceil(matched / step) * step)
+  elseif other then
     -- The highest price step strictly below the competitor.
     price = math.max(step, (math.ceil(other / step) - 1) * step)
   elseif args.marketValue and args.marketValue > 0 then
@@ -113,7 +181,8 @@ function Posting.plan(args)
     end
   end
   return {
-    action = "post", price = price, floor = floor, undercut = other, duration = duration, limit = limit,
+    action = "post", price = price, floor = floor, undercut = other, matched = matched, duration = duration,
+    limit = limit,
     quantity = quantity, posts = posts, remainder = have - total,
   }
 end

@@ -276,7 +276,7 @@ function PostingAPI:onEvent(event, arg)
     -- While the sniper waits on a buy (SnipeAPI sets buying), the error is about that buy.
     if event == "AUCTION_HOUSE_SHOW_ERROR" and self.buying then return end
     self.pending = nil
-    if self.onPosted then self.onPosted(false, arg) end
+    if self.onPosted then self.onPosted(false, arg, event) end
   end
 end
 
@@ -293,9 +293,10 @@ local function liveSlot(env, entry)
 end
 
 -- Posts one auction for an entry from readBags following a "post" plan from Posting.plan. Must run
--- inside a click. Returns "sent", "confirm" (the client wants a second click: call confirm()), or
--- nil and a reason. A non-commodity post takes at most the one slot's stack; for single items the
--- client creates one auction per item (a multisell), each with its own AUCTION_HOUSE_AUCTION_CREATED.
+-- inside a click. Returns "sent" (and the units posted), "confirm" (the client wants a second
+-- click: call confirm()), or nil and a reason. A commodity posts plan.quantity in one go:
+-- PostCommodity takes the units from every bag slot that holds the item, the way Blizzard's sell
+-- frame posts its Max (GetAvailablePostCount). A non-commodity post takes at most the one slot's stack.
 function PostingAPI:post(entry, plan)
   self.pending = nil
   local ah = self.env.C_AuctionHouse
@@ -318,10 +319,11 @@ function PostingAPI:post(entry, plan)
     self.pending = args
     return "confirm"
   end
-  return "sent"
+  return "sent", nil, args[4]
 end
 
--- Confirms the post the client asked about. Must run inside a click.
+-- Confirms the post the client asked about. Must run inside a click. Returns "sent" and the units
+-- posted, or nil and a reason.
 function PostingAPI:confirm()
   local args = self.pending
   self.pending = nil
@@ -332,7 +334,7 @@ function PostingAPI:confirm()
   if type(fn) ~= "function" then return nil, "C_AuctionHouse.ConfirmPost" .. args[1] .. " is missing" end
   local ok, err = pcall(fn, unpack(args, 2, args.n))
   if not ok then return nil, "the auction house refused: " .. tostring(err) end
-  return "sent"
+  return "sent", nil, args[4]
 end
 
 PostingAPI.NEEDED = {

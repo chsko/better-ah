@@ -4,9 +4,8 @@
 -- Each row is one item with a state:
 --   "checking"  its listings are being looked up
 --   "ready"     it will post (plan is a Posting "post" plan)
---   "setup"     it would post but needs a posting profile first
 --   "skipped"   it stays in your bags (plan.reason says why, or skipped = "you" when you skipped it, or
---               "kept" for the leftovers of its posts this visit, which the plan said stay in the bags)
+--               "kept" when this visit already posted its Post at most limit)
 --   "failed"    the lookup failed (reason says why)
 local _, ns = ...
 ns = ns or {}
@@ -21,7 +20,7 @@ function PostQueue.new(opts)
   return setmetatable({
     settings = opts.settings, key = opts.key, marketValue = opts.marketValue or function() return nil end,
     matFloor = opts.matFloor or function() return nil end,
-    step = opts.step or 1, entries = {}, all = {}, found = {}, skipped = {}, kept = {}, filter = "all",
+    step = opts.step or 1, entries = {}, all = {}, found = {}, skipped = {}, posted = {}, filter = "all",
   }, PostQueue)
 end
 
@@ -74,15 +73,24 @@ function PostQueue:forget(item)
   self.found[item] = nil
 end
 
--- Record that an item was posted following its plan: once only its leftovers are in the bags, they
--- stay there for the rest of this visit, as the plan said.
-function PostQueue:sent(item, plan)
-  if self.kept[item] == nil then self.kept[item] = plan and plan.remainder or 0 end
+-- Record that units of an item were posted this visit (negative to take back a post the auction house
+-- refused). They count toward the item's Post at most limit until the next visit.
+function PostQueue:sent(item, units)
+  self.posted[item] = math.max(0, (self.posted[item] or 0) + (tonumber(units) or 0))
 end
 
 -- Leave an item in the bags for this visit to the auction house.
 function PostQueue:skip(item)
   self.skipped[item] = true
+end
+
+-- The counts of the entry's bag stacks, in bag order, or nil when readBags didn't list them.
+local function stacks(e)
+  local out = {}
+  for _, slot in ipairs(e.slots or {}) do
+    if slot.count and slot.count > 0 then out[#out + 1] = slot.count end
+  end
+  return #out > 0 and out or nil
 end
 
 function PostQueue:row(e)
@@ -103,16 +111,15 @@ function PostQueue:row(e)
   row.plan = ns.Posting.plan({
     have = e.have, listings = found.listings, marketValue = self.marketValue(e.item),
     floor = own, ruleFloor = row.matFloor and row.matFloor.floor, profile = settings and settings:profile(e.item),
-    maxStack = e.maxStack, step = self.step,
+    commodity = e.commodity, stacks = stacks(e), maxStack = e.maxStack, posted = self.posted[e.item],
+    step = self.step,
   })
   if self.skipped[e.item] then
     row.state, row.skipped = "skipped", "you"
-  elseif self.kept[e.item] and e.have <= self.kept[e.item] then
+  elseif row.plan.reason == "limit" then
     row.state, row.skipped = "skipped", "kept"
   elseif row.plan.action == "post" then
     row.state = "ready"
-  elseif row.plan.action == "profile" then
-    row.state = "setup"
   else
     row.state = "skipped"
   end

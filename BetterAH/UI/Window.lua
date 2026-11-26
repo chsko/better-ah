@@ -23,6 +23,9 @@ local TOP = -60 -- where the panels start, below the title bar and the toggle bu
 -- Art from Blizzard's own auction house (Blizzard_AuctionHouseUI in Forever build 1.60.1.71091), so the
 -- window looks like it: the panel backgrounds and the category list's button art. The self-test checks
 -- each one exists in the client.
+-- The title bar's scan state: right-aligned left of the Blizzard UI button, clear of the portrait.
+Window.SCAN_STATE_WIDTH = 480
+
 Window.ART = {
   sidebar = "auctionhouse-background-categories",
   main = "auctionhouse-background-index",
@@ -135,6 +138,16 @@ function Window:build()
   Window.tooltip(env, toggle, "Blizzard UI",
     "Switch to Blizzard's auction house window. Use the Better AH button there to come back.")
   self.toggleButton = toggle
+
+  -- The full scan's state, on every view (#30): left of the Blizzard UI button.
+  local scanState = text:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  scanState:SetPoint("RIGHT", toggle, "LEFT", -10, 0)
+  scanState:SetJustifyH("RIGHT")
+  scanState:SetWidth(Window.SCAN_STATE_WIDTH)
+  if scanState.SetWordWrap then scanState:SetWordWrap(false) end
+  self.scanStateText = scanState
+  self.scanSpinner = ns.Loading.spinner(env, text)
+  self.scanSpinner:SetPoint("RIGHT", scanState, "LEFT", -6, 0)
 
   local y = TOP - 10
   for _, section in ipairs(self.model:sections()) do
@@ -256,7 +269,7 @@ function Window:attachReturnButton()
   self.returnButton = b
 end
 
--- Prices and history: a Scan button, the scan status and one row per item on this market.
+-- Prices and history: a Scan materials button, the scan status and one row per item on this market.
 function Window:buildPrices(f)
   local env = self.env
   local panel = env.CreateFrame("Frame", nil, f)
@@ -266,16 +279,10 @@ function Window:buildPrices(f)
   panel:SetScript("OnMouseWheel", function(_, delta) self:scrollPrices(-delta * 3) end)
   self.pricesPanel = panel
 
-  local scan = env.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-  scan:SetSize(90, 22)
-  scan:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
-  scan:SetText("Scan")
-  scan:SetScript("OnClick", function() self:startScan() end)
-  self.scanButton = scan
-
+  -- No Scan button: full scans run by themselves (#30, see autoScan).
   local mats = env.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
   mats:SetSize(120, 22)
-  mats:SetPoint("LEFT", scan, "RIGHT", 6, 0)
+  mats:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
   mats:SetText("Scan materials")
   mats:SetScript("OnClick", function() self:scanMaterials() end)
   Window.tooltip(env, mats, "Scan materials",
@@ -711,19 +718,108 @@ function Window:startScan()
   if not (addon.auctionAPI and addon.prices) then
     self.statusMarket = self:market()
     self.statusText = "Scanning isn't ready yet. Try again in a moment."
+    self:scanEnded(false, "scanning isn't ready yet")
     return self:renderPrices()
   end
   -- Set the waiting text first: the reply may come before scanIntoPrices returns.
   self.statusMarket = self:market()
   self.statusText = "Scanning the auction house (a minute or two)."
   self.materialStatus = nil -- a full scan supersedes the last materials scan's message
-  local started, why = ns.AuctionAPI.scanIntoPrices(addon, function(_, message)
+  local started, why = ns.AuctionAPI.scanIntoPrices(addon, function(ok, message)
     self.statusText = message
     self.offset = 0
+    self:scanEnded(ok, message)
     self:renderMaterials()
   end)
-  if not started then self.statusText = why end
+  if not started then
+    self.statusText = why
+    self:scanEnded(false, why)
+  end
   self:renderMaterials()
+end
+
+-- Auto scan (#30). A scan is due by AutoScan's rules; this schedules it while the auction house is
+-- open. Only the newest schedule runs (autoToken).
+function Window:scheduleAutoScan(delay)
+  local timer = self.env.C_Timer
+  if self.addon.autoScan == false or not (timer and timer.After) then return end
+  local token = {}
+  self.autoToken = token
+  if not delay then
+    local s = self:scanState()
+    delay = ns.AutoScan.wait(s.lastScan, s.now, s.failures, s.failedAt)
+  end
+  timer.After(math.max(delay, ns.AutoScan.FIRST_DELAY), function()
+    if self.autoToken == token then self:autoScan() end
+  end)
+  -- The title's countdown, redrawn every half minute while waiting.
+  self:scheduleTick(token)
+end
+
+function Window:scheduleTick(token)
+  self.env.C_Timer.After(ns.AutoScan.TICK, function()
+    if self.autoToken == token then
+      self:renderScanState()
+      self:scheduleTick(token)
+    end
+  end)
+end
+
+function Window:autoScan()
+  local addon = self.addon
+  local api = addon.auctionAPI
+  if not (api and api.open) then return end
+  local s = self:scanState()
+  if ns.AutoScan.wait(s.lastScan, s.now, s.failures, s.failedAt) > 0 then return self:scheduleAutoScan() end
+  -- Not in the middle of something: a running scan, a post or a buy waits for it.
+  local snipe = self.disenchantView and self.disenchantView.snipe
+  if api.pending or self.materialScan or (self.postView and self.postView.busy) or (snipe and snipe.buying) then
+    return self:scheduleAutoScan(ns.AutoScan.BUSY_DELAY)
+  end
+  self:startScan()
+end
+
+-- A full scan ended (ok) or failed (why): count failures for the retry, then schedule the next one.
+function Window:scanEnded(ok, why)
+  local api = self.addon.auctionAPI
+  if ok then
+    self.scanFailures, self.scanFailedAt, self.scanWhy = 0, nil, nil
+  elseif api and api.open then -- closing the auction house mid-scan isn't a failure
+    self.scanFailures = (self.scanFailures or 0) + 1
+    self.scanFailedAt = api:now()
+    self.scanWhy = Window.shortReason(why)
+  end
+  if api and api.open then self:scheduleAutoScan() end
+  self:renderScanState()
+end
+
+-- The first sentence of a scan failure, for the title bar (the Prices status line keeps all of it).
+function Window.shortReason(why)
+  why = tostring(why or "no answer"):gsub("^Scan failed%.%s*", "")
+  why = why:match("^(.-)%.%s") or why:gsub("%.$", "")
+  if #why > 90 then why = why:sub(1, 87) .. "..." end
+  return why:sub(1, 1):lower() .. why:sub(2)
+end
+
+function Window:scanState()
+  local addon = self.addon
+  local api = addon.auctionAPI
+  local key = self:market()
+  local now = api and api:now() or 0
+  return { open = api and api.open, scanning = api and api.pending ~= nil, now = now,
+    lastScan = key and addon.prices and addon.prices:lastScan(key), failures = self.scanFailures,
+    failedAt = self.scanFailedAt, why = self.scanWhy }
+end
+
+function Window:renderScanState()
+  if not self.scanStateText then return end
+  local s = self:scanState()
+  if self.addon.autoScan == false then
+    self.scanStateText:SetText("")
+  else
+    self.scanStateText:SetText(ns.AutoScan.status(s))
+  end
+  self.scanSpinner:SetShown(s.scanning and self.addon.autoScan ~= false)
 end
 
 -- A scan's progress on a status line's loading indicator: a bar of materials looked up, or a sweeping
@@ -762,9 +858,9 @@ function Window:renderPrices()
   self.offset = math.max(0, math.min(self.offset, maxOffset))
   Window.syncScrollBar(self.rows.scrollBar, self.offset, #items)
   local scanning = addon.auctionAPI and addon.auctionAPI.pending
-  if scanning or self.materialScan then self.scanButton:Disable() else self.scanButton:Enable() end
   if scanning or self.materialScan then self.materialsButton:Disable() else self.materialsButton:Enable() end
   self:showProgress(self.scanLoading)
+  self:renderScanState()
 
   -- A scan message belongs to the market it was about; on another market, show that one's state.
   if self.statusText and self.statusMarket ~= key then self.statusText = nil end
@@ -774,7 +870,7 @@ function Window:renderPrices()
     if last then
       text = string.format("%d items. Last scan of %s: %s.", #items, ns.MarketKey.describe(key), ns.Time.ago(last, now))
     else
-      text = "No scan of this market yet. Press Scan to record its prices."
+      text = "No scan of this market yet. One starts when the auction house is open."
     end
   end
   self.scanStatus:SetText(text)
@@ -833,6 +929,7 @@ function Window:render()
     self:build():Show()
     self:concealBlizzard()
     self:renderView()
+    self:renderScanState()
   else
     if self.frame then self.frame:Hide() end
     self:revealBlizzard()
@@ -853,6 +950,9 @@ end
 function Window:onEvent(event)
   if event == "AUCTION_HOUSE_SHOW" then
     self.model:auctionOpened()
+    -- A new visit (maybe another market): earlier failures don't carry over.
+    self.scanFailures, self.scanFailedAt, self.scanWhy = 0, nil, nil
+    self:scheduleAutoScan(ns.AutoScan.FIRST_DELAY)
     -- Blizzard shows its own window on the same event; let it finish first.
     if self.env.C_Timer then
       self.env.C_Timer.After(0, function() self:render() end)
@@ -861,6 +961,8 @@ function Window:onEvent(event)
     end
   elseif event == "AUCTION_HOUSE_CLOSED" then
     self.model:auctionClosed()
+    self.autoToken = nil
+    self:renderScanState()
     if self.postView then self.postView:reset() end
     if self.disenchantView then self.disenchantView.snipe:stop("The auction house closed, so sniping stopped.") end
     self:render()

@@ -337,7 +337,9 @@ function AuctionAPI.install(env, addon)
     end)
     suite:add("Full scan", function()
       local report = addon.lastScanReport
-      if not report then return "info", "not run yet: press Scan in Prices and history, then run this again" end
+      if not report then
+        return "info", "not run yet: open the auction house, wait for a full scan, then run this again"
+      end
       return report.ok and "pass" or "fail", report.detail
     end)
   end

@@ -125,6 +125,28 @@ function MyAuctions.net(copper)
   return math.floor(copper * (1 - MyAuctions.CUT) + 0.5)
 end
 
+-- What a sold auction sold for, before the cut, in whole copper.
+function MyAuctions.salePrice(a)
+  return a.total or (a.unit and math.floor(a.unit * (a.quantity or 1) + 0.5)) or a.bid or 0
+end
+
+-- The sold auctions the client still lists (until their gold is mailed): { count, gross, net = after
+-- the cut, sales = { { auction, gross, net } } }. A ledger can preview sales here, but sold rows only
+-- show while the auction house is open and before the gold is mailed, and a sale appears on every
+-- refresh, so the mail stays the record of what came in (key on auction.uid to skip repeats).
+function MyAuctions.sold(rows)
+  local s = { count = 0, gross = 0, net = 0, sales = {} }
+  for _, r in ipairs(rows or {}) do
+    if r.kind == "sold" then
+      local gross = MyAuctions.salePrice(r.auction)
+      local net = MyAuctions.net(gross)
+      s.count, s.gross, s.net = s.count + 1, s.gross + gross, s.net + net
+      s.sales[#s.sales + 1] = { auction = r.auction, gross = gross, net = net }
+    end
+  end
+  return s
+end
+
 -- Totals for the detail panel. marketValue(item) gives copper or nil; cancelCost(auction) gives copper
 -- or nil. Returns { active, units, atYours, atMarket, unpriced = active auctions without a market
 -- value, afterCut, soon, sold, soldGold = after the cut, undercut, undercutCost }.
@@ -134,11 +156,7 @@ function MyAuctions.totals(rows, marketValue, cancelCost)
   for _, r in ipairs(rows) do
     local a = r.auction
     local quantity = a.quantity or 1
-    if r.kind == "sold" then
-      t.sold = t.sold + 1
-      local price = a.total or (a.unit and math.floor(a.unit * quantity + 0.5)) or a.bid or 0
-      t.soldGold = t.soldGold + MyAuctions.net(price)
-    else
+    if r.kind ~= "sold" then
       t.active, t.units = t.active + 1, t.units + quantity
       local mine = (a.unit or 0) * quantity
       t.atYours = t.atYours + mine
@@ -154,6 +172,8 @@ function MyAuctions.totals(rows, marketValue, cancelCost)
       end
     end
   end
+  local sold = MyAuctions.sold(rows)
+  t.sold, t.soldGold = sold.count, sold.net
   return t
 end
 

@@ -504,8 +504,11 @@ function MyAuctionsView:render()
     return self.addon.myAuctionsAPI and self.addon.myAuctionsAPI:cancelCost(a.id)
   end)
   if #rows > 0 then
-    self.footer:SetText(string.format("%d %s · listed for %s · %d undercut", totals.active,
-      totals.active == 1 and "auction" or "auctions", money(totals.atYours), totals.undercut))
+    local text = string.format("%d %s · listed for %s · %d undercut", totals.active,
+      totals.active == 1 and "auction" or "auctions", money(totals.atYours), totals.undercut)
+    if totals.sold > 0 then text = text .. string.format(" · %d sold, you get %s", totals.sold,
+      ns.Money.short(totals.soldGold)) end
+    self.footer:SetText(text)
   else
     self.footer:SetText("")
   end

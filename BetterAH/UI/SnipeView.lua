@@ -115,6 +115,9 @@ function SnipeView:build(p, width)
   end
   self.cardLabel = text("GameFontDisableSmall", 10, -8, width - 20)
   self.cardName = text("GameFontNormalLarge", 10, -22, width - 130)
+  self.cardHover = self:hoverItem(card, function() return self.shownFind end)
+  self.cardHover:SetPoint("TOPLEFT", card, "TOPLEFT", 6, -20)
+  self.cardHover:SetSize(width - 136, 22)
   self.cardLevel = text("GameFontHighlightSmall", width - 120, -26, 110)
   self.cardLevel:SetJustifyH("RIGHT")
   self.cols = {}
@@ -174,9 +177,51 @@ function SnipeView:build(p, width)
     for c, col in ipairs(SnipeView.NEAR_COLUMNS) do
       row[c] = cell(c == 1 and "GameFontNormalSmall" or "GameFontHighlightSmall", col, y)
     end
+    row.hover = self:hoverItem(p, function() return row.entry end)
+    row.hover:SetPoint("TOPLEFT", p, "TOPLEFT", 0, y + 2)
+    row.hover:SetSize(width, SnipeView.NEAR_ROW)
     self.nearRows[i] = row
   end
   self:buildSettings()
+end
+
+-- An invisible frame over a region that shows the item tooltip of what item() returns: a table with a
+-- link (an auction's item link, which knows its random stats) or an itemKey. Nothing while it is nil.
+function SnipeView:hoverItem(parent, item)
+  local env = self.env
+  local f = env.CreateFrame("Frame", nil, parent)
+  f:EnableMouse(true)
+  -- The tooltip API answers false (and hides the tooltip) when it has no data, so try each way in turn.
+  local function try(tip, method, ...)
+    if not tip[method] then return false end
+    local ok, r = pcall(tip[method], tip, ...)
+    return ok and r ~= false
+  end
+  function f.showTip()
+    local tip, it = env.GameTooltip, item()
+    if not tip then return end
+    if not it then return tip:Hide() end
+    tip:SetOwner(f, "ANCHOR_CURSOR")
+    local key = it.itemKey
+    local shown = (it.link and try(tip, "SetHyperlink", it.link))
+      or (key and try(tip, "SetItemKey", key.itemID, key.itemLevel or 0, key.itemSuffix or 0))
+      or (key and try(tip, "SetItemByID", key.itemID))
+    if not shown then tip:Hide() end
+  end
+  f:SetScript("OnEnter", f.showTip)
+  f:SetScript("OnLeave", function() if env.GameTooltip then env.GameTooltip:Hide() end end)
+  self.hovers = self.hovers or {}
+  self.hovers[#self.hovers + 1] = f
+  return f
+end
+
+-- After a render the item under the mouse may have changed (a buy, a new check): redraw its tooltip.
+function SnipeView:refreshTips()
+  local tip = self.env.GameTooltip
+  if not (tip and tip.IsOwned) then return end
+  for _, f in ipairs(self.hovers or {}) do
+    if tip:IsOwned(f) then f.showTip() end
+  end
 end
 
 -- Spend cap, gold to keep and the sound, at the bottom of the detail panel.
@@ -390,7 +435,8 @@ function SnipeView:tick(run)
         for _, l in ipairs(ns.Sniper.buys(listings, c.max)) do
           local auctionAPI = self.addon.auctionAPI
           local itemName = l.link or (auctionAPI and auctionAPI:itemName("i:" .. c.itemKey.itemID))
-          found = self.session:add({ auctionID = l.auctionID, itemID = c.itemKey.itemID,
+          found = self.session:add({ auctionID = l.auctionID, itemID = c.itemKey.itemID, itemKey = c.itemKey,
+            link = l.link,
             name = itemName or ("item " .. c.itemKey.itemID),
             price = l.unit, worth = worthOf[c.itemKey.itemID], max = c.max, target = name,
             level = c.level }) or found
@@ -488,6 +534,7 @@ function SnipeView:renderNear()
   end
   for i, row in ipairs(self.nearRows) do
     local e = near[i]
+    row.entry = e
     row[1]:SetText(e and e.name or "")
     row[2]:SetText(e and e.target or "")
     row[3]:SetText(e and short(e.minPrice) or "")
@@ -544,6 +591,7 @@ function SnipeView:render()
 
   local finds = self.session and self.running and self.session.finds or {}
   local find = finds[1]
+  self.shownFind = find
   if find then
     self.cardLabel:SetText("Next buy: " .. find.target)
     self.cardName:SetText(find.name)
@@ -568,6 +616,7 @@ function SnipeView:render()
     self.passButton:Disable()
   end
   self:renderNear()
+  self:refreshTips()
 
   -- The session log, in the detail panel.
   w.detailTitle:SetText("This session")

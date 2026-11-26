@@ -52,6 +52,13 @@ function Frame:SetScale(s) self.scale = s end
 function Frame:GetScale() return self.scale end
 function Frame:SetScript(name, fn) self.scripts[name] = fn end
 function Frame:GetScript(name) return self.scripts[name] end
+function Frame:HookScript(name, fn)
+  local old = self.scripts[name]
+  self.scripts[name] = function(...)
+    if old then old(...) end
+    fn(...)
+  end
+end
 function Frame:RegisterEvent(e) self.events[e] = true end
 function Frame:UnregisterEvent(e) self.events[e] = nil end
 function Frame:EnableMouseWheel() end

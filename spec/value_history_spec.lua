@@ -2,6 +2,7 @@ local helper = require("spec.helper")
 
 describe("ValueHistory", function()
   local ns = helper.load("BetterAH/Core/MarketValue.lua")
+  helper.load("BetterAH/Core/Time.lua", ns)
   helper.load("BetterAH/Core/Disenchant.lua", ns)
   helper.load("BetterAH/Core/ValueHistory.lua", ns)
   local VH, D = ns.ValueHistory, ns.Disenchant
@@ -28,6 +29,30 @@ describe("ValueHistory", function()
       VH.record(store, "m", 1, function() return 5 end, D.MATERIALS)
       assert.is_nil(VH.baseline(store, "m"))
       assert.is_nil(VH.priceLookup(nil)(11083))
+    end)
+  end)
+
+  describe("sourceText (#143)", function()
+    it("names the scan the prices come from and the one the changes compare with", function()
+      local store = {}
+      VH.record(store, "m", 1000, function() return 5 end, D.MATERIALS, "full")
+      assert.equal("full", VH.latest(store, "m").kind)
+      assert.equal("Prices from the full scan 3 min ago.", VH.sourceText(VH.latest(store, "m"), nil, 1180))
+      VH.record(store, "m", 9000, function() return 6 end, D.MATERIALS, "materials")
+      local latest, base = VH.latest(store, "m"), VH.baseline(store, "m")
+      assert.equal(9000, latest.time)
+      assert.equal("Prices from the materials scan 3 min ago. Green and red: change from the full scan 2 h ago.",
+        VH.sourceText(latest, base, 9180))
+      assert.equal("Green and red: change from the full scan 2 h ago.",
+        VH.sourceText(latest, base, 9180, { skipSource = true }))
+    end)
+
+    it("says just 'the scan' for snapshots saved before scans were named, and nothing without one", function()
+      assert.equal("Prices from the scan just now.", VH.sourceText({ time = 10, prices = {} }, nil, 20))
+      assert.equal("", VH.sourceText(nil, nil, 20))
+      assert.equal("Prices for Normal, Horde from the scan just now.",
+        VH.sourceText({ time = 10, prices = {} }, nil, 20, { market = "Normal, Horde" }))
+      assert.is_nil(VH.latest({}, "m"))
     end)
   end)
 

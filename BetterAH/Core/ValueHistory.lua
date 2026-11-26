@@ -2,8 +2,10 @@
 --
 -- Two kinds of history:
 --   * Snapshots: the disenchant materials' market values when a materials scan or a full scan finished,
---     the newest SNAPSHOTS kept per market. Values compares today's numbers with the snapshot before the
---     latest one, to show what the last scan changed (+X in green, -X in red).
+--     the newest SNAPSHOTS kept per market. A full scan includes the materials (they are in its
+--     listings on Forever), so it updates these values as a materials scan does (#143). Values compares
+--     today's numbers with the snapshot before the latest one, to show what the last scan changed (+X in
+--     green, -X in red).
 --   * Daily series: a band's after-cut value per day, worked out from the daily material prices PriceDB
 --     keeps (PriceDB.HISTORY_DAYS), so the chart has data from the first day. A day's value uses each
 --     material's own point for that day, or its latest earlier point within MarketValue.DAYS.
@@ -16,8 +18,9 @@ ValueHistory.SNAPSHOTS = 10
 
 -- Saves the materials' prices now as a snapshot of the market. store is the saved table
 -- (BetterAHDB.disenchant.snapshots), priceOf(materialID) a market value or nil, materials the list of
--- { id } to save (Disenchant.MATERIALS). Returns the snapshot.
-function ValueHistory.record(store, key, time, priceOf, materials)
+-- { id } to save (Disenchant.MATERIALS), kind which scan took it: "full" or "materials" (#143).
+-- Returns the snapshot.
+function ValueHistory.record(store, key, time, priceOf, materials, kind)
   store[key] = store[key] or {}
   local list = store[key]
   local prices = {}
@@ -25,7 +28,7 @@ function ValueHistory.record(store, key, time, priceOf, materials)
     local v = tonumber(priceOf(m.id))
     if v and v > 0 then prices[m.id] = math.floor(v) end
   end
-  local snapshot = { time = time, prices = prices }
+  local snapshot = { time = time, prices = prices, kind = kind }
   list[#list + 1] = snapshot
   while #list > ValueHistory.SNAPSHOTS do table.remove(list, 1) end
   return snapshot
@@ -35,6 +38,39 @@ end
 function ValueHistory.baseline(store, key)
   local list = store and key and store[key]
   return list and list[#list - 1] or nil
+end
+
+-- The newest snapshot: the one the shown prices come from, or nil.
+function ValueHistory.latest(store, key)
+  local list = store and key and store[key]
+  return list and list[#list] or nil
+end
+
+-- Which scan took a snapshot, for the status line. Snapshots saved before #143 don't say.
+function ValueHistory.scanName(snapshot)
+  local kind = snapshot and snapshot.kind
+  if kind == "full" then return "the full scan" end
+  if kind == "materials" then return "the materials scan" end
+  return "the scan"
+end
+
+-- The Values status line's sentences on where the prices come from (latest) and what the green and red
+-- changes compare with (base), like "Prices from the full scan 3 min ago. Green and red: change from the
+-- full scan 2 h ago." Either part is left out without its snapshot; opts.skipSource leaves out the first
+-- sentence (a running materials scan says what it is doing), opts.market names the market in it, like
+-- "Prices for Normal, Horde from the full scan 3 min ago." Returns "" for nothing to say.
+function ValueHistory.sourceText(latest, base, now, opts)
+  local out = {}
+  if latest and not (opts and opts.skipSource) then
+    local market = opts and opts.market
+    out[#out + 1] = "Prices " .. (market and ("for " .. market .. " ") or "") .. "from "
+      .. ValueHistory.scanName(latest) .. " " .. ns.Time.ago(latest.time, now) .. "."
+  end
+  if base then
+    out[#out + 1] = "Green and red: change from " .. ValueHistory.scanName(base) .. " "
+      .. ns.Time.ago(base.time, now) .. "."
+  end
+  return table.concat(out, " ")
 end
 
 -- A price lookup for a snapshot, like PriceDB's market value: priceOf(materialID) -> copper or nil.

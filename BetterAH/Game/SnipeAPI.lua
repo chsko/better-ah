@@ -130,6 +130,8 @@ function SnipeAPI:buy(auctionID, price, done, source)
   if not self:open() then return done(false, "the auction house is closed", "closed") end
   if self.buying then return done(false, "still waiting for the last buy", "unsent") end
   if self.posting.pending then return done(false, "a post is still waiting for the auction house", "unsent") end
+  -- A bid or commodity purchase from the Browse view is still waiting: one buy at a time.
+  if self.posting.buying then return done(false, "still waiting for the last buy", "unsent") end
   if not (ah and ah.PlaceBid) then return done(false, "C_AuctionHouse.PlaceBid is missing", "unsent") end
   -- A query still waiting on the throttle would make the client queue or drop the buy, and the auction
   -- house would never answer it. Say so now; the buy can't wait for the throttle, it needs this click.

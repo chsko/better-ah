@@ -8,7 +8,9 @@ ns = ns or {}
 local BrowseView = {}
 BrowseView.__index = BrowseView
 
-BrowseView.WIDTH = 848 -- the main and detail panels together: Browse has no detail panel
+BrowseView.WIDTH = 848 -- the main and detail panels together: the results list has no detail panel
+BrowseView.ITEM_WIDTH = 540 -- an item's page uses the main panel, with the buy controls on the detail panel
+BrowseView.DETAIL_WIDTH = 276 -- text width on the detail panel
 -- { header, x, width, justify, sort column }
 BrowseView.COLUMNS = {
   { "Item", 4, 300, "LEFT", "name" }, { "Req.", 310, 40, nil, "level" }, { "Listed", 356, 56, nil, "listed" },
@@ -39,10 +41,15 @@ local function input(env, parent, width, numeric)
   return e
 end
 
+-- Returns a frame holding the results list (self.panel) and an item's page (self.item.panel).
 function BrowseView:build(f, x, y, width, height)
   local env = self.env
-  local panel = env.CreateFrame("Frame", nil, f)
-  panel:SetPoint("TOPLEFT", f, "TOPLEFT", x, y)
+  local container = env.CreateFrame("Frame", nil, f)
+  container:SetPoint("TOPLEFT", f, "TOPLEFT", x, y)
+  container:SetSize(width, height)
+  self.container = container
+  local panel = env.CreateFrame("Frame", nil, container)
+  panel:SetPoint("TOPLEFT", container, "TOPLEFT", 0, 0)
   panel:SetSize(width, height)
   panel:EnableMouseWheel(true)
   panel:SetScript("OnMouseWheel", function(_, delta) self:scroll(-delta * 3) end)
@@ -108,8 +115,44 @@ function BrowseView:build(f, x, y, width, height)
   end
 
   local api = self:api()
-  if api then api.onInfo = function() self:itemInfoLoaded() end end
-  return panel
+  if api then
+    api.onInfo = function() self:itemInfoLoaded() end
+    -- Gold changes what can be bought: redraw an open item page.
+    api.onMoney = function() if self.item and self.item.row then self.item:render() end end
+  end
+  self.item = ns.BrowseItemView.new(self)
+  self.item:build(container, BrowseView.ITEM_WIDTH, height)
+  return container
+end
+
+-- Whether the view wants the detail panel's room: yes for the results list, no on an item's page.
+function BrowseView:wide()
+  return not (self.item and self.item.row)
+end
+
+-- Opens a result's page: its auctions or price ladder, with the buy controls on the detail panel.
+function BrowseView:openItem(row)
+  self.panel:Hide()
+  self.item:open(row)
+  self.window:widenMain(false)
+  self.item:render()
+end
+
+function BrowseView:closeItem()
+  self.item:close()
+  self.window:widenMain(true)
+  self.window.detailTitle:SetText("")
+  self.window.detailBody:SetText("")
+  self.panel:Show()
+  self:render()
+end
+
+-- Another view is showing: the buy controls on the shared detail panel go.
+function BrowseView:hide()
+  if not self.item then return end
+  -- An open quote would hold up buys elsewhere (the sniper's): drop it.
+  if self.item.quoted or self.item.quoting then self.item:cancelQuote() end
+  self.item:hideControls()
 end
 
 -- Clickable headers over the table's header row: a click sorts by that column, again reverses it.
@@ -257,6 +300,10 @@ end
 -- The auction house closed: its results are gone with it.
 function BrowseView:reset()
   self.results, self.searching, self.selected, self.message, self.offset = nil, nil, nil, nil, 0
+  if self.item and self.item.row then
+    self.item:close()
+    self.panel:Show()
+  end
   if self.panel and self.panel:IsShown() then self:render() end
 end
 
@@ -295,6 +342,7 @@ function BrowseView:selectRow(r)
   if not row then return end
   self.selected = row.itemKey
   self:render()
+  self:openItem(row)
 end
 
 local function money(v) return v and ns.Money.format(v) or "-" end
@@ -311,6 +359,7 @@ end
 
 function BrowseView:render()
   if not self.panel then return end
+  if self.item and self.item.row then return self.item:render() end
   if self.results and self.results.stale then self:rebuild() end
   local api = self:api()
   local rows = self.results and self.results.rows or {}

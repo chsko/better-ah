@@ -320,9 +320,37 @@ function M.new(opts)
     env.C_Timer.After(0, function() env.fire("OWNED_AUCTIONS_UPDATED") end)
   end
   env.C_AuctionHouse.GetNumOwnedAuctions = function() return #env.owned end
+  -- An owned auction can also say { id, itemKey, link, buyout, bid, bidder, timeLeftSeconds, timeLeft, cost }.
   env.C_AuctionHouse.GetOwnedAuctionInfo = function(i)
     local a = env.owned[i]
-    return a and { auctionID = i, itemKey = { itemID = a.itemID }, quantity = a.quantity, status = a.status or 0 }
+    return a and { auctionID = a.id or i, itemKey = a.itemKey or { itemID = a.itemID }, quantity = a.quantity,
+      status = a.status or 0, itemLink = a.link, buyoutAmount = a.buyout, bidAmount = a.bid, bidder = a.bidder,
+      timeLeftSeconds = a.timeLeftSeconds, timeLeft = a.timeLeft }
+  end
+  -- Cancelling: the auction leaves env.owned and AUCTION_CANCELED follows on the next tick, unless
+  -- env.cancelSilent. env.cancels records each call.
+  env.cancels = {}
+  local function ownedByID(id)
+    for i, a in ipairs(env.owned) do
+      if (a.id or i) == id then return i, a end
+    end
+  end
+  env.C_AuctionHouse.CancelAuction = function(id)
+    env.cancels[#env.cancels + 1] = id
+    if env.cancelSilent then return end
+    env.C_Timer.After(0, function()
+      local i = ownedByID(id)
+      if i then table.remove(env.owned, i) end
+      env.fire("AUCTION_CANCELED", id)
+    end)
+  end
+  env.C_AuctionHouse.GetCancelCost = function(id)
+    local _, a = ownedByID(id)
+    return a and a.cost or 0
+  end
+  env.C_AuctionHouse.CanCancelAuction = function(id)
+    local _, a = ownedByID(id)
+    return a ~= nil and a.status ~= 1 and not a.noCancel
   end
   -- Posting. A container slot can say { soulbound = true } (the AH refuses it) or { item = true } (not a
   -- commodity). env.listings[itemID] is what a search finds: commodity rows { unitPrice, quantity,

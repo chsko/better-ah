@@ -50,8 +50,13 @@ _Avoid_: stack size
 **Post queue**:
 The items in your bags that are ready to be posted right now.
 
-**Cancel scan**:
-A check of your own auctions that finds the ones that have been undercut.
+**My auctions**:
+The view of every auction you have up on this character, where you also cancel them. It was called Cancel.
+
+**Price check**:
+A search of each item you have up, once, in the My auctions view, that finds the auctions that have been
+undercut. It is what the spec called the cancel scan.
+_Avoid_: cancel scan
 
 ## Buying
 

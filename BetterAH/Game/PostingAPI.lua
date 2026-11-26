@@ -199,6 +199,25 @@ function PostingAPI:search(entry, done, first)
   if not self.active then self:nextSearch() end
 end
 
+-- Takes back the searches still waiting in the queue whose entry carries this tag (the one running
+-- finishes). Each gets done(nil, "dropped"). Returns how many were dropped.
+function PostingAPI:drop(tag)
+  local kept, dropped = {}, {}
+  for _, job in ipairs(self.queue) do
+    if tag ~= nil and job.entry.tag == tag then dropped[#dropped + 1] = job else kept[#kept + 1] = job end
+  end
+  self.queue = kept
+  for _, job in ipairs(dropped) do pcall(job.done, nil, "dropped") end
+  return #dropped
+end
+
+-- Whether a search saw only one variant of an item: gear with a random suffix. Prices are per item ID,
+-- so such a search must not count toward the item's market value.
+function PostingAPI.variant(entry)
+  local key = entry.itemKey
+  return not entry.commodity and type(key) == "table" and (key.itemSuffix or 0) ~= 0
+end
+
 -- A search entry for an item that isn't in the bags, such as a disenchant material (a commodity).
 function PostingAPI.commodityEntry(env, itemID, name)
   local ah = env.C_AuctionHouse

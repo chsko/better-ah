@@ -14,7 +14,7 @@ describe("WindowModel", function()
       flat[#flat + 1] = section.title .. ": " .. table.concat(ids, ",")
     end
     assert.same({
-      "Sell: post,cancel",
+      "Sell: post,auctions",
       "Buy: browse,disenchant,deals,shopping",
       "Make: crafting",
       "Data: prices,alts",

@@ -558,8 +558,7 @@ function PostView:refresh()
           local prices = self.addon.prices
           -- Once per item per visit, so re-checks between posts don't outweigh the day's other points.
           -- Not for gear with a random suffix: its search sees one variant, but prices are per item ID.
-          local key = e.itemKey
-          local variant = not e.commodity and type(key) == "table" and (key.itemSuffix or 0) ~= 0
+          local variant = ns.PostingAPI.variant(e)
           if listings and reason == true and prices and self.key and not variant and not self.recorded[e.item] then
             -- Only once it counted, so a later check that sees more listings can still count.
             self.recorded[e.item] = prices:recordSearch(self.key, self:now(), e.item, listings, e.name) or nil

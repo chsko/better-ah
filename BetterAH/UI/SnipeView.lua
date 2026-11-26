@@ -18,7 +18,10 @@ SnipeView.HISTORY = 20 -- finished sessions kept
 SnipeView.NEAR_COLUMNS = { { "Item", 4, 150, "LEFT" }, { "Target", 158, 116, "LEFT" }, { "Cheapest", 316, 70 },
   { "Max", 390, 70 }, { "vs. max", 462, 74 }, { "Listed", 274, 38 } }
 SnipeView.NEAR_ROW = 17
-SnipeView.LOG_LINES = 14
+-- The session log's scroll area runs from under the title down to the settings box (#101); this is its
+-- height until the client has laid it out.
+SnipeView.LOG_HEIGHT = 250
+SnipeView.LOG_STEP = 30 -- pixels a mouse wheel notch scrolls the log
 
 -- The sniping settings, saved in BetterAHDB.disenchant.snipe: spend cap and gold to keep (copper, 0 for
 -- none) and the sound on a find.
@@ -197,6 +200,74 @@ function SnipeView:build(p, width)
     self.nearRows[i] = row
   end
   self:buildSettings()
+  self:buildLog()
+end
+
+-- The session log, in the detail panel: newest first, in a scroll area above the settings box, with a
+-- slim scroll bar that shows while it doesn't all fit (#101).
+function SnipeView:buildLog()
+  local env, w = self.env, self.window
+  local layer = w.detailLayer
+  local width = ns.Window.DETAIL - 24 - 16 -- room on the right for the bar
+  local frame = env.CreateFrame("ScrollFrame", nil, layer)
+  frame:SetPoint("TOPLEFT", w.detailTitle, "BOTTOMLEFT", 0, -8)
+  frame:SetPoint("BOTTOMLEFT", self.settingsBox, "TOPLEFT", 0, 10)
+  frame:SetWidth(width)
+  frame:EnableMouseWheel(true)
+  frame:SetScript("OnMouseWheel", function(_, delta) self:scrollLog(self.logScroll - delta * SnipeView.LOG_STEP) end)
+  local child = env.CreateFrame("Frame", nil, frame)
+  child:SetSize(width, SnipeView.LOG_HEIGHT)
+  frame:SetScrollChild(child)
+  local text = child:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  text:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0)
+  text:SetWidth(width)
+  text:SetJustifyH("LEFT")
+  text:SetSpacing(3)
+  local bar = env.CreateFrame("EventFrame", nil, layer, "MinimalScrollBar")
+  bar:SetPoint("TOPLEFT", frame, "TOPRIGHT", 6, 0)
+  bar:SetPoint("BOTTOMLEFT", frame, "BOTTOMRIGHT", 6, 0)
+  bar:SetHideIfUnscrollable(true)
+  bar:RegisterCallback("OnScroll", function(_, percentage)
+    if self.logSyncing then return end
+    self:scrollLog(percentage * self:logRange(), true)
+  end, bar)
+  frame:Hide()
+  bar:Hide()
+  self.logFrame, self.logChild, self.logText, self.logBar, self.logScroll = frame, child, text, bar, 0
+end
+
+-- The scroll area's height: as laid out, or LOG_HEIGHT before that.
+function SnipeView:logHeight()
+  local h = tonumber(self.logFrame:GetHeight())
+  return (h and h > 0) and h or SnipeView.LOG_HEIGHT
+end
+
+-- How far the log can scroll: its text's height past the scroll area.
+function SnipeView:logRange()
+  local height = tonumber(self.logText:GetStringHeight()) or 0
+  return math.max(0, height - self:logHeight())
+end
+
+-- Scrolls the log to offset pixels from the top, kept in range, and moves the bar with it (unless the
+-- bar itself moved it).
+function SnipeView:scrollLog(offset, fromBar)
+  local range = self:logRange()
+  offset = math.max(0, math.min(range, offset or 0))
+  self.logScroll = offset
+  self.logFrame:SetVerticalScroll(offset)
+  local height = tonumber(self.logText:GetStringHeight()) or 0
+  local visible = self:logHeight()
+  self.logChild:SetHeight(math.max(height, visible))
+  local bar = self.logBar
+  bar:SetShown(range > 0)
+  self.logSyncing = true
+  local ok, err = pcall(function()
+    bar:SetVisibleExtentPercentage(range > 0 and visible / height or 1)
+    bar:SetPanExtentPercentage(range > 0 and SnipeView.LOG_STEP / range or 0)
+    if not fromBar then bar:SetScrollPercentage(range > 0 and offset / range or 0) end
+  end)
+  self.logSyncing = nil
+  if not ok then error(err, 0) end
 end
 
 -- An invisible frame over a region that shows the item tooltip of what item() returns: a table with a
@@ -243,7 +314,7 @@ function SnipeView:buildSettings()
   local env, w = self.env, self.window
   local box = env.CreateFrame("Frame", nil, w.detailLayer)
   box:SetPoint("BOTTOMLEFT", w.detailLayer, "BOTTOMLEFT", 12, 12)
-  box:SetSize(196, 96)
+  box:SetSize(ns.Window.DETAIL - 24, 96)
   box:Hide()
   self.settingsBox = box
   local title = box:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -328,6 +399,14 @@ function SnipeView:start()
   self.held = nil
   -- Any call of this addon the game blocks while sniping goes in the session log (#96).
   local session = self.session
+  -- Deferred a moment: queries waiting for the auction house (this addon's own) are sent on the same
+  -- event, and the Buy button should see that.
+  api.onReady = function()
+    if not self.env.C_Timer then return end
+    self.env.C_Timer.After(0, function()
+      if self.running and self.session == session then self:refresh() end
+    end)
+  end
   api.onBlocked = function(event, what)
     if not self.running or self.session ~= session then return end
     session:log(self:now(), "blocked", nil, what .. (event == "ADDON_ACTION_FORBIDDEN" and " (forbidden)" or ""))
@@ -362,6 +441,9 @@ function SnipeView:clock(run)
   self.env.C_Timer.After(1, function()
     if not (self.running and self.run == run) then return end
     self:renderStatus()
+    -- The Buy button follows the auction house's readiness; a missed ready event mustn't leave it on
+    -- "Wait..." (#101).
+    if self.drawnReady ~= nil and self.drawnReady ~= self:api():ready() then self:refresh() end
     self:clock(run)
   end)
 end
@@ -516,6 +598,9 @@ end
 function SnipeView:buyNext(source)
   local find = self.running and self.session and self.session:next()
   if not find or self.buying then return end
+  -- Still answering the last buy or check: a buy now would be refused, so this notch does nothing. The
+  -- Buy button says to wait, and comes back when the auction house is ready (#101).
+  if not self:api():ready() then return end
   local s = SnipeView.settings(self.addon)
   local api = self:api()
   local ok, why = self.session:canBuy(find.price, api:money(), s.cap, s.keep)
@@ -617,6 +702,7 @@ end
 
 function SnipeView:hide()
   if self.settingsBox then self.settingsBox:Hide() end
+  if self.logFrame then self.logFrame:Hide(); self.logBar:Hide() end
 end
 
 -- The Start/Stop button and the status line, with its spinner.
@@ -681,15 +767,18 @@ function SnipeView:render()
     self.cols[3].value:SetText("+" .. money(find.profit))
     self.cols[3].note:SetText(find.worth and find.worth > 0 and
       string.format("%d%%", math.floor(find.profit * 100 / find.worth + 0.5)) or "")
-    self.buyButton:SetText(self.buying and "Buying..." or ("Buy for " .. money(find.price)))
+    local ready = self:api():ready()
+    self.drawnReady = ready
+    self.buyButton:SetText(self.buying and "Buying..." or not ready and "Wait..." or ("Buy for " .. money(find.price)))
     -- Pass waits for a buy in flight too, so it shows as off until the auction house answers.
     if self.buying then self.buyButton:Disable(); self.passButton:Disable()
-    else self.buyButton:Enable(); self.passButton:Enable() end
+    else self.buyButton:SetEnabled(ready); self.passButton:Enable() end
   else
     self.cardLabel:SetText(self.running and "Next buy" or "")
     self.cardName:SetText(self.running and "Nothing under your max prices yet" or "Press Start sniping")
     self.cardLevel:SetText("")
     for _, c in ipairs(self.cols) do c.value:SetText("-"); c.note:SetText("") end
+    self.drawnReady = nil
     self.buyButton:SetText("Buy")
     self.buyButton:Disable()
     self.passButton:Disable()
@@ -701,9 +790,14 @@ function SnipeView:render()
   w.detailTitle:SetText("This session")
   local log = self.addon.disenchant.session and self.addon.disenchant.session.log or {}
   local lines = {}
-  for i = 1, math.min(#log, SnipeView.LOG_LINES) do lines[#lines + 1] = SnipeView.logLine(log[i], self.env) end
-  if #log > SnipeView.LOG_LINES then lines[#lines + 1] = string.format("%d more", #log - SnipeView.LOG_LINES) end
-  w.detailBody:SetText(#lines > 0 and table.concat(lines, "\n") or "Nothing bought, passed or missed yet.")
+  for i = 1, #log do lines[#lines + 1] = SnipeView.logLine(log[i], self.env) end
+  w.detailBody:SetText("")
+  self.logText:SetText(#lines > 0 and table.concat(lines, "\n") or "Nothing bought, passed or missed yet.")
+  self.logFrame:Show()
+  -- A new line goes on top, so the log jumps back to the top to show it; otherwise it stays put.
+  local top = log[1]
+  if top ~= self.logTop then self.logTop, self.logScroll = top, 0 end
+  self:scrollLog(self.logScroll)
   self.settingsBox:Show()
   local function fill(box, amount)
     if not (box.HasFocus and box:HasFocus()) then box:SetText(amount > 0 and money(amount) or "") end

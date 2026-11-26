@@ -42,6 +42,12 @@ function SnipeAPI:open()
   return self.posting ~= nil and self.posting.open == true
 end
 
+-- Whether the auction house takes a query or a buy now: false while it is still answering the last one
+-- (a check, or the last buy). onReady() is called when it is ready again (#101).
+function SnipeAPI:ready()
+  return self.posting:ready()
+end
+
 local function after(self, fn)
   local timer = self.env.C_Timer
   if timer and timer.After then timer.After(SnipeAPI.TIMEOUT, fn) end
@@ -193,6 +199,10 @@ function SnipeAPI:onEvent(event, arg, arg2)
   elseif event == "AUCTION_HOUSE_BROWSE_FAILURE" then
     if self.browsing then self:finishBrowse(self.browsing, nil, "the auction house couldn't browse") end
   elseif event == "AUCTION_HOUSE_THROTTLED_SYSTEM_READY" then
+    if self.onReady then
+      local fine, err = pcall(self.onReady)
+      if not fine and self.env.geterrorhandler then try(self.env.geterrorhandler(), err) end
+    end
     local job = self.browsing
     if job and not job.sent then
       self:sendBrowse(job)

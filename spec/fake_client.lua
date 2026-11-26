@@ -12,7 +12,7 @@ local function newFrame(kind, name, parent, template)
   }, Frame)
 end
 
-function Frame:SetSize() end
+function Frame:SetSize(_, h) self.height = h end
 function Frame:GetName() return self.name end
 function Frame:GetParent() return self.parent end
 -- The last point set. A TOPLEFT point on its parent's BOTTOMLEFT gives the frame a position, as
@@ -56,7 +56,21 @@ function Frame:UnregisterEvent(e) self.events[e] = nil end
 function Frame:EnableMouseWheel() end
 function Frame:SetWidth(width) self.width = width end
 function Frame:GetWidth() return self.width end
-function Frame:SetHeight() end
+function Frame:SetHeight(h) self.height = h end
+function Frame:GetHeight() return self.height end
+function Frame:SetEnabled(on) self.enabled = on and true or false end
+-- ScrollFrame, as much as the session log uses.
+function Frame:SetScrollChild(child) self.scrollChild = child end
+function Frame:SetVerticalScroll(offset) self.verticalScroll = offset end
+function Frame:GetVerticalScroll() return self.verticalScroll or 0 end
+-- Roughly as the client wraps: 6 px a character across the string's width, 15 px a line.
+function Frame:GetStringHeight()
+  local lines = 0
+  for line in ((self.text or "") .. "\n"):gmatch("(.-)\n") do
+    lines = lines + math.max(1, math.ceil(#line * 6 / (self.width or 200)))
+  end
+  return lines * 15
+end
 function Frame:SetWordWrap(on) self.wordWrap = on end
 function Frame:SetJustifyH() end
 function Frame:Enable() self.enabled = true end

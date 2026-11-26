@@ -6,6 +6,7 @@
 ## SavedVariables: BetterAHDB
 
 Core/Init.lua
+Core/DebugLog.lua
 Core/Money.lua
 Core/Time.lua
 Core/MarketKey.lua
@@ -38,3 +39,4 @@ UI/SettingsView.lua
 UI/BrowseView.lua
 UI/WindowResize.lua
 UI/Window.lua
+Game/DebugHooks.lua

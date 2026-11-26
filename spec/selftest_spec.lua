@@ -226,6 +226,42 @@ describe("Commands", function()
     _G.SlashCmdList.BETTERAH("")
     _G.SlashCmdList.BETTERAH("dance")
     assert.matches("/bah selftest", printed[1])
-    assert.matches("/bah selftest", printed[4])
+    assert.matches("/bah selftest", printed[6])
+  end)
+
+  describe("debug log (#99)", function()
+    local function withLog(on)
+      local printed, ns = setup()
+      helper.load("BetterAH/Core/DebugLog.lua", ns)
+      ns.debugLog = ns.DebugLog.new({ on = on }, function() return "12:00:00.000" end)
+      ns.DebugHooks = { add = function(...) ns.debugLog:add(...) end,
+        setOn = function(_, value) ns.debugLog:setOn(value) end }
+      return printed, ns
+    end
+
+    it("turns the log on and off and says so", function()
+      local printed, ns = withLog(false)
+      _G.SlashCmdList.BETTERAH("debug on")
+      assert.is_true(ns.debugLog:isOn())
+      assert.matches("debug log is on", printed[#printed])
+      _G.SlashCmdList.BETTERAH("DEBUG Off")
+      assert.is_false(ns.debugLog:isOn())
+      assert.matches("debug log is off", printed[#printed])
+    end)
+
+    it("marks a note in the player's own words, even while the log is off", function()
+      local printed, ns = withLog(false)
+      _G.SlashCmdList.BETTERAH("mark  Buy button did nothing ")
+      assert.same({ "#0 12:00:00.000 [MARK] Buy button did nothing" }, ns.debugLog.saved.lines)
+      assert.matches("debug log is off", printed[1])
+    end)
+
+    it("logs the command and what it printed while the log is on", function()
+      local _, ns = withLog(true)
+      _G.SlashCmdList.BETTERAH("selftest")
+      local lines = ns.debugLog.saved.lines
+      assert.matches("%[command%] /bah selftest", lines[1])
+      assert.matches("%[chat%] %[PASS%] Only: ran", lines[2])
+    end)
   end)
 end)

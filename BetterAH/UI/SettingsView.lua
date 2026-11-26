@@ -52,6 +52,8 @@ function SettingsView:build(f, x, y, width, height)
     self.durationButtons[i] = b
   end
 
+  self:buildDebug(panel)
+
   -- On the shared detail panel, so shown only while this view is.
   local w = self.window
   local reset = env.CreateFrame("Button", nil, w.detailLayer, "UIPanelButtonTemplate")
@@ -65,6 +67,48 @@ function SettingsView:build(f, x, y, width, height)
   reset:Hide()
   self.resetButton = reset
   return panel
+end
+
+-- The debug log (#99): off or on, in the same style as the duration buttons.
+SettingsView.DEBUG_NOTE = "Keeps a log of what you do in Better AH and what the auction house answers, "
+  .. "for bug reports. It's saved on /reload or logout. Type /bah mark and a note to flag a moment."
+
+function SettingsView:buildDebug(panel)
+  local env = self.env
+  local group = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  group:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -88)
+  group:SetText("Debugging")
+  self.debugGroupLabel = group
+
+  local label = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  label:SetPoint("TOPLEFT", panel, "TOPLEFT", 8, -116)
+  label:SetText("Debug log")
+  self.debugLabel = label
+
+  self.debugButtons = {}
+  for i, spec in ipairs({ { false, "Off", "Don't keep a debug log." },
+    { true, "On", "Log what you do and what the auction house answers, for bug reports." } }) do
+    local b = env.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    b:SetSize(72, 22)
+    b:SetPoint("TOPLEFT", panel, "TOPLEFT", 150 + (i - 1) * 76, -111)
+    b:SetText(spec[2])
+    b:SetScript("OnClick", function() self:setDebug(spec[1]) end)
+    ns.Window.tooltip(env, b, "Debug log " .. spec[2]:lower(), spec[3])
+    b.debugValue = spec[1]
+    self.debugButtons[i] = b
+  end
+
+  local note = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  note:SetPoint("TOPLEFT", panel, "TOPLEFT", 8, -142)
+  note:SetWidth(380)
+  note:SetJustifyH("LEFT")
+  note:SetText(SettingsView.DEBUG_NOTE)
+  self.debugNote = note
+end
+
+function SettingsView:setDebug(on)
+  if ns.DebugHooks then ns.DebugHooks.setOn(self.env, on) end
+  self:render()
 end
 
 function SettingsView:setDuration(index)
@@ -85,6 +129,11 @@ function SettingsView:render()
   for i, b in ipairs(self.durationButtons) do
     if i == current then b:LockHighlight() else b:UnlockHighlight() end
     if settings then b:Enable() else b:Disable() end
+  end
+  local log = ns.debugLog
+  for _, b in ipairs(self.debugButtons or {}) do
+    if log and log:isOn() == b.debugValue then b:LockHighlight() else b:UnlockHighlight() end
+    if log then b:Enable() else b:Disable() end
   end
   self.resetButton:SetShown(settings ~= nil)
   if current and current ~= ns.Posting.DEFAULT_DURATION then self.resetButton:Enable()

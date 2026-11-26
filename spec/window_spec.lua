@@ -36,6 +36,12 @@ local function setup(opts)
     ns.CharacterTracker.install(env, ns)
   end
   local w = ns.Window.install(env, ns)
+  if opts and opts.debug then
+    helper.load("BetterAH/Core/DebugLog.lua", ns)
+    helper.load("BetterAH/Game/DebugHooks.lua", ns)
+    ns.DebugHooks.install(env, ns)
+    ns.DebugHooks.load(env)
+  end
   return env, w, ns
 end
 
@@ -1388,6 +1394,37 @@ describe("Window", function()
   end)
 
   describe("Settings", function()
+    it("turns the debug log on and off, and the log then follows clicks, views and browses (#99)", function()
+      local env, w, ns = setup({ debug = true })
+      env.openAuctionHouse()
+      env.runTimers()
+      sidebarButton(w, "settings"):Click()
+      local sv = w.settingsView
+      local off, on = sv.debugButtons[1], sv.debugButtons[2]
+      assert.is_true(off.highlighted, "off to start with")
+      assert.equal(0, ns.debugLog:count(), "nothing is kept while off")
+      on:Click()
+      assert.is_true(ns.debugLog:isOn())
+      assert.is_true(on.highlighted)
+      assert.is_false(off.highlighted)
+      sidebarButton(w, "post"):Click()
+      env.browseResults = { { itemKey = { itemID = 1 }, minPrice = 5 } }
+      ns.snipeAPI:browse({ searchString = "Arcane" }, function() end)
+      env.runTimers()
+      local text = table.concat(ns.debugLog.saved.lines, "\n")
+      assert.matches("%[session%]", text)
+      assert.matches("%[debug%] log on", text)
+      assert.matches("%[view%] settings %-> post", text)
+      assert.matches("%[ui%] click \"Post\" in settings", text)
+      assert.matches("%[browse%] {searchString=Arcane} %-> 1 results", text)
+      sidebarButton(w, "settings"):Click()
+      off:Click()
+      local count = ns.debugLog:count()
+      sidebarButton(w, "post"):Click()
+      assert.equal(count, ns.debugLog:count(), "nothing more once off")
+      assert.is_true(w.postPanel:IsShown(), "clicks still work")
+    end)
+
     it("picks the default duration, which new items then post for", function()
       local env, w, ns = setup()
       env.containers[0] = { { itemID = 4306, count = 10, name = "Silk Cloth" } }

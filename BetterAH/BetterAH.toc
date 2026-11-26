@@ -31,6 +31,7 @@ Core/Buying.lua
 Core/WindowScale.lua
 Core/AutoScan.lua
 Core/Purchases.lua
+Core/Ledger.lua
 Core/TooltipPrices.lua
 Core/MyAuctions.lua
 Game/AuctionAPI.lua
@@ -40,6 +41,7 @@ Game/SnipeAPI.lua
 Game/BrowseAPI.lua
 Game/TooltipHook.lua
 Game/MyAuctionsAPI.lua
+Game/LedgerAPI.lua
 UI/Loading.lua
 UI/PostView.lua
 UI/SnipeView.lua
@@ -51,6 +53,7 @@ UI/BrowseHistory.lua
 UI/BrowseFilterBar.lua
 UI/BrowseView.lua
 UI/MyAuctionsView.lua
+UI/LedgerView.lua
 UI/WindowResize.lua
 UI/Window.lua
 Game/DebugHooks.lua

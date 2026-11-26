@@ -17,7 +17,7 @@ describe("WindowModel", function()
       "Sell: post,auctions",
       "Buy: browse,disenchant,deals,shopping",
       "Make: crafting",
-      "Data: prices,alts",
+      "Data: ledger,prices,alts",
       "Addon: settings",
     }, flat)
   end)

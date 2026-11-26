@@ -1136,6 +1136,37 @@ describe("Window", function()
         assert.equal(5001, env.searches[1].itemKey.itemID)
       end)
 
+      it("shows the item tooltip over the next buy and the closest listings", function()
+        local env, _, _, s = snipeSetup()
+        local shown = {}
+        env.GameTooltip = {
+          SetOwner = function(_, owner) shown.owner = owner end,
+          IsOwned = function(_, f) return shown.visible and shown.owner == f end,
+          Hide = function() shown.visible = false end,
+          SetHyperlink = function(_, link) shown.link, shown.visible = link, true return true end,
+          SetItemKey = function(_, id, level, suffix) shown.key, shown.visible = { id, level, suffix }, true end,
+        }
+        s.cardHover.scripts.OnEnter(s.cardHover)
+        assert.is_false(shown.visible, "no find, no tooltip")
+        s.startButton:Click()
+        env.runTimers()
+        s.cardHover.scripts.OnEnter(s.cardHover)
+        assert.equal("[Ridgeback Bracers]", shown.link, "the auction's own link, with its random stats")
+        assert.is_true(shown.visible)
+        s.cardHover.scripts.OnLeave(s.cardHover)
+        assert.is_false(shown.visible)
+        local row = s.nearRows[2]
+        row.hover.scripts.OnEnter(row.hover)
+        assert.same({ 5002, 28, 0 }, shown.key, "a browse result by its item key")
+        s.nearRows[5].hover.scripts.OnEnter(s.nearRows[5].hover)
+        assert.is_false(shown.visible, "an empty row shows nothing")
+        s.cardHover.scripts.OnEnter(s.cardHover)
+        shown.link = nil
+        s:passNext()
+        assert.equal("[Ridgeback Bracers]", shown.link, "the tooltip follows the card to the next find")
+        assert.is_true(shown.visible)
+      end)
+
       it("keeps sniping behind other views without drawing over them", function()
         local env, w, _, s = snipeSetup()
         s.startButton:Click()

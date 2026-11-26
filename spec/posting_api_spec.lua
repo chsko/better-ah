@@ -96,6 +96,23 @@ describe("PostingAPI", function()
     }, got, "an item's buyout is per item")
   end)
 
+  it("puts a search the player waits on ahead of the background ones, newest first (#122)", function()
+    local env, api = setup()
+    env.openAuctionHouse()
+    local order = {}
+    local function job(id, first)
+      api:search(commodity(id), function() order[#order + 1] = id end, first)
+    end
+    job(1) job(2) job(3)
+    job(10, true) job(11, true)
+    env.runTimers(1)
+    env.runTimers(1)
+    env.runTimers(1)
+    env.runTimers(1)
+    env.runTimers(1)
+    assert.same({ 1, 11, 10, 2, 3 }, order, "the one already sent finishes, then the player's newest, then the rest")
+  end)
+
   it("says when the client has only part of the results", function()
     local env, api = setup()
     env.openAuctionHouse()

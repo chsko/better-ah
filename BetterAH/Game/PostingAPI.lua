@@ -188,10 +188,14 @@ end
 
 -- Looks up an item's current listings. done(listings, complete) on an answer, done(nil, reason) when
 -- the search can't run or gets no answer in TIMEOUT seconds. Searches run one at a time, in order,
--- and only while the auction house is open.
-function PostingAPI:search(entry, done)
+-- and only while the auction house is open. first: one the player is waiting on (Browse's item page, #122)
+-- goes ahead of the background ones (bag prices, materials), after any other such search.
+function PostingAPI:search(entry, done, first)
   if not self.open then return done(nil, "the auction house is closed") end
-  self.queue[#self.queue + 1] = { entry = entry, done = done }
+  local job = { entry = entry, done = done }
+  -- The newest search the player waits on goes to the very front: an older one
+  -- is for an item they have already left, so its answer is thrown away anyway.
+  table.insert(self.queue, first and 1 or #self.queue + 1, job)
   if not self.active then self:nextSearch() end
 end
 

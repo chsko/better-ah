@@ -2518,6 +2518,17 @@ describe("Browse item page, after review", function()
     assert.is_nil(view.item.busy, "reopening starts free")
   end)
 
+  it("asks for an item's auctions ahead of the background searches (#122)", function()
+    local _, _, ns = setupItem()
+    local posting = ns.browseAPI:posting()
+    local search = posting.search
+    local first
+    posting.search = function(_, _, _, f) first = f end
+    ns.browseAPI:auctions({ itemID = 1, name = "x" }, function() end)
+    posting.search = search
+    assert.is_true(first)
+  end)
+
   it("says a timed-out commodity buy may have gone through, and reports a late success", function()
     local env, _, ns, view = setupItem()
     local item = open(view, env, "Strange Dust")

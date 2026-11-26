@@ -192,19 +192,19 @@ function DebugHooks.install(env, addon)
   end)
 
   -- One item's listings (Post view prices, snipe lookups, material prices).
-  around(PostingAPI, "search", function(original, self, entry, done)
-    if not log() then return original(self, entry, done) end
+  around(PostingAPI, "search", function(original, self, entry, done, first)
+    if not log() then return original(self, entry, done, first) end
     local started = seconds(self.env)
     local name = tostring(entry.name or entry.itemID or entry.item)
     return original(self, entry, function(listings, complete)
       if type(listings) == "table" then
-        add("search", "%s -> %d listings%s%s", name, #listings, complete and "" or ", not all",
-          slow(self.env, started))
+        add("search", "%s -> %d listings%s%s%s", name, #listings, complete and "" or ", not all",
+          slow(self.env, started), first and " (ahead of the queue)" or "")
       else
         add("search", "%s -> none: %s", name, tostring(complete))
       end
       return done(listings, complete)
-    end)
+    end, first)
   end)
   local function postResult(what, entry, plan, r, why, units)
     add("post", "%s %s x%s at %s copper, duration %s -> %s%s", what, tostring(entry and (entry.name or entry.itemID)),

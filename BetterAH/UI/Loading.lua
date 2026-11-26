@@ -41,8 +41,8 @@ end
 -- Puts a spinner and a bar in front of a status line. at = { point, rel, relPoint, x, y, width }: the
 -- point the line's left edge is set with (text:SetPoint(point, rel, relPoint, x, y)), and its width
 -- when it has a fixed one. Then :show(done, total) for a bar (total nil or 0: a bar that sweeps, for a
--- wait with no count yet), :spin() for a spinner, :clear() for neither. The line moves right of
--- whichever is shown (and narrows by as much, when it has a width).
+-- wait with no count yet), :spin() for a spinner after the text, :clear() for neither. The line moves
+-- right of a bar (and narrows by as much, when it has a width).
 function Loading.attach(env, parent, text, at)
   local self = setmetatable({ env = env, text = text, at = at }, Loading)
   local point = at[1] or "LEFT"
@@ -90,11 +90,23 @@ function Loading:show(done, total)
   self:place(bar, Loading.BAR_WIDTH)
 end
 
+-- The spinner goes after the line's text, so the text doesn't move each time it starts and stops.
+-- Call it again after the text changes, to keep it at the end.
+-- The line keeps room for it at its right end: a line with a fixed width narrows by as much, and a line
+-- whose right edge is anchored must leave Loading.SPINNER + 6 px free there itself.
 function Loading:spin()
   self.barFrame:Hide()
   self.sweeping = false
-  self.spinnerFrame:Show()
-  self:place(self.spinnerFrame, Loading.SPINNER)
+  self:place(nil)
+  local text, at = self.text, self.at
+  if at[6] then text:SetWidth(at[6] - Loading.SPINNER - 6) end
+  local width = text.GetStringWidth and tonumber(text:GetStringWidth()) or 0
+  local room = text.GetWidth and tonumber(text:GetWidth())
+  if room and room > 0 then width = math.min(width, room) end
+  local f = self.spinnerFrame
+  f:ClearAllPoints()
+  f:SetPoint("LEFT", text, "LEFT", width + 6, 0)
+  f:Show()
 end
 
 function Loading:clear()

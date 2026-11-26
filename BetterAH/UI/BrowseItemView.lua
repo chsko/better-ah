@@ -224,7 +224,8 @@ function ItemView:open(row)
   if self.api and self:api() then self:api():cancelCommodity() end
   self.row, self.list, self.rows, self.ladder, self.selected = row, nil, nil, nil, nil
   self.quoted, self.message, self.offset, self.busy = nil, nil, 0, nil
-  self.commodityControls.quantity:SetText("")
+  -- A commodity starts at 1 (#125): a row click fills up to that row, Max what you can afford.
+  self.commodityControls.quantity:SetText("1")
   for _, b in ipairs(self.itemControls.boxes) do b:SetText("") end
   self.panel:Show()
   self:load()
@@ -412,7 +413,7 @@ function ItemView:confirm()
     self.busy = nil
     if bought then
       self:say(string.format("Bought %d %s for %s.", q.quantity, name, money(q.total)))
-      self.commodityControls.quantity:SetText("")
+      self.commodityControls.quantity:SetText("1")
       self:relayer()
     elseif reason == "no answer from the auction house" then
       self:say("No answer from the auction house yet. It may have gone through: check your mail before buying again.")
@@ -580,6 +581,8 @@ function ItemView:renderCommodityDetail(have)
     if ladder.quantity < self:quantity() then
       lines[#lines + 1] = string.format("Only %d are for sale.", ladder.quantity)
     end
+  elseif ladder and self:quantity() > 0 then
+    lines[#lines + 1] = "None for sale by others."
   else
     lines[#lines + 1] = "Type how many, or click a row on the left."
   end

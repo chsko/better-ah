@@ -1793,6 +1793,19 @@ describe("Window", function()
       return env, w, ns
     end
 
+    it("matches your own cheapest auction instead of undercutting it, even when the search doesn't mark it (#132)",
+      function()
+      local env, w = postSetup()
+      env.listings[2589] = { { unitPrice = 950, quantity = 40 }, { unitPrice = 990, quantity = 5 } }
+      env.owned = { { id = 7, itemID = 2589, quantity = 40, buyout = 950 } }
+      env.openAuctionHouse()
+      env.runTimers()
+      assert.equal("9s 50c", cells(w, 1)[3])
+      w.postView.rows[1].button:Click()
+      assert.matches("Your own auction is the cheapest listing, at 9s 50c each, so this posts at 9s 50c",
+        w.detailBody:GetText(), 1, true)
+    end)
+
     it("counts other sellers' listings toward market value, once per day, and not as a full scan", function()
       local env, w, ns = setup()
       env.containers[0] = { linen, { itemID = 2592, count = 3, name = "Wool Cloth" },

@@ -23,18 +23,62 @@ describe("Posting", function()
     assert.equal(950, plan({ have = 20, marketValue = 1000, listings = { { unit = 950.5, count = 2 } } }).price)
   end)
 
-  it("ignores the player's own listings, but not other sellers' units in a shared row", function()
+  it("undercuts other sellers' units, also in a row shared with the player's", function()
+    local p = plan({ have = 20, marketValue = 1000, listings = {
+      { unit = 900, count = 20 }, { unit = 980, count = 20, ownCount = 20 },
+    } })
+    assert.same({ 899, 900 }, { p.price, p.undercut }, "the player's dearer listing doesn't count")
+    local shared = plan({ have = 20, marketValue = 1000, listings = { { unit = 900, count = 30, ownCount = 20 } } })
+    assert.same({ 899, 900, nil }, { shared.price, shared.undercut, shared.matched },
+      "another seller at the player's price is still undercut")
+  end)
+
+  it("matches the player's own auction when it is the cheapest, instead of undercutting it (#132)", function()
     local p = plan({ have = 20, marketValue = 1000, listings = {
       { unit = 900, count = 20, ownCount = 20 }, { unit = 980, count = 20 },
     } })
-    assert.same({ 979, 980 }, { p.price, p.undercut })
-    local shared = plan({ have = 20, marketValue = 1000, listings = { { unit = 900, count = 30, ownCount = 20 } } })
-    assert.equal(899, shared.price)
+    assert.same({ "post", 900, 900, nil }, { p.action, p.price, p.matched, p.undercut })
+    local alone = plan({ have = 20, marketValue = 1000, listings = { { unit = 950, count = 20, ownCount = 20 } } })
+    assert.same({ 950, 950 }, { alone.price, alone.matched }, "also when nobody else sells it")
+    local silver = plan({ have = 20, marketValue = 1000, step = 100,
+      listings = { { unit = 950, count = 2, ownCount = 2 } } })
+    assert.equal(1000, silver.price, "rounded up to the client's price step, never under your own")
   end)
 
-  it("prices at market value when nobody else is selling", function()
-    local p = plan({ have = 20, marketValue = 1000, listings = { { unit = 700, count = 20, ownCount = 20 } } })
-    assert.same({ 1000, nil }, { p.price, p.undercut })
+  it("passes over an own auction below the floor rather than hold the new post down there (#132)", function()
+    local low = plan({ have = 20, marketValue = 1000, listings = {
+      { unit = 700, count = 20, ownCount = 20 }, { unit = 980, count = 20 } } })
+    assert.same({ "post", 979, 980, nil }, { low.action, low.price, low.undercut, low.matched })
+    local alone = plan({ have = 20, marketValue = 1000, listings = { { unit = 700, count = 20, ownCount = 20 } } })
+    assert.same({ "post", 1000, nil }, { alone.action, alone.price, alone.matched }, "alone, it goes at market value")
+  end)
+
+  it("knows the player's units from the owned auctions when the search doesn't mark them (#132)", function()
+    -- Christian's case: 54 Greater Astral Essence at 14s 44c, the cheapest, but the search row says 0 are his.
+    local listings = { { unit = 1444, count = 54 }, { unit = 1447, count = 25 }, { unit = 1485, count = 3 } }
+    local p = plan({ have = 26, marketValue = 1400, listings = listings, own = { { unit = 1444, quantity = 54 } } })
+    assert.same({ "post", 1444, 1444 }, { p.action, p.price, p.matched })
+    assert.is_nil(listings[1].ownCount, "the listings passed in are left as they were")
+    local mixed = plan({ have = 26, marketValue = 1400, own = { { unit = 1444, quantity = 54 } },
+      listings = { { unit = 1444, count = 60 }, { unit = 1447, count = 25 } } })
+    assert.same({ 1443, 1444 }, { mixed.price, mixed.undercut }, "6 more units at that price are someone else's")
+  end)
+
+  it("marks owned units without counting the ones the search already marked twice", function()
+    local out = Posting.markOwn({
+      { unit = 100, count = 10, ownCount = 4 }, { unit = 100, count = 5 }, { unit = 200, count = 3 },
+    }, { { unit = 100, quantity = 6 }, { unit = 100, quantity = 1 }, { unit = 300, quantity = 9 },
+      { unit = 0, quantity = 2 }, { unit = 200, quantity = -1 } })
+    assert.same({ 7, nil, nil }, { out[1].ownCount, out[2].ownCount, out[3].ownCount })
+    local many = Posting.markOwn({ { unit = 100, count = 2 }, { unit = 100, count = 3 } },
+      { { unit = 100, quantity = 9 } })
+    assert.same({ 2, 3 }, { many[1].ownCount, many[2].ownCount }, "never more than the listings hold")
+    assert.same({}, Posting.markOwn(nil, nil))
+  end)
+
+  it("prices at market value when nobody is selling", function()
+    local p = plan({ have = 20, marketValue = 1000, listings = {} })
+    assert.same({ 1000, nil, nil }, { p.price, p.undercut, p.matched })
     assert.equal(1500, (plan({ have = 20, marketValue = 1000, floor = 1500, listings = {} })).price,
       "but never below the item's own floor")
   end)

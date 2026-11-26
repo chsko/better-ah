@@ -6,6 +6,7 @@ describe("DebugHooks (#99)", function()
     local env = fake.new()
     local ns = helper.load("BetterAH/Core/Money.lua")
     helper.load("BetterAH/Core/DebugLog.lua", ns)
+    helper.load("BetterAH/Core/Posting.lua", ns)
     helper.load("BetterAH/Game/PostingAPI.lua", ns)
     helper.load("BetterAH/Game/SnipeAPI.lua", ns)
     helper.load("BetterAH/Game/DebugHooks.lua", ns)
@@ -35,6 +36,20 @@ describe("DebugHooks (#99)", function()
       end
     end)
   end
+
+  it("logs how many of a search's units are yours and the cheapest that isn't (#132)", function()
+    local env, _, ns = setup(true)
+    env.openAuctionHouse()
+    env.listings[11082] = { { unitPrice = 1444, quantity = 54, numOwnerItems = 54 },
+      { unitPrice = 1447, quantity = 25 } }
+    local got
+    ns.postingAPI:search({ item = "i:11082", itemID = 11082, name = "Greater Astral Essence", commodity = true,
+      itemKey = { itemID = 11082 } }, function(listings) got = listings end)
+    env.runTimers()
+    assert.equal(2, #got)
+    assert.matches("[search] Greater Astral Essence -> 2 listings, search marks 54 yours, cheapest other 1447",
+      table.concat(ns.debugLog.saved.lines, "\n"), 1, true)
+  end)
 
   it("logs blocks only for this addon", function()
     local _, _, ns = setup(true)

@@ -106,7 +106,11 @@ function PostView.detailText(row, ownFloor, marketValue, step)
       add(string.format("Combine them in threes into %s instead.", matName(c.id)))
     end
   else
-    if plan.undercut then
+    if plan.matched then
+      add(string.format("Your own auction is the cheapest listing, at %s each, so this posts at %s "
+        .. "instead of undercutting you%s.", money(math.ceil(plan.matched)), money(plan.price),
+        plan.price > plan.matched and " (rounded up to the price step the auction house takes)" or ""))
+    elseif plan.undercut then
       add(string.format("The cheapest other listing is %s each, so this posts at %s, %s under it.",
         money(math.ceil(plan.undercut)), money(plan.price), under))
     else
@@ -196,6 +200,12 @@ function PostView:build(f, x, y, width, height)
   self:buildEditor()
   self.events = env.CreateFrame("Frame")
   self.events:SetScript("OnEvent", function(_, event, itemID)
+    if event == "OWNED_AUCTIONS_UPDATED" then
+      -- A fresh owned auctions list: read it again, and it now holds this visit's posts (#132).
+      self.owned = nil
+      if self.queue then self.queue:ownedRefreshed() end
+      return self:render()
+    end
     if event ~= "ITEM_DATA_LOAD_RESULT" then return self:refresh() end
     -- Only items this view asked for, and one re-read for a burst of them: the event fires for every
     -- item load in the client, and can fire inside the request itself.
@@ -209,6 +219,7 @@ function PostView:build(f, x, y, width, height)
     end)
   end)
   pcall(self.events.RegisterEvent, self.events, "BAG_UPDATE_DELAYED")
+  pcall(self.events.RegisterEvent, self.events, "OWNED_AUCTIONS_UPDATED")
   -- An item's data arriving can bring an item into the list that a read left out (#82).
   pcall(self.events.RegisterEvent, self.events, "ITEM_DATA_LOAD_RESULT")
   return panel
@@ -470,6 +481,31 @@ function PostView:marketValue(item)
   return prices and key and prices:marketValue(key, item, self:now()) or nil
 end
 
+PostView.OWNED_TTL = 1 -- seconds one read of the owned auctions list is reused across rows
+
+-- The player's auctions of an entry's item, { unit, quantity } each, from the owned auctions list
+-- (the one My auctions reads), so pricing can tell the player's units apart (#132). Sold auctions
+-- and ones without a buyout don't count. nil when the client can't say.
+-- Commodities only for now: an item auction's owned buyoutAmount isn't confirmed per unit in game
+-- (Game/MyAuctionsAPI.lua), and a stack total could match another seller's single item.
+function PostView:ownAuctions(entry)
+  if not (ns.MyAuctionsAPI and entry and entry.commodity) then return nil end
+  local t = self.env.GetTime and self.env.GetTime()
+  local cache = self.owned
+  if not (cache and t and cache.time and t - cache.time < PostView.OWNED_TTL) then
+    cache = { time = t, auctions = ns.MyAuctionsAPI.read(self.env) }
+    self.owned = cache
+  end
+  if not cache.auctions then return nil end
+  local out = {}
+  for _, a in ipairs(cache.auctions) do
+    if a.itemID == entry.itemID and not a.sold and a.unit then
+      out[#out + 1] = { unit = a.unit, quantity = a.quantity }
+    end
+  end
+  return out
+end
+
 -- Called when the view is shown: a fresh queue for this visit, then look up each item.
 function PostView:open()
   local key, parts = self:market()
@@ -484,6 +520,7 @@ function PostView:open()
     settings = self.addon.posting, key = key, step = api and ns.PostingAPI.priceStep(self.env) or 1,
     marketValue = function(item) return self:marketValue(item) end,
     matFloor = function(item) return self:matFloor(item) end,
+    ownAuctions = function(entry) return self:ownAuctions(entry) end,
   })
   self.queue.filter = self:filter()
   self.ruleShown = nil
@@ -719,9 +756,9 @@ function PostView:postNext()
   if result == "sent" then
     self.message = nil
     -- Wait for the game and the bags before the next post, so it never posts from a stale row.
-    local busy = { item = row.item, units = units or 0 }
+    local busy = { item = row.item, units = units or 0, price = row.plan and row.plan.price }
     self.busy = busy
-    self.queue:sent(row.item, busy.units)
+    self.queue:sent(row.item, busy.units, row.plan and row.plan.price)
     local timer = self.env.C_Timer
     if timer and timer.After then
       timer.After(5, function()
@@ -758,7 +795,9 @@ function PostView:posted(ok, event)
   end
   if not ok then
     self.message = "The auction house didn't take that post. Check the chat for why."
-    if busy and self.queue and event == "AUCTION_HOUSE_POST_ERROR" then self.queue:sent(busy.item, -busy.units) end
+    if busy and self.queue and event == "AUCTION_HOUSE_POST_ERROR" then
+      self.queue:sent(busy.item, -busy.units, busy.price)
+    end
     self.busy = nil
   end
   self:refresh()

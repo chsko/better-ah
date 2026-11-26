@@ -32,6 +32,35 @@ describe("PostQueue", function()
     assert.is_nil(q:nextPost())
   end)
 
+  it("hands each item's own auctions to the price plan (#132)", function()
+    local settings = ns.Posting.Settings.new({})
+    local asked
+    local q = ns.PostQueue.new({ settings = settings, key = "/1/Horde", marketValue = function() return 1000 end,
+      ownAuctions = function(e) asked = e.item return { { unit = 950, quantity = 20 } } end })
+    q:setEntries({ { item = "i:1", name = "Apple", have = 5 } })
+    q:setListings("i:1", { { unit = 950, count = 20 }, { unit = 990, count = 3 } })
+    local row = q:rows()[1]
+    assert.same({ "i:1", "ready", 950, 950 }, { asked, row.state, row.plan.price, row.plan.matched })
+  end)
+
+  it("counts units posted this visit as the player's until the owned list has them (#132)", function()
+    local settings = ns.Posting.Settings.new({})
+    local owned = { { unit = 1444, quantity = 54 } }
+    local q = ns.PostQueue.new({ settings = settings, key = "/1/Horde", marketValue = function() return 1400 end,
+      ownAuctions = function() return owned end })
+    q:setEntries({ { item = "i:1", name = "Essence", have = 30 } })
+    q:sent("i:1", 26, 1444)
+    -- The search after the post sees 80 at 1444, but the owned list still says 54.
+    q:setListings("i:1", { { unit = 1444, count = 80 }, { unit = 1447, count = 25 } })
+    assert.same({ 1444, 1444 }, { q:rows()[1].plan.price, q:rows()[1].plan.matched })
+    q:sent("i:1", -26, 1444) -- the auction house refused it after all
+    assert.same({ 1443, 1444 }, { q:rows()[1].plan.price, q:rows()[1].plan.undercut })
+    q:sent("i:1", 26, 1444)
+    owned = { { unit = 1444, quantity = 80 } }
+    q:ownedRefreshed()
+    assert.same({ 1444, 1444 }, { q:rows()[1].plan.price, q:rows()[1].plan.matched }, "the owned list has them now")
+  end)
+
   it("turns each lookup into ready, skipped or failed", function()
     local q = setup()
     q:setListings("i:1", { { unit = 990, count = 20 } })

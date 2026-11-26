@@ -15,12 +15,15 @@ PostQueue.__index = PostQueue
 
 -- opts: { settings = Posting.Settings, key = market key, marketValue = function(item) -> copper or nil,
 --         step = price step (1 or 100),
---         matFloor = function(item) -> a MatFloors.floor result for a disenchant material, or nil }
+--         matFloor = function(item) -> a MatFloors.floor result for a disenchant material, or nil,
+--         ownAuctions = function(entry) -> the player's auctions of the entry's item, { unit, quantity }
+--           each, or nil (#132: Post matches the player's own cheapest auction instead of undercutting it) }
 function PostQueue.new(opts)
   return setmetatable({
     settings = opts.settings, key = opts.key, marketValue = opts.marketValue or function() return nil end,
     matFloor = opts.matFloor or function() return nil end,
-    step = opts.step or 1, entries = {}, all = {}, found = {}, skipped = {}, posted = {}, filter = "all",
+    ownAuctions = opts.ownAuctions or function() return nil end,
+    step = opts.step or 1, entries = {}, all = {}, found = {}, skipped = {}, posted = {}, postedAt = {}, filter = "all",
   }, PostQueue)
 end
 
@@ -75,8 +78,36 @@ end
 
 -- Record that units of an item were posted this visit (negative to take back a post the auction house
 -- refused). They count toward the item's Post at most limit until the next visit.
-function PostQueue:sent(item, units)
-  self.posted[item] = math.max(0, (self.posted[item] or 0) + (tonumber(units) or 0))
+-- price: the unit price they went up at, so pricing knows they are the player's until the owned
+-- auctions list has them (#132).
+function PostQueue:sent(item, units, price)
+  units = tonumber(units) or 0
+  self.posted[item] = math.max(0, (self.posted[item] or 0) + units)
+  price = tonumber(price)
+  if price and price > 0 then
+    local at = self.postedAt[item] or {}
+    self.postedAt[item] = at
+    at[price] = math.max(0, (at[price] or 0) + units)
+  end
+end
+
+-- The owned auctions list was read again: it now holds what this visit posted.
+function PostQueue:ownedRefreshed()
+  self.postedAt = {}
+end
+
+-- The player's auctions of an entry's item for pricing: the owned list's, plus units posted this visit
+-- that it may not hold yet.
+function PostQueue:own(e)
+  local list = self.ownAuctions(e)
+  local at = self.postedAt[e.item]
+  if not (list or at) then return nil end
+  local out = {}
+  for _, a in ipairs(list or {}) do out[#out + 1] = a end
+  for price, units in pairs(at or {}) do
+    if units > 0 then out[#out + 1] = { unit = price, quantity = units } end
+  end
+  return out
 end
 
 -- Leave an item in the bags for this visit to the auction house.
@@ -112,7 +143,7 @@ function PostQueue:row(e)
     have = e.have, listings = found.listings, marketValue = self.marketValue(e.item),
     floor = own, ruleFloor = row.matFloor and row.matFloor.floor, profile = settings and settings:profile(e.item),
     commodity = e.commodity, stacks = stacks(e), maxStack = e.maxStack, posted = self.posted[e.item],
-    step = self.step, defaultDuration = settings and settings:defaultDuration(),
+    step = self.step, defaultDuration = settings and settings:defaultDuration(), own = self:own(e),
   })
   if self.skipped[e.item] then
     row.state, row.skipped = "skipped", "you"

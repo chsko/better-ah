@@ -198,7 +198,15 @@ function DebugHooks.install(env, addon)
     local name = tostring(entry.name or entry.itemID or entry.item)
     return original(self, entry, function(listings, complete)
       if type(listings) == "table" then
-        add("search", "%s -> %d listings%s%s%s", name, #listings, complete and "" or ", not all",
+        -- How many units the search marked as the player's, and the cheapest that isn't (#132).
+        local mine = 0
+        for _, l in ipairs(listings) do
+          mine = mine + math.min(tonumber(l.count) or 0, tonumber(l.ownCount) or 0)
+        end
+        -- Only what the search itself marks: Post also counts the owned auctions list.
+        local other = ns.Posting and ns.Posting.cheapestOther(listings)
+        add("search", "%s -> %d listings, search marks %d yours, cheapest other %s%s%s%s", name, #listings, mine,
+          not ns.Posting and "?" or other and tostring(other) or "none", complete and "" or ", not all",
           slow(self.env, started), first and " (ahead of the queue)" or "")
       else
         add("search", "%s -> none: %s", name, tostring(complete))

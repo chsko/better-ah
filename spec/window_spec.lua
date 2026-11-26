@@ -2430,6 +2430,23 @@ describe("Browse item page", function()
     assert.is_false(c.confirm:IsShown())
   end)
 
+  it("starts a commodity at 1, and goes back to 1 after a buy (#125)", function()
+    local env, _, _, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    local c = item.commodityControls
+    assert.equal("1", c.quantity:GetText())
+    assert.truthy(c.buy:GetText():find("^Buy 1 for "))
+    assert.is_true(c.buy:IsEnabled())
+    env.quote = function(_, qty) return 98, qty * 98 end
+    c.buy:Click()
+    env.runTimers()
+    assert.is_true(c.confirm:IsShown())
+    c.confirm:Click()
+    env.runTimers()
+    assert.same({ itemID = 20, quantity = 1 }, env.commodityBuys[1])
+    assert.equal("1", c.quantity:GetText())
+  end)
+
   it("sets the quantity from Max or a clicked row, and cancels a quote", function()
     local env, _, _, view = setupItem()
     local item = open(view, env, "Strange Dust")

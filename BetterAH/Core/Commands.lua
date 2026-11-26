@@ -15,6 +15,7 @@ commands.help = function()
   say("/bah bags - list what the Post view sees in your bags (for bug reports)")
   say("/bah debug on|off - keep a log of what you do in Better AH, saved on /reload or logout")
   say("/bah mark <note> - add a note to the debug log, such as what just went wrong")
+  say("/bah quote [raw] - ask for a price on 1 of the commodity open in Browse (never buys; for bug reports)")
   say("/bah help - show this list")
 end
 
@@ -59,6 +60,44 @@ commands.mark = function(rest)
   l:mark(rest)
   say(l:isOn() and "Marked in the debug log."
     or "Marked. The debug log is off, so only the note is kept: /bah debug on.")
+end
+
+-- /bah quote (#112): asks for a price on 1 of the commodity open in Browse, from a key press instead of the Buy
+-- click, to find out why the game blocks Buy. "/bah quote" goes through Browse's own code; "/bah quote raw"
+-- calls the game directly from here, as other addons do, and drops the quote once it comes. Never buys.
+local StartCommoditiesPurchase = C_AuctionHouse and C_AuctionHouse.StartCommoditiesPurchase
+local rawWatch
+commands.quote = function(rest)
+  local view = ns.window and ns.window.browseView
+  local item = view and view.item
+  local row = item and item.row
+  if not (row and item.list and item.list.commodity) then
+    return say("Open a commodity in Browse first, then type /bah quote (or /bah quote raw).")
+  end
+  if rest:lower() ~= "raw" then
+    say("Asking for a price on 1 " .. tostring(row.name) .. " through Browse (from a key press)...")
+    item.commodityControls.quantity:SetText("1")
+    item:quantityChanged()
+    return item:quote()
+  end
+  if not StartCommoditiesPurchase then return say("C_AuctionHouse.StartCommoditiesPurchase is missing.") end
+  if not rawWatch then
+    rawWatch = CreateFrame("Frame")
+    rawWatch:SetScript("OnEvent", function(f, event, unit, total)
+      f:UnregisterAllEvents()
+      if event == "COMMODITY_PRICE_UPDATED" then
+        say(string.format("Raw quote came: %s each, %s in all. Dropped, nothing bought.", tostring(unit),
+          tostring(total)))
+        if C_AuctionHouse.CancelCommoditiesPurchase then C_AuctionHouse.CancelCommoditiesPurchase() end
+      else
+        say("Raw quote: " .. event .. ".")
+      end
+    end)
+  end
+  rawWatch:RegisterEvent("COMMODITY_PRICE_UPDATED")
+  rawWatch:RegisterEvent("COMMODITY_PRICE_UNAVAILABLE")
+  say("Asking the game directly for a price on 1 " .. tostring(row.name) .. " (item " .. tostring(row.itemID) .. ")...")
+  StartCommoditiesPurchase(row.itemID, 1)
 end
 
 SLASH_BETTERAH1 = "/bah"

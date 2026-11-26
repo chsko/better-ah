@@ -199,6 +199,35 @@ describe("Sniper", function()
       assert.equal("already gone", s.saved.log[1].note)
     end)
 
+    it("says what is left from an item's lookup once some are bought or gone (#145)", function()
+      local s = Sniper.Session.new(nil, 100)
+      local key = { itemID = 5 }
+      assert.is_nil(s:cheapest(key), "no lookup yet")
+      s:lookedUp(key, 900, 100)
+      s:sawListings(key, { { auctionID = 1, unit = 900 }, { auctionID = 2, unit = 950 },
+        { auctionID = 3, unit = 800, ownCount = 1 }, { auctionID = 4, unit = 1000 } })
+      assert.equal(900, s:cheapest(key), "your own auction doesn't count")
+      s:bought(101, { auctionID = 1, name = "A", price = 900 })
+      assert.equal(950, s:cheapest(key))
+      s:missed(102, { auctionID = 2, name = "A", price = 950 }, "already gone", "gone")
+      s:lookedUp(key, 900, 102)
+      s:sawListings(key, { { auctionID = 2, unit = 950 }, { auctionID = 4, unit = 1000 } })
+      assert.equal(1000, s:cheapest(key), "a gone auction still in a newer lookup is left out")
+      s:missed(103, { auctionID = 4, name = "A", price = 1000 }, "no", "refused")
+      assert.is_false(s:cheapest(key), "nothing left")
+    end)
+
+    it("counts a listing of several items down one buy at a time (#145)", function()
+      local s = Sniper.Session.new(nil, 100)
+      local key = { itemID = 5 }
+      s:lookedUp(key, 900, 100)
+      s:sawListings(key, { { auctionID = 1, unit = 900, count = 2 }, { auctionID = 2, unit = 1000 } })
+      s:bought(101, { auctionID = 1, name = "A", price = 900 })
+      assert.equal(900, s:cheapest(key), "one of the two is still up")
+      s:bought(102, { auctionID = 1, name = "A", price = 900 })
+      assert.equal(1000, s:cheapest(key))
+    end)
+
     it("keeps the log short", function()
       local s = Sniper.Session.new(nil, 0)
       for i = 1, Sniper.LOG_LINES + 5 do s:log(i, "passed", { name = "X" .. i }) end

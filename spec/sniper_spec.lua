@@ -171,6 +171,34 @@ describe("Sniper", function()
       assert.is_true(s:fresh(key, 900, 114))
     end)
 
+    it("drops the rest of an item's finds when one is already gone, and looks the item up again", function()
+      local s = Sniper.Session.new(nil, 100)
+      local key, other = { itemID = 5 }, { itemID = 6 }
+      local a = { auctionID = 1, name = "A", price = 900, worth = 1420, itemKey = key }
+      s:add(a)
+      s:add({ auctionID = 2, name = "A", price = 900, worth = 1420, itemKey = { itemID = 5 } })
+      s:add({ auctionID = 3, name = "A", price = 900, worth = 1420, itemKey = key })
+      s:add({ auctionID = 4, name = "B", price = 900, worth = 1000, itemKey = other })
+      s:lookedUp(key, 900, 100)
+      assert.equal(2, s:missed(110, a, "already gone", "gone"))
+      assert.equal(1, #s.finds, "only the other item's find is left")
+      assert.equal(4, s:next().auctionID)
+      assert.equal("already gone. Dropped 2 more from the same search; looking again", s.saved.log[1].note)
+      assert.equal(1, #s.saved.log, "one line for the lot")
+      assert.is_false(s:fresh(key, 900, 111), "the item is looked up again")
+      assert.is_false(s:add(a), "the gone auction doesn't come back")
+      assert.is_true(s:add({ auctionID = 2, name = "A", price = 900, worth = 1420, itemKey = key }),
+        "the dropped ones come back if they are still listed")
+    end)
+
+    it("logs one gone auction plainly when nothing else from its search waits", function()
+      local s = Sniper.Session.new(nil, 100)
+      local a = { auctionID = 1, name = "A", price = 900, worth = 1420, itemKey = { itemID = 5 } }
+      s:add(a)
+      assert.equal(0, s:missed(110, a, "already gone", "gone"))
+      assert.equal("already gone", s.saved.log[1].note)
+    end)
+
     it("keeps the log short", function()
       local s = Sniper.Session.new(nil, 0)
       for i = 1, Sniper.LOG_LINES + 5 do s:log(i, "passed", { name = "X" .. i }) end
@@ -377,6 +405,18 @@ describe("SnipeAPI", function()
     assert.equal("the auction house was still answering a check, so the buy wasn't sent", why)
     assert.equal("unsent", kind)
     assert.is_nil(api.buying)
+  end)
+
+  it("says an auction the auction house can't find is gone (#130)", function()
+    local env, api = setup()
+    env.openAuctionHouse()
+    env.bidFails, env.bidError = true, 4
+    local result, why, kind
+    api:buy(7, 900, function(ok, w, k) result, why, kind = ok, w, k end)
+    env.runTimers()
+    assert.is_false(result)
+    assert.equal("already gone (sold to someone else, or taken down)", why)
+    assert.equal("gone", kind)
   end)
 
   it("says a buy with no answer may still be listed, and a refused one was refused", function()

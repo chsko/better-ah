@@ -236,22 +236,42 @@ end
 -- buy again, and the log says why it wasn't bought (once, not for every try with the same reason).
 -- "unknown" (no answer) and "closed": the find goes, but the auction isn't written off: it may still be
 -- listed, so it can be found again, and its item is looked up again on the next check of its target.
--- "refused" (sold, or the auction house said no): the find is gone for the session, so an auction the
+-- "refused" (the auction house said no): the find is gone for the session, so an auction the
 -- auction house keeps refusing doesn't come back every check.
+-- "gone" (the auction house couldn't find it: sold to someone else or taken down, #130): written off like
+-- "refused". The other finds waiting from the same item's lookup are likely gone too (one seller's batch
+-- that someone else bought), so they are dropped and not written off, and the item is looked up again
+-- on the next check: what is still listed comes back as fresh finds. Returns how many were dropped.
 function Session:missed(time, find, why, kind)
   if kind == "unsent" then
     local last = self.saved.log[1]
     if not (last and last.kind == "unsent" and last.name == find.name and last.note == why) then
       self:log(time, "unsent", find, why)
     end
-    return
+    return 0
   end
   drop(self, find.auctionID)
+  local dropped = 0
   if kind == "unknown" or kind == "closed" then
     self.seen[find.auctionID] = nil
     if find.itemKey then self.looked[keyText(find.itemKey)] = nil end
+  elseif kind == "gone" and find.itemKey then
+    local key = keyText(find.itemKey)
+    for i = #self.finds, 1, -1 do
+      local f = self.finds[i]
+      if f.itemKey and keyText(f.itemKey) == key then
+        table.remove(self.finds, i)
+        self.seen[f.auctionID] = nil
+        dropped = dropped + 1
+      end
+    end
+    self.looked[key] = nil
+    if dropped > 0 then
+      why = string.format("%s. Dropped %d more from the same search; looking again", why, dropped)
+    end
   end
   self:log(time, "missed", find, why)
+  return dropped
 end
 
 -- Whether a buy at price is allowed: under the session's spend cap (0: none) and leaving at least keep

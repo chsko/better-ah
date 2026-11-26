@@ -480,13 +480,14 @@ function M.new(opts)
     env.C_Timer.After(0, function() env.fire("AUCTION_HOUSE_BROWSE_RESULTS_ADDED", page) end)
   end
   -- Buying: PlaceBid answers with AUCTION_HOUSE_PURCHASE_COMPLETED on the next tick, or with
-  -- AUCTION_HOUSE_SHOW_ERROR when env.bidFails. env.money is the character's gold.
+  -- AUCTION_HOUSE_SHOW_ERROR when env.bidFails (with the error code env.bidError, default 1). env.money is
+  -- the character's gold.
   env.bids, env.money = {}, 1000000
   ah.PlaceBid = function(auctionID, amount)
     env.bids[#env.bids + 1] = { auctionID = auctionID, amount = amount }
     env.C_Timer.After(0, function()
       if env.bidFails then
-        env.fire("AUCTION_HOUSE_SHOW_ERROR", 1)
+        env.fire("AUCTION_HOUSE_SHOW_ERROR", env.bidError or 1)
       else
         env.money = env.money - amount
         env.fire("AUCTION_HOUSE_PURCHASE_COMPLETED", auctionID)

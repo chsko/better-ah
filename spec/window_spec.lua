@@ -1248,6 +1248,63 @@ describe("Window", function()
         assert.equal("Nothing under your max prices yet", s.cardName:GetText(), "bought auctions don't come back")
       end)
 
+      it("sends PlaceBid before redrawing, from the button and the wheel (#130)", function()
+        local env, _, _, s = snipeSetup()
+        s.startButton:Click()
+        env.runTimers()
+        local placeBid, seen = env.C_AuctionHouse.PlaceBid, {}
+        env.C_AuctionHouse.PlaceBid = function(...)
+          seen[#seen + 1] = { text = s.buyButton:GetText(), enabled = s.buyButton:IsEnabled() }
+          return placeBid(...)
+        end
+        s.buyButton:Click()
+        assert.same({ text = "Buy for 9s 0c", enabled = true }, seen[1], "the view is not redrawn before the call")
+        assert.equal("Buying...", s.buyButton:GetText(), "redrawn after it")
+        s.panel.scripts.OnMouseWheel(s.panel, -1)
+        assert.equal(1, #seen, "a second notch while the buy is in flight doesn't buy again")
+        env.runTimers()
+        s.panel.scripts.OnMouseWheel(s.panel, -1)
+        assert.same({ text = "Buy for 12s 0c", enabled = true }, seen[2])
+        assert.equal("Buying...", s.buyButton:GetText())
+      end)
+
+      it("keeps a find the game blocks inside PlaceBid, and the next notch tries it again (#130)", function()
+        local env, _, _, s = snipeSetup()
+        s.startButton:Click()
+        env.runTimers()
+        local placeBid = env.C_AuctionHouse.PlaceBid
+        env.C_AuctionHouse.PlaceBid = function() env.fire("ADDON_ACTION_BLOCKED", "BetterAH", "PlaceBid()") end
+        s.buyButton:Click()
+        assert.matches("Not bought %[Ridgeback Bracers%]: the game blocked PlaceBid%(%) from the Buy button%. "
+          .. "It's still next%.", s.logText:GetText())
+        assert.equal("Buy for 9s 0c", s.buyButton:GetText())
+        assert.is_true(s.buyButton:IsEnabled())
+        env.C_AuctionHouse.PlaceBid = placeBid
+        s.panel.scripts.OnMouseWheel(s.panel, -1)
+        env.runTimers()
+        assert.same({ auctionID = 77, amount = 900 }, env.bids[1], "the same auction, bought")
+      end)
+
+      it("drops the rest of a search when one auction is already gone, and looks again (#130)", function()
+        local env, _, _, s = snipeSetup()
+        s.startButton:Click()
+        env.runTimers()
+        assert.equal(1, #env.searches)
+        env.bidFails, env.bidError = true, 4
+        s.buyButton:Click()
+        env.runTimers()
+        assert.equal(1, #env.bids, "the other bracer from the same search isn't tried")
+        assert.matches("Missed %[Ridgeback Bracers%]: already gone %(sold to someone else, or taken down%)%. "
+          .. "Dropped 1 more from the same search; looking again", s.logText:GetText())
+        assert.equal("Nothing under your max prices yet", s.cardName:GetText())
+        env.bidFails, env.bidError = false, nil
+        env.runTimers(1)
+        env.runTimers()
+        assert.equal(2, #env.searches, "the item is looked up again on the next check")
+        assert.equal("[Ridgeback Bracers]", s.cardName:GetText(), "what is still listed comes back")
+        assert.equal("Buy for 12s 0c", s.buyButton:GetText(), "but not the auction that was gone")
+      end)
+
       it("passes, logs a missed buy and stops at the spend cap", function()
         local env, w, ns, s = snipeSetup()
         s.startButton:Click()

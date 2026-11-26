@@ -82,6 +82,7 @@ function SnipeView:build(p, width)
   status:SetPoint("RIGHT", p, "RIGHT", 0, 0)
   status:SetJustifyH("LEFT")
   self.status = status
+  self.loading = ns.Loading.attach(env, p, status, { "LEFT", start, "RIGHT", 10, 0 })
 
   local spent = p:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   spent:SetPoint("TOPLEFT", p, "TOPLEFT", 0, -34)
@@ -136,6 +137,9 @@ function SnipeView:build(p, width)
   buy:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 6)
   buy:SetScript("OnClick", function() self:buyNext() end)
   self.buyButton = buy
+  -- Turns while the auction house answers a buy.
+  self.buySpinner = ns.Loading.spinner(env, buy)
+  self.buySpinner:SetPoint("LEFT", buy, "LEFT", 10, 0)
   local pass = env.CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
   pass:SetSize(90, 26)
   pass:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -10, 6)
@@ -333,7 +337,7 @@ end
 -- Ends sniping and files the session in the history.
 function SnipeView:stop(why)
   if not self.running then return end
-  self.running, self.run = false, nil
+  self.running, self.run, self.checking = false, nil, false
   self.message = why
   SnipeView.file(self.addon.disenchant, self:now(), self.buying ~= nil)
   if self.session then self.session.finds = {} end
@@ -385,10 +389,16 @@ function SnipeView:tick(run)
   local query = ns.Sniper.browseQuery(entry.target, band)
   local api = self:api()
   local function rest()
+    if self.run == run then
+      self.checking = false
+      self:refresh()
+    end
     if self.running and self.run == run and self.env.C_Timer then
       self.env.C_Timer.After(SnipeView.REST, function() self:tick(run) end)
     end
   end
+  self.checking = true
+  self:refresh()
   api:browse(query, function(results, why)
     if self.run ~= run then return end
     self.lastCheck = self:now()
@@ -577,6 +587,9 @@ function SnipeView:render()
       targets == 1 and " is" or "s are") or "Not sniping. Tick a target on Targets to snipe it."
   end
   self.status:SetText(self.message or status)
+  -- The spinner turns while the auction house is working on one of the sniper's queries.
+  if self.running and self.checking then self.loading:spin() else self.loading:clear() end
+  self.buySpinner:SetShown(self.buying ~= nil)
 
   local summary = self.session and self.session:summary() or (self.addon.disenchant.session
     and ns.Sniper.Session.new(self.addon.disenchant.session, 0):summary())

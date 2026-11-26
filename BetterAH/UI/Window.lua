@@ -286,7 +286,9 @@ function Window:buildPrices(f)
   status:SetPoint("LEFT", mats, "RIGHT", 10, 0)
   status:SetPoint("RIGHT", panel, "RIGHT", 0, 0)
   status:SetJustifyH("LEFT")
+  if status.SetMaxLines then status:SetMaxLines(2) end -- clear of the column headers below
   self.scanStatus = status
+  self.scanLoading = ns.Loading.attach(env, panel, status, { "LEFT", mats, "RIGHT", 10, 0 })
 
   self.rows = self:buildRows(panel, COLUMNS, function(index) self:selectRow(index) end,
     function(offset) self.offset = offset; self:renderPrices() end)
@@ -713,7 +715,7 @@ function Window:startScan()
   end
   -- Set the waiting text first: the reply may come before scanIntoPrices returns.
   self.statusMarket = self:market()
-  self.statusText = "Scanning the auction house. This can take a minute or two."
+  self.statusText = "Scanning the auction house (a minute or two)."
   self.materialStatus = nil -- a full scan supersedes the last materials scan's message
   local started, why = ns.AuctionAPI.scanIntoPrices(addon, function(_, message)
     self.statusText = message
@@ -722,6 +724,19 @@ function Window:startScan()
   end)
   if not started then self.statusText = why end
   self:renderMaterials()
+end
+
+-- A scan's progress on a status line's loading indicator: a bar of materials looked up, or a sweeping
+-- bar while a full scan runs (the auction house doesn't say how far along it is).
+function Window:showProgress(loading)
+  local scan = self.materialScan
+  if scan then
+    loading:show(scan.done, scan.total)
+  elseif self.addon.auctionAPI and self.addon.auctionAPI.pending then
+    loading:show()
+  else
+    loading:clear()
+  end
 end
 
 function Window:scrollPrices(by)
@@ -749,6 +764,7 @@ function Window:renderPrices()
   local scanning = addon.auctionAPI and addon.auctionAPI.pending
   if scanning or self.materialScan then self.scanButton:Disable() else self.scanButton:Enable() end
   if scanning or self.materialScan then self.materialsButton:Disable() else self.materialsButton:Enable() end
+  self:showProgress(self.scanLoading)
 
   -- A scan message belongs to the market it was about; on another market, show that one's state.
   if self.statusText and self.statusMarket ~= key then self.statusText = nil end

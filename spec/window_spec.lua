@@ -8,7 +8,7 @@ local function setup(opts)
   helper.load("BetterAH/Core/Buying.lua", ns)
   local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "ValueHistory", "Targets", "Sniper",
     "PriceDB", "CharacterRecords", "MatFloors", "Posting", "PostQueue", "SelfTest", "Probes", "Purchases",
-    "TooltipPrices" }
+    "TooltipPrices", "MyAuctions" }
   for _, file in ipairs(core) do
     helper.load("BetterAH/Core/" .. file .. ".lua", ns)
   end
@@ -25,6 +25,8 @@ local function setup(opts)
   helper.load("BetterAH/Game/BrowseAPI.lua", ns)
   helper.load("BetterAH/UI/BrowseItemView.lua", ns)
   helper.load("BetterAH/UI/BrowseView.lua", ns)
+  helper.load("BetterAH/Game/MyAuctionsAPI.lua", ns)
+  helper.load("BetterAH/UI/MyAuctionsView.lua", ns)
   helper.load("BetterAH/UI/Window.lua", ns)
   ns.prices = ns.PriceDB.new({})
   -- Auto scan (#30) is off unless a spec turns it on, so scans start only where a spec starts one.
@@ -37,6 +39,7 @@ local function setup(opts)
   ns.PostingAPI.install(env, ns)
   ns.SnipeAPI.install(env, ns)
   ns.BrowseAPI.install(env, ns)
+  ns.MyAuctionsAPI.install(env, ns)
   if opts and opts.tracker then
     helper.load("BetterAH/Game/CharacterTracker.lua", ns)
     ns.CharacterTracker.install(env, ns)
@@ -2720,5 +2723,219 @@ describe("Browse item page, after review", function()
     env.blockQuote = { "OtherAddon", "Foo()" }
     item.commodityControls.buy:Click()
     assert.is_true(item.busy, "still waiting for the quote")
+  end)
+end)
+
+describe("My auctions view (#123)", function()
+  local DUST, PADS, BAR, SHARD = 11176, 7000, 12359, 14344
+  local function owned(env)
+    env.owned = {
+      { id = 101, itemID = DUST, quantity = 20, buyout = 185, timeLeftSeconds = 86400, cost = 18,
+        link = "|cffffffff|Hitem:11176::::::::60:::::|h[Arcane Dust]|h|r" },
+      { id = 102, itemID = PADS, quantity = 1, buyout = 1500, timeLeftSeconds = 7000, cost = 42,
+        link = "|cff1eff00|Hitem:7000::::::::60:::::|h[Battleforge Shoulderpads]|h|r" },
+      { id = 103, itemID = BAR, quantity = 20, buyout = 3800, timeLeftSeconds = 86400, cost = 30,
+        link = "|cffffffff|Hitem:12359::::::::60:::::|h[Thorium Bar]|h|r" },
+      { id = 104, itemID = SHARD, quantity = 2, buyout = 11000, status = 1, timeLeftSeconds = 2700,
+        link = "|cff0070dd|Hitem:14344::::::::60:::::|h[Large Brilliant Shard]|h|r" },
+    }
+    env.listings[DUST] = { { unitPrice = 179, quantity = 100 }, { unitPrice = 185, quantity = 20, numOwnerItems = 20 } }
+    env.listings[PADS] = { item = true, { buyoutAmount = 1250, quantity = 1 },
+      { buyoutAmount = 1500, quantity = 1, containsOwnerItem = true } }
+    env.listings[BAR] = { { unitPrice = 3800, quantity = 20, numOwnerItems = 20 }, { unitPrice = 4000, quantity = 5 } }
+  end
+
+  local function open(opts)
+    local env, w, ns = setup(opts)
+    owned(env)
+    env.openAuctionHouse()
+    env.runTimers()
+    sidebarButton(w, "auctions"):Click()
+    env.runTimers()
+    return env, w, ns, w.myAuctionsView
+  end
+
+  local function statusOf(v, name)
+    for _, cells in ipairs(v.rows) do
+      if (cells[1]:GetText() or ""):find(name, 1, true) then return cells[6]:GetText() end
+    end
+  end
+
+  it("is called My auctions in the sidebar, under Sell", function()
+    local _, w = setup()
+    assert.equal("My auctions", w.model:label("auctions"))
+    assert.is_nil(w.model:label("cancel"))
+  end)
+
+  it("lists every auction, checks each item's price once, and marks the undercut ones", function()
+    local env, w, _, v = open()
+    assert.is_true(w.myAuctionsPanel:IsShown())
+    assert.equal(3, #env.searches, "one search per item up for sale; the sold one isn't looked up")
+    assert.matches("Undercut by 6c", statusOf(v, "Arcane Dust"))
+    assert.matches("Undercut by 2s 50c", statusOf(v, "Battleforge Shoulderpads"))
+    assert.matches("Lowest", statusOf(v, "Thorium Bar"))
+    assert.matches("Sold, gold in 45 min", statusOf(v, "Large Brilliant Shard"))
+    assert.matches("Arcane Dust", v.rows[1][1]:GetText(), "undercut auctions come first")
+    assert.matches("Large Brilliant Shard", v.rows[4][1]:GetText(), "sold ones last")
+    assert.equal("All 4", v.filterButtons.all:GetText())
+    assert.equal("Undercut 2", v.filterButtons.undercut:GetText())
+    assert.matches("My auctions.*2", sidebarButton(w, "auctions"):GetText(), "the sidebar counts undercut auctions")
+    assert.matches("3 auctions · listed for", v.footer:GetText())
+    assert.matches("Prices checked", v.status:GetText())
+    assert.matches("Undercut: 2%. Cancelling them all loses 60c in deposits", w.detailBody:GetText())
+  end)
+
+  it("filters to the undercut auctions", function()
+    local _, _, _, v = open()
+    v.filterButtons.undercut:Click()
+    assert.matches("Arcane Dust", v.rows[1][1]:GetText())
+    assert.matches("Battleforge", v.rows[2][1]:GetText())
+    assert.is_false(v.rows[3].button:IsShown())
+  end)
+
+  it("explains a selected auction and cancels it in the click, then moves to the next undercut", function()
+    local env, w, _, v = open()
+    v.rows[1].button:Click()
+    assert.matches("Arcane Dust", w.detailTitle:GetText())
+    local body = w.detailBody:GetText()
+    assert.matches("Your price: 1s 85c each %(37s 0c%)", body)
+    assert.matches("Lowest that isn't yours: 1s 79c", body)
+    assert.matches("Cheaper than yours: 100 units", body)
+    assert.matches("Deposit you lose: 18c", body)
+    assert.matches("comes back by mail", body)
+    assert.is_true(v.cancelButton:IsShown())
+    v.cancelButton:Click()
+    assert.same({ 101 }, env.cancels, "cancelled inside the click")
+    assert.matches("Battleforge", w.detailTitle:GetText(), "the next undercut is selected for the next click")
+    v.cancelButton:Click()
+    assert.same({ 101, 102 }, env.cancels)
+    env.runTimers()
+    assert.matches("Cancelled Battleforge Shoulderpads%. It comes back by mail", v.note:GetText())
+    assert.equal("All 2", v.filterButtons.all:GetText(), "the list is read again after the cancels")
+    assert.is_false(v.nextButton:IsEnabled())
+  end)
+
+  it("cancels the next undercut from the detail panel's button, one per click", function()
+    local env, _, _, v = open()
+    assert.equal("Cancel next undercut (2 left)", v.nextButton:GetText())
+    v.nextButton:Click()
+    assert.same({ 101 }, env.cancels)
+    assert.equal("Cancel next undercut (1 left)", v.nextButton:GetText())
+    v.nextButton:Click()
+    v.nextButton:Click()
+    assert.same({ 101, 102 }, env.cancels, "nothing more to cancel")
+  end)
+
+  it("doesn't offer to cancel a sold auction", function()
+    local env, _, _, v = open()
+    v.rows[4].button:Click()
+    assert.is_false(v.cancelButton:IsEnabled())
+    v.cancelButton:Click()
+    assert.same({}, env.cancels)
+  end)
+
+  it("says so when a cancel gets no answer, and lets it be tried again", function()
+    local env, _, _, v = open()
+    env.cancelSilent = true
+    v.rows[1].button:Click()
+    v.cancelButton:Click()
+    env.runTimers(11)
+    assert.matches("Couldn't cancel Arcane Dust: no answer from the auction house", v.note:GetText())
+    v.rows[1].button:Click()
+    assert.is_true(v.cancelButton:IsEnabled())
+  end)
+
+  it("starts afresh on the next visit", function()
+    local env, _, _, v = open()
+    env.CloseAuctionHouse()
+    assert.is_nil(v.visit)
+    assert.is_false(v.cancelButton:IsShown())
+    env.searches = {}
+    env.openAuctionHouse()
+    env.runTimers()
+    env.runTimers()
+    assert.equal(3, #env.searches, "prices are checked again")
+  end)
+end)
+
+describe("My auctions view, after review (#123)", function()
+  local DUST, CINCH = 11176, 9800
+  local function setupOwned(opts)
+    local env, w, ns = setup(opts)
+    env.owned = {
+      { id = 101, itemID = DUST, quantity = 20, buyout = 185, timeLeftSeconds = 86400 },
+      { id = 102, itemID = CINCH, quantity = 1, buyout = 2200, timeLeftSeconds = 86400,
+        itemKey = { itemID = CINCH, itemLevel = 0, itemSuffix = 1017 } },
+    }
+    env.listings[DUST] = { { unitPrice = 179, quantity = 100 }, { unitPrice = 181, quantity = 50 } }
+    env.listings[CINCH] = { item = true, { buyoutAmount = 1900, quantity = 1 }, { buyoutAmount = 2000, quantity = 1 },
+      { buyoutAmount = 2100, quantity = 1 } }
+    return env, w, ns
+  end
+
+  it("counts a commodity's check toward market value, but not a random-suffix variant's", function()
+    local env, w, ns = setupOwned()
+    env.now = 1000000
+    env.openAuctionHouse()
+    env.runTimers()
+    w:select("auctions")
+    env.runTimers()
+    local key = ns.AuctionAPI.currentMarket(env)
+    assert.is_not_nil(ns.prices:marketValue(key, "i:" .. DUST, env.now))
+    assert.is_nil(ns.prices:marketValue(key, "i:" .. CINCH, env.now), "one suffix doesn't price the whole item")
+  end)
+
+  it("takes back checks still waiting when you leave, and finishes them when you come back", function()
+    local env, w = setupOwned()
+    env.openAuctionHouse()
+    env.runTimers()
+    w:select("auctions")
+    assert.equal(1, #env.searches, "the first check is running")
+    w:select("post")
+    env.runTimers()
+    local searched = #env.searches
+    w:select("auctions")
+    env.runTimers()
+    assert.equal(searched + 1, #env.searches, "only the item not checked yet is looked up")
+    local v = w.myAuctionsView
+    assert.matches("Prices checked", v.status:GetText())
+  end)
+
+  it("clears the sidebar count when the auction house closes", function()
+    local env, w = setupOwned()
+    env.openAuctionHouse()
+    env.runTimers()
+    w:select("auctions")
+    env.runTimers()
+    assert.matches("My auctions.*2", w.buttons.auctions:GetText())
+    env.CloseAuctionHouse()
+    assert.equal("My auctions", w.buttons.auctions:GetText())
+  end)
+
+  it("doesn't take another auction's cancel answer for ours", function()
+    local env, w, ns = setupOwned()
+    env.openAuctionHouse()
+    env.runTimers()
+    local done
+    env.cancelSilent = true
+    assert.is_true(ns.myAuctionsAPI:cancel(101, function(ok) done = ok end))
+    env.fire("AUCTION_CANCELED", 555)
+    assert.is_nil(done, "an id that isn't ours finishes nothing")
+    env.fire("AUCTION_CANCELED", 101)
+    assert.is_true(done)
+    assert.is_not_nil(w)
+  end)
+
+  it("leaves asking for the auction list to the character tracker when it is installed", function()
+    local env, w = setupOwned({ tracker = true })
+    env.openAuctionHouse()
+    env.runTimers()
+    w:select("auctions")
+    env.runTimers()
+    assert.equal(1, env.ownedQueries, "one query on opening, from the tracker")
+    w.myAuctionsView.rows[1].button:Click()
+    w.myAuctionsView.cancelButton:Click()
+    env.runTimers()
+    assert.equal(2, env.ownedQueries, "one more after the cancel")
   end)
 end)

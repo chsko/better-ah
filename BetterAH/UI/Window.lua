@@ -42,7 +42,6 @@ Window.ART = {
 
 -- What each placeholder view will show, until it is built.
 Window.EMPTY = {
-  cancel = "Your auctions that have been undercut will be listed here, ready to cancel.",
   deals = "Listings below 70% of market value and your shopping list hits will be listed here.",
   shopping = "Your shopping lists: items you want, with the most you'll pay for each.",
   crafting = "Recipes your characters know, with what each one costs to make and sells for.",
@@ -204,6 +203,10 @@ function Window:build()
     -- Browse uses the main and detail panels' room together (mockup on #90).
     self.browseView = ns.BrowseView.new(self, self.addon)
     self.browsePanel = self.browseView:build(f, SIDEBAR + 16, TOP - 42, ns.BrowseView.WIDTH, HEIGHT + TOP - 42 - 8)
+  end
+  if ns.MyAuctionsView then
+    self.myAuctionsView = ns.MyAuctionsView.new(self, self.addon)
+    self.myAuctionsPanel = self.myAuctionsView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
   end
   if ns.SettingsView then
     self.settingsView = ns.SettingsView.new(self, self.addon)
@@ -987,7 +990,8 @@ function Window:renderView()
   self.placeholder:SetText(Window.EMPTY[self.model.view] or "")
   local view = self.model.view
   self.placeholder:SetShown(view ~= "prices" and view ~= "alts" and view ~= "post" and view ~= "disenchant"
-    and view ~= "settings" and not (view == "browse" and self.browsePanel))
+    and view ~= "settings" and not (view == "browse" and self.browsePanel)
+    and not (view == "auctions" and self.myAuctionsPanel))
   self:widenMain(view == "browse" and self.browsePanel ~= nil and self.browseView:wide())
   if self.browsePanel then self.browsePanel:SetShown(view == "browse") end
   self.pricesPanel:SetShown(view == "prices")
@@ -995,6 +999,8 @@ function Window:renderView()
   self.altsPanel:SetShown(view == "alts")
   self.postPanel:SetShown(view == "post")
   if self.settingsPanel then self.settingsPanel:SetShown(view == "settings") end
+  if self.myAuctionsPanel then self.myAuctionsPanel:SetShown(view == "auctions") end
+  if view ~= "auctions" and self.myAuctionsView then self.myAuctionsView:hide() end
   if view ~= "settings" and self.settingsView then self.settingsView:hide() end
   if view ~= "browse" and self.browseView then self.browseView:hide() end
   if view ~= "post" then
@@ -1014,6 +1020,8 @@ function Window:renderView()
     self.settingsView:render()
   elseif view == "browse" and self.browseView then
     self.browseView:render()
+  elseif view == "auctions" and self.myAuctionsView then
+    if self.frame:IsShown() then self.myAuctionsView:show() end
   else
     self.detailTitle:SetText("")
     self.detailBody:SetText("")
@@ -1048,6 +1056,13 @@ function Window:render()
   if mode == "blizzard" then self:attachReturnButton() end
 end
 
+-- A count of things needing attention after a sidebar entry's label (spec #1, story 5), in orange.
+function Window:setBadge(id, count)
+  local b, label = self.buttons[id], self.model:label(id)
+  if not (b and label) then return end
+  b:SetText(count and count > 0 and string.format("%s  |cffff9a3c%d|r", label, count) or label)
+end
+
 function Window:select(id)
   if self.model:select(id) then self:renderView() end
 end
@@ -1077,6 +1092,7 @@ function Window:onEvent(event)
     self:renderScanState()
     if self.postView then self.postView:reset() end
     if self.browseView then self.browseView:reset() end
+    if self.myAuctionsView then self.myAuctionsView:reset() end
     if self.disenchantView then self.disenchantView.snipe:stop("The auction house closed, so sniping stopped.") end
     self:render()
   end

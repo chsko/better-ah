@@ -6,7 +6,7 @@ ns = ns or {}
 local SECTIONS = {
   { title = "Sell", entries = {
     { id = "post", label = "Post" },
-    { id = "cancel", label = "Cancel" },
+    { id = "auctions", label = "My auctions" },
   } },
   { title = "Buy", entries = {
     { id = "browse", label = "Browse" },

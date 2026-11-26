@@ -6,8 +6,8 @@
 -- reads one (auctionID, itemKey, itemLink, status, quantity, timeLeftSeconds, timeLeft, bidAmount,
 -- buyoutAmount, bidder). CancelAuction(auctionID) needs a hardware event, so cancel() must run inside a
 -- click; AUCTION_CANCELED(auctionID) follows. GetCancelCost(auctionID) is what cancelling costs.
--- buyoutAmount is read as the price per unit, as item search results are; /bah selftest prints the raw
--- numbers of the first auction so this can be checked in game.
+-- An active auction's buyoutAmount is the price per unit and a sold one's the whole sale (see readOwned);
+-- /bah selftest prints the raw numbers of the first auction.
 local _, ns = ...
 ns = ns or {}
 
@@ -16,7 +16,8 @@ MyAuctionsAPI.__index = MyAuctionsAPI
 
 MyAuctionsAPI.SOLD = 1 -- Enum.AuctionStatus.Sold
 MyAuctionsAPI.TIMEOUT = 10
-MyAuctionsAPI.EVENTS = { "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "OWNED_AUCTIONS_UPDATED", "AUCTION_CANCELED" }
+MyAuctionsAPI.EVENTS = { "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "OWNED_AUCTIONS_UPDATED", "AUCTION_CANCELED",
+  "ITEM_KEY_ITEM_INFO_RECEIVED", "GET_ITEM_INFO_RECEIVED" }
 
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
@@ -36,30 +37,81 @@ function MyAuctionsAPI.checkKey(itemKey)
   return string.format("%d:%d:%d", itemKey.itemID or 0, itemKey.itemLevel or 0, itemKey.itemSuffix or 0)
 end
 
+-- Item quality colours (Enum.ItemQuality 0-5), for names that come without a link.
+MyAuctionsAPI.QUALITY = { [0] = "ff9d9d9d", "ffffffff", "ff1eff00", "ff0070dd", "ffa335ee", "ffff8000" }
+
 -- The player's auctions as Core/MyAuctions auctions, plus whether the client has the whole list.
--- nameOf(item) names an auction whose link carries no name. Returns nil when the client can't say.
-function MyAuctionsAPI.read(env, nameOf)
+-- nameOf(item) names an auction whose link carries no name. Item ids still without a name are added to
+-- missing, when given. Returns nil when the client can't say.
+--
+-- In game (#123, Forever 2026-11-26): an active auction's buyoutAmount is per unit, but a sold one's is the
+-- whole sale (2 sold at 14s 44c each read 28s 88c), so a sold auction's unit is its buyout / quantity.
+-- A partly sold commodity auction shows as the active rest plus a sold row per sale, all with the same
+-- auctionID, so uid (not id) tells rows apart.
+function MyAuctionsAPI.readOwned(env, nameOf, missing)
   local ah = env.C_AuctionHouse
   if not (ah and ah.GetNumOwnedAuctions and ah.GetOwnedAuctionInfo) then return nil end
-  local out = {}
+  local out, seen = {}, {}
   for i = 1, try(ah.GetNumOwnedAuctions) or 0 do
     local info = try(ah.GetOwnedAuctionInfo, i)
     local key = type(info) == "table" and type(info.itemKey) == "table" and info.itemKey
     if key and key.itemID then
       local item = "i:" .. key.itemID
       local name, color = MyAuctionsAPI.linkParts(info.itemLink)
+      if not name then
+        local keyInfo = try(ah.GetItemKeyInfo, key)
+        if type(keyInfo) == "table" then
+          name = keyInfo.itemName ~= "" and keyInfo.itemName or nil
+          color = color or (name and MyAuctionsAPI.QUALITY[keyInfo.quality])
+        end
+      end
+      name = name or (nameOf and nameOf(item))
+      if not name and missing then missing[key.itemID] = true end
+      local quantity = math.max(1, tonumber(info.quantity) or 1)
+      local sold = info.status == MyAuctionsAPI.SOLD
       local buyout = tonumber(info.buyoutAmount)
+      if not (buyout and buyout > 0) then buyout = nil end
+      -- The active part keeps the bare id; sold parts count up per id, so a new sale shifts only sold rows,
+      -- which have no action, and never lands a selection on something that can be cancelled.
+      local id = info.auctionID
+      local uid = id
+      if sold or id == nil then
+        local n = (seen[tostring(id)] or 0) + 1
+        seen[tostring(id)] = n
+        uid = tostring(id) .. "#sold" .. n
+      end
       out[#out + 1] = {
-        id = info.auctionID, item = item, itemID = key.itemID, itemKey = key, key = MyAuctionsAPI.checkKey(key),
-        name = name or (nameOf and nameOf(item)), color = color, link = info.itemLink,
-        quantity = info.quantity or 1, unit = buyout and buyout > 0 and buyout or nil,
+        id = id, uid = uid, item = item, itemID = key.itemID, itemKey = key, key = MyAuctionsAPI.checkKey(key),
+        name = name, color = color, link = info.itemLink, quantity = quantity,
+        unit = buyout and (sold and buyout / quantity or buyout) or nil, total = sold and buyout or nil,
         bid = tonumber(info.bidAmount), bidder = info.bidder ~= nil and info.bidder ~= false and info.bidder ~= "",
-        sold = info.status == MyAuctionsAPI.SOLD, timeLeft = tonumber(info.timeLeftSeconds), band = info.timeLeft,
+        sold = sold, timeLeft = tonumber(info.timeLeftSeconds), band = info.timeLeft,
       }
     end
   end
   local complete = not ah.HasFullOwnedAuctionResults or try(ah.HasFullOwnedAuctionResults) ~= false
   return out, complete
+end
+
+-- readOwned() for this client, asking it to load the items that have no name yet; onChange follows when one
+-- loads (ITEM_KEY_ITEM_INFO_RECEIVED or GET_ITEM_INFO_RECEIVED).
+function MyAuctionsAPI:read(nameOf)
+  local missing = {}
+  local auctions, complete = MyAuctionsAPI.readOwned(self.env, nameOf, missing)
+  -- Each item is asked for once per visit (asked), so one that never loads isn't asked for over and over.
+  self.waiting, self.asked = self.waiting or {}, self.asked or {}
+  local items = self.env.C_Item
+  for id in pairs(missing) do
+    if not self.asked[id] then
+      self.asked[id], self.waiting[id] = true, true
+      if items and type(items.RequestLoadItemDataByID) == "function" then
+        try(items.RequestLoadItemDataByID, id)
+      else
+        try(self.env.GetItemInfo, id)
+      end
+    end
+  end
+  return auctions, complete
 end
 
 function MyAuctionsAPI.new(env)
@@ -128,6 +180,7 @@ function MyAuctionsAPI:onEvent(event, arg)
     self.open = true
   elseif event == "AUCTION_HOUSE_CLOSED" then
     self.open = false
+    self.waiting, self.asked = nil, nil
     local waiting = self.cancelling
     self.cancelling = {}
     for _, job in pairs(waiting) do
@@ -145,6 +198,18 @@ function MyAuctionsAPI:onEvent(event, arg)
     end
     if id ~= nil and self.cancelling[id] then self:finish(id, true) end
     self:query()
+  elseif event == "ITEM_KEY_ITEM_INFO_RECEIVED" or event == "GET_ITEM_INFO_RECEIVED" then
+    -- A name we asked for: redraw once for a burst of them.
+    if not (self.waiting and self.waiting[arg]) then return end
+    self.waiting[arg] = nil
+    if self.redraw or not (self.open and self.onChange) then return end
+    self.redraw = true
+    local timer = self.env.C_Timer
+    if not (timer and timer.After) then self.redraw = nil return self.onChange() end
+    timer.After(0, function()
+      self.redraw = nil
+      if self.open and self.onChange then self.onChange() end
+    end)
   elseif event == "OWNED_AUCTIONS_UPDATED" then
     if self.open and self.onChange then self.onChange() end
   end

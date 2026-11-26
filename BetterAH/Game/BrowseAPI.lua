@@ -113,13 +113,14 @@ function BrowseAPI.readAuctions(env, entry)
 end
 
 -- Looks up a browse row's auctions (row from Browse.rows). done(list, complete) with
--- BrowseAPI.readAuctions' list, or done(nil, why). Searches share PostingAPI's queue.
+-- BrowseAPI.readAuctions' list, or done(nil, why). Searches share PostingAPI's queue; the player waits on
+-- this one, so it goes ahead of the background searches (#122).
 function BrowseAPI:auctions(row, done)
   local posting = self:posting()
   if not posting then return done(nil, "searching isn't ready yet") end
   posting:search({ item = "i:" .. row.itemID, itemID = row.itemID, name = row.name, itemKey = row.itemKey,
     commodity = row.commodity and true or false, unsure = row.commodity == nil, reader = BrowseAPI.readAuctions },
-    done)
+    done, true)
 end
 
 -- Why a buy or bid can't be sent now, or nil when it can.

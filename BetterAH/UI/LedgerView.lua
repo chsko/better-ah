@@ -9,7 +9,9 @@ LedgerView.__index = LedgerView
 
 LedgerView.TABS = { { "entries", "Transactions" }, { "items", "By item" }, { "days", "By day" } }
 LedgerView.PERIODS = { { "today", "Today" }, { "7d", "7 days" }, { "30d", "30 days" }, { "all", "All time" } }
-LedgerView.FILTERS = { { "all", "All" }, { "in", "Money in" }, { "out", "Money out" } }
+LedgerView.FILTERS = { { "all", "Money in and out" }, { "in", "Money in" }, { "out", "Money out" } }
+LedgerView.CHARACTERS = { { "all", "All characters" }, { "this", "This character" } }
+LedgerView.MENU_ENTRY = 20
 LedgerView.ENTRY_COLUMNS = {
   { "When", 4, 84, "LEFT" }, { "What", 92, 96, "LEFT" }, { "Item", 192, 186, "LEFT" }, { "Qty", 382, 36 },
   { "Gold", 422, 94 },
@@ -188,6 +190,8 @@ function LedgerView:build(f, x, y, width, height)
   panel:EnableMouseWheel(true)
   panel:SetScript("OnMouseWheel", function(_, delta) self:scroll(-delta * 3) end)
   self.panel, self.width = panel, width
+  -- Leaving the view or closing the window closes an open menu, so it isn't open on the way back.
+  panel:SetScript("OnHide", function() self:closeMenus() end)
 
   self.tabButtons = {}
   for i, tab in ipairs(LedgerView.TABS) do
@@ -197,29 +201,20 @@ function LedgerView:build(f, x, y, width, height)
     b:SetScript("OnClick", function() self:setTab(tab[1]) end)
     self.tabButtons[tab[1]] = b
   end
-  local chars = env.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-  chars:SetSize(110, 20)
-  chars:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, 0)
-  chars:SetScript("OnClick", function() self:toggleChars() end)
-  ns.Window.tooltip(env, chars, "Characters", "Show all your characters together, or only the one you're on.")
-  self.charsButton = chars
-
-  self.periodButtons = {}
-  for i, p in ipairs(LedgerView.PERIODS) do
-    local b = ns.Window.entryButton(env, panel, 70)
-    b:SetPoint("TOPLEFT", panel, "TOPLEFT", (i - 1) * 74, -24)
-    b:SetText(p[2])
-    b:SetScript("OnClick", function() self:setPeriod(p[1]) end)
-    self.periodButtons[p[1]] = b
-  end
-  self.filterButtons = {}
-  for i, filter in ipairs(LedgerView.FILTERS) do
-    local b = ns.Window.entryButton(env, panel, 70)
-    b:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24 - (#LedgerView.FILTERS - i) * 74, -24)
-    b:SetText(filter[2])
-    b:SetScript("OnClick", function() self:setFilter(filter[1]) end)
-    self.filterButtons[filter[1]] = b
-  end
+  -- Drop-downs for the period, money in or out (Transactions only) and characters, on the second row.
+  self.periodDrop = self:dropdown(panel, 110, LedgerView.PERIODS, function() return self.period end,
+    function(v) self:setPeriod(v) end, "Period", "Which days to add up.")
+  self.periodDrop:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -24)
+  self.charsDrop = self:dropdown(panel, 130, LedgerView.CHARACTERS,
+    function() return self.allChars and "all" or "this" end,
+    function(v) self:setChars(v == "all") end, "Characters", "All your characters together, or only the one "
+    .. "you're on.")
+  self.charsDrop:SetPoint("LEFT", self.periodDrop, "RIGHT", 8, 0)
+  self.filterDrop = self:dropdown(panel, 130, LedgerView.FILTERS, function() return self.filterBy end,
+    function(v) self:setFilter(v) end, "Show", "Every entry, only money in (sales), or only money out "
+    .. "(buys and deposits).")
+  -- Last, so hiding it on the other tabs leaves no gap.
+  self.filterDrop:SetPoint("LEFT", self.charsDrop, "RIGHT", 8, 0)
 
   -- Two lists in the same place, one per tab with rows; By day draws a chart there instead.
   local function list()
@@ -238,7 +233,7 @@ function LedgerView:build(f, x, y, width, height)
   self:buildChart(panel, width)
 
   local empty = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  empty:SetPoint("TOPLEFT", panel, "TOPLEFT", 4, -LedgerView.TOP_ROWS - 40)
+  empty:SetPoint("TOPLEFT", panel, "TOPLEFT", 4, -LedgerView.TOP_ROWS - 62) -- below the column headings
   empty:SetWidth(width - 40)
   empty:SetJustifyH("LEFT")
   self.empty = empty
@@ -329,6 +324,7 @@ function LedgerView:show()
 end
 
 function LedgerView:setTab(tab)
+  self:closeMenus()
   self.tab, self.offset, self.selected = tab, 0, nil
   self:render()
 end
@@ -343,18 +339,100 @@ function LedgerView:setFilter(filter)
   self:render()
 end
 
-function LedgerView:toggleChars()
-  self.allChars, self.offset, self.selected = not self.allChars, 0, nil
+function LedgerView:setChars(all)
+  self.allChars, self.offset, self.selected = all, 0, nil
   self:render()
 end
 
+-- A drop-down: a button showing the chosen option's label, which opens a menu of the options
+-- below it. options = { { value, label }, ... }; get() gives the chosen value, set(value) picks one.
+function LedgerView:dropdown(parent, width, options, get, set, title, tip)
+  local env = self.env
+  local b = env.CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+  b:SetSize(width, 20)
+  ns.Window.tooltip(env, b, title, tip)
+  local menu = env.CreateFrame("Frame", nil, parent)
+  menu:SetSize(width, #options * LedgerView.MENU_ENTRY + 8)
+  menu:SetPoint("TOPLEFT", b, "BOTTOMLEFT", 0, -2)
+  menu:SetFrameStrata("HIGH")
+  menu:EnableMouse(true)
+  -- The wheel over a menu shouldn't scroll the list under it.
+  menu:EnableMouseWheel(true)
+  menu:SetScript("OnMouseWheel", function() end)
+  -- Drawn like Browse's menus (UI/BrowseFilterBar.lua): dark ground, gold edge all round.
+  local bg = menu:CreateTexture(nil, "BACKGROUND")
+  bg:SetAllPoints(menu)
+  bg:SetColorTexture(0.06, 0.05, 0.04, 0.97)
+  for _, e in ipairs({ { "TOPLEFT", "TOPRIGHT", true }, { "BOTTOMLEFT", "BOTTOMRIGHT", true },
+    { "TOPLEFT", "BOTTOMLEFT" }, { "TOPRIGHT", "BOTTOMRIGHT" } }) do
+    local t = menu:CreateTexture(nil, "BORDER")
+    t:SetColorTexture(0.79, 0.64, 0.23, 1)
+    t:SetPoint(e[1], menu, e[1], 0, 0)
+    t:SetPoint(e[2], menu, e[2], 0, 0)
+    if e[3] then t:SetHeight(1) else t:SetWidth(1) end
+  end
+  menu:Hide()
+  b.menu, b.entries = menu, {}
+  for i, o in ipairs(options) do
+    local e = env.CreateFrame("Button", nil, menu)
+    e:SetSize(width - 8, LedgerView.MENU_ENTRY)
+    e:SetPoint("TOPLEFT", menu, "TOPLEFT", 4, -4 - (i - 1) * LedgerView.MENU_ENTRY)
+    local hl = e:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAtlas(ns.Window.ART.rowHighlight, false)
+    hl:SetAllPoints(e)
+    hl:SetBlendMode("ADD")
+    local sel = e:CreateTexture(nil, "ARTWORK")
+    sel:SetAtlas(ns.Window.ART.rowSelected, false)
+    sel:SetAllPoints(e)
+    sel:SetAlpha(0.5)
+    sel:Hide()
+    e.selectedTexture = sel
+    local text = e:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    text:SetPoint("LEFT", e, "LEFT", 6, 0)
+    text:SetText(o[2])
+    e.text = text
+    local value = o[1]
+    e:SetScript("OnClick", function()
+      menu:Hide()
+      set(value)
+    end)
+    b.entries[value] = e
+  end
+  b:SetScript("OnClick", function()
+    local open = menu:IsShown()
+    self:closeMenus()
+    if not open then menu:Show() end
+  end)
+  b.options, b.get = options, get
+  self.drops = self.drops or {}
+  self.drops[#self.drops + 1] = b
+  return b
+end
+
+function LedgerView:closeMenus()
+  for _, d in ipairs(self.drops or {}) do d.menu:Hide() end
+end
+
+-- Shows each drop-down's chosen option on its button and in its menu.
+function LedgerView:renderDrops()
+  for _, d in ipairs(self.drops or {}) do
+    local chosen = d.get()
+    for _, o in ipairs(d.options) do
+      if o[1] == chosen then d:SetText(o[2]) end
+      d.entries[o[1]].selectedTexture:SetShown(o[1] == chosen)
+    end
+  end
+end
+
 function LedgerView:scroll(by)
+  self:closeMenus()
   if self.tab == "days" then return end
   self.offset = math.max(0, self.offset + by)
   self:render()
 end
 
 function LedgerView:selectRow(r)
+  self:closeMenus()
   local row = self.shown and self.shown[r + self.offset]
   if not row then return end
   self.selected = (self.selected ~= row.id) and row.id or nil
@@ -362,6 +440,7 @@ function LedgerView:selectRow(r)
 end
 
 function LedgerView:selectDay(day)
+  self:closeMenus()
   self.selected = (self.selected ~= day) and day or nil
   self:render()
 end
@@ -387,13 +466,9 @@ function LedgerView:render()
   if not self.panel then return end
   local entries, from, now, offset, char = self:data()
   for _, t in ipairs(LedgerView.TABS) do ns.Window.markSelected(self.tabButtons[t[1]], t[1] == self.tab) end
-  for _, p in ipairs(LedgerView.PERIODS) do ns.Window.markSelected(self.periodButtons[p[1]], p[1] == self.period) end
-  for _, fl in ipairs(LedgerView.FILTERS) do
-    local b = self.filterButtons[fl[1]]
-    b:SetShown(self.tab == "entries")
-    ns.Window.markSelected(b, fl[1] == self.filterBy)
-  end
-  self.charsButton:SetText(self.allChars and "All characters" or "This character")
+  self:renderDrops()
+  self.filterDrop:SetShown(self.tab == "entries")
+  if self.tab ~= "entries" then self.filterDrop.menu:Hide() end
   self.entryList:SetShown(self.tab == "entries")
   self.itemList:SetShown(self.tab == "items")
   self.chart:SetShown(self.tab == "days")

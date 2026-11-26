@@ -226,9 +226,11 @@ function DebugHooks.install(env, addon)
     return r, why, units
   end)
 
-  around(AuctionAPI, "scan", function(original, self, onDone)
-    if not log() then return original(self, onDone) end
-    add("scan", "full scan asked for")
+  around(AuctionAPI, "scan", function(original, self, onDone, opts)
+    if not log() then return original(self, onDone, opts) end
+    local last, by = self:lastAsk()
+    add("scan", "%s (last request %s by %s)", opts and opts.listen and "reading another addon's full scan"
+      or "full scan asked for", last and (tostring(self:now() - last) .. "s ago") or "unknown", tostring(by or "?"))
     local ended = false
     local ok, why = original(self, function(listings, info)
       ended = true
@@ -238,9 +240,27 @@ function DebugHooks.install(env, addon)
         add("scan", "full scan failed: %s", tostring(info))
       end
       return onDone(listings, info)
-    end)
+    end, opts)
     if not ok and not ended then add("scan", "full scan not started: %s", tostring(why)) end
     return ok, why
+  end)
+
+  -- Another addon's full scan request (#114): it uses up the account's 15 minutes.
+  around(AuctionAPI, "onReplicateCall", function(original, self)
+    if log() and not self.asking then
+      local last = self:lastAsk()
+      add("scan", "another addon asked for a full scan (last request %s)",
+        last and (tostring(self:now() - last) .. "s ago") or "unknown")
+    end
+    return original(self)
+  end)
+  around(AuctionAPI, "onUnaskedAnswer", function(original, self)
+    if log() then
+      local _, by, answered = self:lastAsk()
+      add("scan", "a full scan answer came that we didn't ask for (last request by %s, last answer %s)",
+        tostring(by or "?"), answered and (tostring(self:now() - answered) .. "s ago") or "unknown")
+    end
+    return original(self)
   end)
 
   -- The snipe session log, as it is written.

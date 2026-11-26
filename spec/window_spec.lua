@@ -627,6 +627,56 @@ describe("Window", function()
       assert.equal("Illusion Dust", rowText(w, 2)[1])
     end)
 
+    it("won't start a materials scan beside a full scan (#114)", function()
+      local env, w = setup()
+      env.replicateSilent = true
+      env.openAuctionHouse()
+      w:select("prices")
+      w:startScan()
+      w:scanMaterials()
+      assert.is_nil(w.materialScan)
+      assert.equal(0, #env.searches)
+      assert.equal("A full scan is running. Scan materials when it is done.", w.scanStatus:GetText())
+    end)
+
+    it("reads another addon's full scan, then waits 15 minutes from it (#114)", function()
+      local env, w, ns = setup()
+      ns.autoScan = nil
+      env.hooksecurefunc = function(t, name, fn)
+        local orig = t[name]
+        t[name] = function(...) orig(...) fn(...) end
+      end
+      ns.auctionAPI:hookReplicate()
+      ns.prices:recordScan("/1/Horde", env.now - 3600, { { item = "i:1", name = "Thing", count = 1, buyout = 1 } })
+      env.auctions = { { name = "Linen Cloth", count = 20, buyout = 4000, itemID = 2589 } }
+      env.openAuctionHouse()
+      env.C_AuctionHouse.ReplicateItems() -- another addon, before our auto scan
+      local calls = env.replicateCalls
+      assert.equal("Scanned 1 h ago. Another addon ran a full scan just now. Next scan in 15 min.",
+        w.scanStateText:GetText())
+      env.runTimers(5)
+      assert.equal(calls, env.replicateCalls, "we didn't ask as well")
+      assert.equal(200, (ns.prices:marketValue("/1/Horde", "i:2589", env.now)))
+      assert.equal("Scanned just now. Next scan in 15 min.", w.scanStateText:GetText())
+      env.runTimers(15 * 60)
+      assert.equal(calls + 1, env.replicateCalls, "ours, once the 15 minutes are up")
+    end)
+
+    it("doesn't ask while another addon's unanswered request holds the 15 minutes (#114)", function()
+      local env, w, ns = setup()
+      ns.autoScan = nil
+      ns.auctionAPI:useStore({ askedAt = env.now - 60, askedBy = "other" })
+      ns.prices:recordScan("/1/Horde", env.now - 3600, { { item = "i:1", name = "Thing", count = 1, buyout = 1 } })
+      env.openAuctionHouse()
+      env.runTimers(5)
+      assert.equal(0, env.replicateCalls, "a reload or a new visit doesn't skip the wait")
+      assert.equal("Scanned 1 h ago. Another addon ran a full scan 1 min ago. Next scan in 14 min.",
+        w.scanStateText:GetText())
+      env.runTimers(14 * 60)
+      assert.equal(1, env.replicateCalls)
+    end)
+
+
     it("takes a material the auction house answers as an item, and retries one with no answer", function()
       local env, w, ns = setup()
       env.listings[16204] = { item = true, level = 5, { buyoutAmount = 200, quantity = 5 } }

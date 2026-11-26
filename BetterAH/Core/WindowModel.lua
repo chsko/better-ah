@@ -20,6 +20,9 @@ local SECTIONS = {
     { id = "prices", label = "Prices and history" },
     { id = "alts", label = "Alts and inventory" },
   } },
+  { title = "Addon", entries = {
+    { id = "settings", label = "Settings" },
+  } },
 }
 
 local known = {}

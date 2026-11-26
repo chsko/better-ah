@@ -62,6 +62,18 @@ describe("Posting", function()
     assert.equal("skip", plan({ have = 50, profile = false, listings = {} }).action, "still needs a floor")
   end)
 
+  it("posts for the player's default duration when the profile has none", function()
+    local base = { have = 5, marketValue = 100, commodity = true, listings = {}, profile = false }
+    base.defaultDuration = 1
+    assert.equal(1, plan(base).duration, "no profile")
+    base.profile = { limit = 2 }
+    assert.equal(1, plan(base).duration, "a profile without a duration")
+    base.profile = { duration = 2 }
+    assert.equal(2, plan(base).duration, "the profile's own duration wins")
+    base.profile, base.defaultDuration = false, 7
+    assert.equal(3, plan(base).duration, "a duration the client doesn't offer falls back to 24 hours")
+  end)
+
   it("posts at most the profile's limit and keeps the rest in the bags", function()
     local p = plan({ have = 142, marketValue = 100, commodity = true, profile = { limit = 50, duration = 1 },
       listings = {} })
@@ -148,6 +160,31 @@ describe("Posting", function()
       assert.is_nil(s:floor("/1/Alliance", "i:2589"), "a floor is a price on one market")
       assert.is_true(s:setFloor("/1/Horde", "i:2589", 0))
       assert.is_nil(s:floor("/1/Horde", "i:2589"), "0 goes back to the default floor")
+    end)
+
+    it("remembers the default duration across a reload, and refuses one the client doesn't offer", function()
+      local store = {}
+      local s = Posting.Settings.new(store)
+      assert.equal(3, s:defaultDuration(), "24 hours until the player picks another")
+      assert.is_true(s:setDefaultDuration(2))
+      s = Posting.Settings.new(store)
+      assert.equal(2, s:defaultDuration())
+      for _, bad in ipairs({ 0, 4, "abc", 2.5, false }) do
+        assert.is_false(s:setDefaultDuration(bad), tostring(bad))
+      end
+      assert.equal(2, s:defaultDuration())
+      store.duration = 9
+      assert.equal(3, s:defaultDuration(), "a bad saved value reads as 24 hours")
+    end)
+
+    it("gives an item its profile's duration, else the default", function()
+      local s = Posting.Settings.new({})
+      assert.is_true(s:setDefaultDuration(1))
+      assert.equal(1, s:durationFor("i:1"))
+      s:setProfile("i:1", "", 3)
+      assert.equal(3, s:durationFor("i:1"))
+      assert.is_true(s:setProfile("i:2", 5, nil))
+      assert.equal(1, s:durationFor("i:2"), "a profile saved without a duration")
     end)
 
     it("moves floors from an old market key to a new one that has none", function()

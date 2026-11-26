@@ -591,8 +591,10 @@ end
 function PostView:saveProfile()
   local row, settings = self:selectedRow(), self.addon.posting
   if not (row and settings) then return end
+  -- Only a duration the player picked (now or before) is saved; otherwise the item keeps following the
+  -- default duration from the Settings view (#87).
   local profile = settings:profile(row.item)
-  local duration = self.duration or profile and profile.duration or ns.Posting.DEFAULT_DURATION
+  local duration = self.duration or profile and ns.Posting.duration(profile.duration)
   if settings:setProfile(row.item, self.limitInput:GetText(), duration) then
     self:dropConfirm()
     self.limitInput:ClearFocus()
@@ -696,8 +698,7 @@ function PostView:renderEditor(row)
   local editable = row and row.state ~= "checking" and row.state ~= "failed" and self.addon.posting
   self.editor:SetShown(editable and true or false)
   if not editable then return end
-  local profile = self.addon.posting:profile(row.item)
-  local current = self.duration or profile and profile.duration or ns.Posting.DEFAULT_DURATION
+  local current = self.duration or self.addon.posting:durationFor(row.item)
   for i, b in ipairs(self.durationButtons) do
     if i == current then b:LockHighlight() else b:UnlockHighlight() end
   end

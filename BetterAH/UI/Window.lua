@@ -182,6 +182,10 @@ function Window:build()
   self.postPanel = self.postView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
   self.disenchantView = ns.DisenchantView.new(self, self.addon)
   self.disenchantPanel = self.disenchantView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
+  if ns.SettingsView then
+    self.settingsView = ns.SettingsView.new(self, self.addon)
+    self.settingsPanel = self.settingsView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
+  end
   self:attachResize(f)
   self:renderView()
   return f
@@ -910,11 +914,14 @@ function Window:renderView()
   self.heading:SetText(self.model:label(self.model.view))
   self.placeholder:SetText(Window.EMPTY[self.model.view] or "")
   local view = self.model.view
-  self.placeholder:SetShown(view ~= "prices" and view ~= "alts" and view ~= "post" and view ~= "disenchant")
+  self.placeholder:SetShown(view ~= "prices" and view ~= "alts" and view ~= "post" and view ~= "disenchant"
+    and view ~= "settings")
   self.pricesPanel:SetShown(view == "prices")
   self.disenchantPanel:SetShown(view == "disenchant")
   self.altsPanel:SetShown(view == "alts")
   self.postPanel:SetShown(view == "post")
+  if self.settingsPanel then self.settingsPanel:SetShown(view == "settings") end
+  if view ~= "settings" and self.settingsView then self.settingsView:hide() end
   if view ~= "post" then
     self.postView.editor:Hide()
     if self.postView.ruleEditor then self.postView.ruleEditor:Hide() end
@@ -928,6 +935,8 @@ function Window:renderView()
     if self.frame:IsShown() then self.postView:show() end
   elseif view == "disenchant" then
     self.disenchantView:render()
+  elseif view == "settings" and self.settingsView then
+    self.settingsView:render()
   else
     self.detailTitle:SetText("")
     self.detailBody:SetText("")

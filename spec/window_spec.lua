@@ -17,6 +17,7 @@ local function setup(opts)
   helper.load("BetterAH/UI/PostView.lua", ns)
   helper.load("BetterAH/UI/SnipeView.lua", ns)
   helper.load("BetterAH/UI/DisenchantView.lua", ns)
+  helper.load("BetterAH/UI/SettingsView.lua", ns)
   helper.load("BetterAH/UI/Window.lua", ns)
   ns.prices = ns.PriceDB.new({})
   -- Auto scan (#30) is off unless a spec turns it on, so scans start only where a spec starts one.
@@ -200,7 +201,7 @@ describe("Window", function()
     local last = results[#results]
     assert.equal("Better AH window", last.name)
     assert.equal("pass", last.status)
-    assert.equal("window created with 8 sidebar entries; close button CloseButton; auction house art found",
+    assert.equal("window created with 9 sidebar entries; close button CloseButton; auction house art found",
       last.detail)
   end)
 
@@ -209,7 +210,7 @@ describe("Window", function()
     local last = ns.Probes.suite():run(env, { db = {} })
     last = last[#last]
     assert.equal("pass", last.status)
-    assert.equal("window created with 8 sidebar entries; close button BetterAHFrameCloseButton; "
+    assert.equal("window created with 9 sidebar entries; close button BetterAHFrameCloseButton; "
       .. "auction house art found", last.detail)
   end)
 
@@ -227,7 +228,7 @@ describe("Window", function()
     local last = ns.Probes.suite():run(env, { db = {} })
     last = last[#last]
     assert.equal("pass", last.status)
-    assert.equal("window created with 8 sidebar entries; close button CloseButton; "
+    assert.equal("window created with 9 sidebar entries; close button CloseButton; "
       .. "art not checked (no C_Texture.GetAtlasInfo)", last.detail)
   end)
 
@@ -1307,6 +1308,80 @@ describe("Window", function()
         s.startButton:Click()
         assert.equal("Open the auction house to snipe.", s.status:GetText())
       end)
+    end)
+  end)
+
+  describe("Settings", function()
+    it("picks the default duration, which new items then post for", function()
+      local env, w, ns = setup()
+      env.containers[0] = { { itemID = 4306, count = 10, name = "Silk Cloth" } }
+      env.listings[4306] = {}
+      ns.prices:importPrices("/1/Horde", env.now, { ["i:4306"] = { value = 2000 } })
+      env.openAuctionHouse()
+      env.runTimers()
+      sidebarButton(w, "settings"):Click()
+      local sv = w.settingsView
+      assert.equal("Settings", w.heading:GetText())
+      assert.is_false(w.placeholder:IsShown())
+      assert.is_true(w.settingsPanel:IsShown())
+      assert.is_false(w.postPanel:IsShown())
+      assert.equal("Default duration", w.detailTitle:GetText())
+      assert.same({ false, false, true }, { sv.durationButtons[1].highlighted, sv.durationButtons[2].highlighted,
+        sv.durationButtons[3].highlighted }, "24 hours to start with")
+      assert.is_true(sv.resetButton:IsShown())
+      assert.is_false(sv.resetButton:IsEnabled(), "nothing to reset")
+      sv.durationButtons[2]:Click()
+      assert.equal(2, ns.posting:defaultDuration())
+      assert.same({ false, true, false }, { sv.durationButtons[1].highlighted, sv.durationButtons[2].highlighted,
+        sv.durationButtons[3].highlighted })
+      assert.is_true(sv.resetButton:IsEnabled())
+
+      sidebarButton(w, "post"):Click()
+      assert.is_false(sv.resetButton:IsShown(), "the reset button belongs to the Settings view")
+      env.runTimers()
+      w.postView:selectRow(1)
+      assert.is_true(w.postView.durationButtons[2].highlighted, "the Post view starts on the default")
+      w.postView.postButton:Click()
+      assert.equal(2, env.posts[1].duration)
+
+      sidebarButton(w, "settings"):Click()
+      sv.resetButton:Click()
+      assert.equal(3, ns.posting:defaultDuration())
+      assert.is_false(sv.resetButton:IsEnabled())
+    end)
+
+    it("keeps an item saved with only a limit on the default duration", function()
+      local env, w, ns = setup()
+      env.containers[0] = { { itemID = 4306, count = 10, name = "Silk Cloth" } }
+      env.listings[4306] = {}
+      ns.prices:importPrices("/1/Horde", env.now, { ["i:4306"] = { value = 2000 } })
+      ns.posting:setDefaultDuration(2)
+      env.openAuctionHouse()
+      env.runTimers()
+      w.postView:selectRow(1)
+      w.postView.limitInput:SetText("5")
+      w.postView:saveProfile()
+      assert.same({ limit = 5 }, ns.posting:profile("i:4306"), "no duration picked, none saved")
+      sidebarButton(w, "settings"):Click()
+      w.settingsView.resetButton:Click()
+      assert.equal(3, ns.posting:durationFor("i:4306"), "follows the default when it changes")
+      w.settingsView.resetButton:Click()
+      assert.equal(3, ns.posting:defaultDuration(), "a disabled reset does nothing")
+    end)
+
+    it("leaves an item's own duration alone", function()
+      local env, w, ns = setup()
+      env.containers[0] = { { itemID = 4306, count = 10, name = "Silk Cloth" } }
+      env.listings[4306] = {}
+      ns.prices:importPrices("/1/Horde", env.now, { ["i:4306"] = { value = 2000 } })
+      ns.posting:setProfile("i:4306", "", 3)
+      env.openAuctionHouse()
+      sidebarButton(w, "settings"):Click()
+      w.settingsView.durationButtons[1]:Click()
+      sidebarButton(w, "post"):Click()
+      env.runTimers()
+      w.postView.postButton:Click()
+      assert.equal(3, env.posts[1].duration)
     end)
   end)
 

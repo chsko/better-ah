@@ -95,10 +95,17 @@ end
 
 DisenchantView.UP, DisenchantView.DOWN = "|cff1eff00", "|cffff4a3a"
 
--- A change in green (+) or red (-), like "|cff1eff00+38c|r"; nil without one. short: Money.short.
+-- Money for the narrowest columns: as Money.short, and without copper from 10s up ("12s").
+function DisenchantView.tightMoney(copper)
+  if copper >= 1000 and copper < 10000 then return math.floor(copper / 100) .. "s" end
+  return ns.Money.short(copper)
+end
+
+-- A change in green (+) or red (-), like "|cff1eff00+38c|r"; nil without one. short: Money.short;
+-- "tight": DisenchantView.tightMoney.
 function DisenchantView.changeText(delta, short)
   if not delta or delta == 0 then return nil end
-  local money = short and ns.Money.short or ns.Money.format
+  local money = short == "tight" and DisenchantView.tightMoney or short and ns.Money.short or ns.Money.format
   if delta > 0 then return DisenchantView.UP .. "+" .. money(delta) .. "|r" end
   return DisenchantView.DOWN .. "-" .. money(-delta) .. "|r"
 end
@@ -128,11 +135,13 @@ function DisenchantView.classDetail(class)
   local out = { value = class.net and money(class.net) or "-",
     before = class.value and (money(class.value) .. "\nbefore the cut") or "No prices\nyet", lines = {} }
   for _, y in ipairs(class.breakdown or {}) do
-    out.lines[#out.lines + 1] = { name = (y.name:gsub(" Essence$", " Ess.")), fullName = y.name,
+    -- Shortened to fit the material column; fullName keeps the whole name.
+    local name = y.name:gsub(" Essence$", " Ess."):gsub("^Small ", "Sm. "):gsub("^Large ", "Lg. ")
+    out.lines[#out.lines + 1] = { name = name, fullName = y.name,
       chance = DisenchantView.chanceText(y.chance),
       count = y.min == y.max and tostring(y.min) or (y.min .. "-" .. y.max),
-      adds = y.value and money(y.value) or "no price",
-      change = DisenchantView.changeText(y.change, true) or (y.change == 0 and "same" or ""),
+      adds = y.value and money(y.value) or "none",
+      change = DisenchantView.changeText(y.change, "tight") or (y.change == 0 and "same" or ""),
       share = (y.value and class.value and class.value > 0) and math.min(1, y.value / class.value) or 0 }
   end
   return out
@@ -388,8 +397,10 @@ function DisenchantView:buildBandDetail()
 
   local top = -206 -- the materials table's header
   self.materialsTitle = text(box, "GameFontNormalSmall", 0, top + 16, W)
-  local cols = { { "Material", 0, 104, "LEFT" }, { "Chance", 104, 36, "RIGHT" }, { "Count", 140, 30, "RIGHT" },
-    { "Adds", 170, 52, "RIGHT" }, { "Change", 222, 54, "RIGHT" } }
+  -- Widths from the client's small font (#115).
+  -- Names are shortened ("Lg. Glimmering Shard") and the Change column drops copper from 10s up to fit.
+  local cols = { { "Material", 0, 116, "LEFT" }, { "Chance", 116, 42, "RIGHT" }, { "Count", 158, 36, "RIGHT" },
+    { "Adds", 194, 42, "RIGHT" }, { "Change", 236, 40, "RIGHT" } }
   for _, col in ipairs(cols) do text(box, "GameFontDisableSmall", col[2], top, col[3], col[4]):SetText(col[1]) end
   self.materialLines = {}
   for i = 1, DisenchantView.MATERIAL_LINES do

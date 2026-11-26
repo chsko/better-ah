@@ -5,6 +5,7 @@ local function setup(opts)
   local env = fake.new(opts)
   local ns = helper.load("BetterAH/Core/WindowModel.lua")
   helper.load("BetterAH/Core/Browse.lua", ns)
+  helper.load("BetterAH/Core/SearchHistory.lua", ns)
   helper.load("BetterAH/Core/Buying.lua", ns)
   local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "ValueHistory", "Targets", "Sniper",
     "PriceDB", "CharacterRecords", "MatFloors", "Posting", "PostQueue", "SelfTest", "Probes", "Purchases",
@@ -24,6 +25,7 @@ local function setup(opts)
   helper.load("BetterAH/UI/SettingsView.lua", ns)
   helper.load("BetterAH/Game/BrowseAPI.lua", ns)
   helper.load("BetterAH/UI/BrowseItemView.lua", ns)
+  helper.load("BetterAH/UI/BrowseHistory.lua", ns)
   helper.load("BetterAH/UI/BrowseView.lua", ns)
   helper.load("BetterAH/Game/MyAuctionsAPI.lua", ns)
   helper.load("BetterAH/UI/MyAuctionsView.lua", ns)
@@ -34,6 +36,8 @@ local function setup(opts)
   ns.characters = ns.CharacterRecords.new({})
   ns.posting = ns.Posting.Settings.new({})
   ns.purchases = ns.Purchases.new({})
+  ns.searchHistory = ns.SearchHistory.new({})
+  ns.browseSettings = {}
   ns.tooltipSettings = {}
   ns.AuctionAPI.install(env, ns)
   ns.PostingAPI.install(env, ns)
@@ -3028,5 +3032,201 @@ describe("My auctions view, in-game fixes (#123)", function()
     local _, w, _, v = open()
     rowFor(v, 54).button:Click()
     assert.matches("Deposit you lose: nothing", w.detailBody:GetText())
+  end)
+end)
+
+describe("Browse search history", function()
+  local function browse(settings)
+    local env, w, ns = setup()
+    if settings then ns.browseSettings = settings end
+    env.openAuctionHouse()
+    w:select("browse")
+    env.itemNames = { [1] = "Ridgeback Bracers" }
+    env.browseResults = { { itemKey = { itemID = 1, itemLevel = 28 }, totalQuantity = 3, minPrice = 890 } }
+    return env, w, ns, w.browseView
+  end
+  local function run(env, view, text, lo, hi)
+    view.searchBox:SetText(text)
+    view.minLevel:SetText(lo or "")
+    view.maxLevel:SetText(hi or "")
+    view.searchButton:Click()
+    env.runTimers()
+  end
+
+  it("lists searches that ran in the panel right of the results, newest first", function()
+    local env, _, ns, view = browse()
+    local h = view.history
+    assert.is_true(h.panel:IsShown())
+    assert.is_true(h.empty:IsShown(), "nothing searched yet")
+    run(env, view, "bracers", "30", "21")
+    run(env, view, "")
+    run(env, view, "linen")
+    local _, recent = ns.searchHistory:list()
+    assert.equal(2, #recent, "the blank search isn't kept")
+    assert.is_false(h.empty:IsShown())
+    assert.equal("RECENT", h.lines[1].heading:GetText())
+    assert.equal("linen", h.lines[2].name:GetText())
+    assert.equal("bracers", h.lines[3].name:GetText())
+    assert.equal("level 21-30", h.lines[3].detail:GetText())
+    assert.equal("now", h.lines[3].age:GetText())
+    assert.is_false(h.lines[4]:IsShown())
+  end)
+
+  it("does not remember a search that failed", function()
+    local env, _, ns, view = browse()
+    env.browseSilent = true
+    run(env, view, "linen")
+    env.runTimers()
+    local _, recent = ns.searchHistory:list()
+    assert.equal(0, #recent)
+  end)
+
+  it("searches again with a click, filling the search row", function()
+    local env, _, _, view = browse()
+    run(env, view, "bracers", "21", "30")
+    run(env, view, "linen")
+    local h = view.history
+    local before = #env.browses
+    h.lines[1]:Click() -- the heading does nothing
+    assert.equal(before, #env.browses)
+    h.lines[3]:Click()
+    assert.equal("bracers", view.searchBox:GetText())
+    assert.equal("21", view.minLevel:GetText())
+    assert.equal("30", view.maxLevel:GetText())
+    env.runTimers()
+    assert.equal(before + 1, #env.browses)
+    local q = env.browses[#env.browses]
+    assert.equal("bracers", q.searchString)
+    assert.equal(21, q.minLevel)
+    assert.equal(30, q.maxLevel)
+    assert.equal("bracers", h.lines[2].name:GetText(), "moved to the top")
+  end)
+
+  it("leaves the search row alone while a search is running", function()
+    local env, _, _, view = browse()
+    run(env, view, "bracers", "21", "30")
+    view.searchBox:SetText("linen")
+    view.minLevel:SetText("")
+    view.maxLevel:SetText("")
+    view.searchButton:Click()
+    local h = view.history
+    h.lines[2]:Click()
+    assert.equal("linen", view.searchBox:GetText())
+    assert.equal("Wait for this search to finish.", h.foot:GetText())
+    env.runTimers()
+    assert.equal("linen", env.browses[#env.browses].searchString)
+  end)
+
+  it("pins, unpins and removes entries, and clears only the recent ones", function()
+    local env, _, ns, view = browse()
+    run(env, view, "a")
+    run(env, view, "b")
+    local h = view.history
+    h.lines[3].star:Click() -- pin "a"
+    assert.equal("PINNED", h.lines[1].heading:GetText())
+    assert.equal("a", h.lines[2].name:GetText())
+    assert.equal("", h.lines[2].age:GetText(), "pinned searches show no age")
+    assert.equal("RECENT", h.lines[3].heading:GetText())
+    assert.equal("b", h.lines[4].name:GetText())
+    h.clearButton:Click()
+    assert.equal("a", h.lines[2].name:GetText())
+    assert.is_false(h.lines[3]:IsShown())
+    assert.is_false(h.clearButton:IsShown(), "nothing left to clear")
+    h.lines[2].star:Click() -- unpin
+    assert.equal("RECENT", h.lines[1].heading:GetText())
+    h.lines[2].remove:Click()
+    assert.is_true(h.empty:IsShown())
+    local pinned, recent = ns.searchHistory:list()
+    assert.equal(0, #pinned + #recent)
+  end)
+
+  it("scrolls a long history with the wheel", function()
+    local env, _, _, view = browse()
+    for i = 1, 15 do run(env, view, "s" .. i) end
+    local h = view.history
+    local lines = #h.lines
+    assert.is_true(lines < 16)
+    h.panel.scripts.OnMouseWheel(h.panel, -50)
+    assert.equal(16 - lines, h.offset, "stops at the end")
+    assert.equal("s1", h.lines[lines].name:GetText())
+    h.panel.scripts.OnMouseWheel(h.panel, 50)
+    assert.equal(0, h.offset)
+  end)
+
+  it("gives way to an item's page and comes back with the results", function()
+    local env, _, _, view = browse()
+    run(env, view, "bracers")
+    view.rows[1].button:Click()
+    assert.is_false(view.history.panel:IsShown())
+    assert.is_false(view.divider:IsShown())
+    view:closeItem()
+    assert.is_true(view.history.panel:IsShown())
+    assert.is_true(view.divider:IsShown())
+  end)
+
+  describe("divider", function()
+    it("starts at the saved width, and lays the results out for the room left", function()
+      local _, _, ns, view = browse({ historyWidth = 300 })
+      assert.equal(300, view.historyWidth)
+      assert.equal(ns.BrowseView.WIDTH - ns.BrowseView.DIVIDER - 300, view.panel:GetWidth())
+      local name = view.rows[1][1]
+      assert.equal(view.columns[1][3], name.width)
+      assert.equal(view.listWidth - 22 - 4, view.columns[6][2] + view.columns[6][3])
+    end)
+
+    it("turns cursor movement into window units at any UI and window scale", function()
+      local env, w, _, view = browse({})
+      env.uiScale = 0.75
+      w.frame:SetScale(1.2)
+      local start = view.historyWidth
+      local d = view.divider
+      env.cursorX, env.mouseDown = 600, true
+      d.scripts.OnMouseDown(d, "LeftButton")
+      env.cursorX = 600 - 36 -- 36 screen px = 48 UI units = 40 px of the scaled window
+      d.scripts.OnUpdate(d, 0.01)
+      assert.equal(start + 40, view.historyWidth)
+      env.mouseDown = false
+      d.scripts.OnUpdate(d, 0.01) -- released where the divider didn't hear it
+      assert.is_nil(view.dragging)
+    end)
+
+    it("keeps the status line inside the results when the history widens", function()
+      local env, _, _, view = browse({})
+      run(env, view, "bracers")
+      local d = view.divider
+      env.uiScale = 1
+      env.cursorX, env.mouseDown = 500, true
+      d.scripts.OnMouseDown(d, "LeftButton")
+      env.cursorX = 400
+      d.scripts.OnUpdate(d, 0.01)
+      assert.is_true(view.status.width <= view.listWidth - 8)
+    end)
+
+    it("drags wider and narrower within limits, saves on release, and resets on double-click", function()
+      local env, w, ns, view = browse({})
+      local settings = ns.browseSettings
+      local d = view.divider
+      local start = view.historyWidth
+      env.uiScale = 1 -- cursor pixels are window units (the window is at scale 1)
+      w.frame:SetScale(1)
+      env.cursorX, env.mouseDown = 500, true
+      d.scripts.OnMouseDown(d, "LeftButton")
+      env.cursorX = 440 -- 60 px left: the history gets wider
+      d.scripts.OnUpdate(d, 0.01)
+      assert.equal(start + 60, view.historyWidth)
+      assert.is_nil(settings.historyWidth, "saved only when the drag ends")
+      env.cursorX = 2000
+      d.scripts.OnUpdate(d, 0.01)
+      assert.equal(ns.Browse.HISTORY_MIN, view.historyWidth)
+      env.cursorX = 440
+      d.scripts.OnUpdate(d, 0.01)
+      env.mouseDown = false
+      d.scripts.OnMouseUp(d, "LeftButton")
+      assert.equal(start + 60, settings.historyWidth)
+      d.scripts.OnDoubleClick(d)
+      assert.equal(ns.Browse.HISTORY_WIDTH, view.historyWidth)
+      assert.is_nil(settings.historyWidth)
+      assert.truthy(w)
+    end)
   end)
 end)

@@ -124,4 +124,29 @@ describe("Browse", function()
     assert.equal("3 items level 5 and up", Browse.summary(3, { searchString = "", minLevel = 5, maxLevel = 0 }))
     assert.truthy(Browse.summary(5, { searchString = "", minLevel = 0, maxLevel = 0 }, true):find("first ones only"))
   end)
+
+  describe("history panel layout", function()
+    it("keeps a dragged or saved width in range, and starts at the default", function()
+      assert.equal(Browse.HISTORY_WIDTH, Browse.historyWidth(nil))
+      assert.equal(Browse.HISTORY_WIDTH, Browse.historyWidth("junk"))
+      assert.equal(Browse.HISTORY_WIDTH, Browse.historyWidth(0 / 0))
+      assert.equal(Browse.HISTORY_MIN, Browse.historyWidth(10))
+      assert.equal(Browse.HISTORY_MAX, Browse.historyWidth(9000))
+      assert.equal(201, Browse.historyWidth(200.6))
+    end)
+
+    it("gives the item name what the number columns leave, ending inside the table", function()
+      for _, width in ipairs({ 430, 558, 700 }) do
+        local cols = Browse.columns(width)
+        assert.equal(6, #cols)
+        assert.equal("Item", cols[1][1])
+        assert.equal("name", cols[1][5])
+        local last = cols[#cols]
+        assert.equal("percent", last[5])
+        assert.equal(width - 4, last[2] + last[3], "the last column ends at the right edge")
+        for i = 2, #cols do assert.equal(cols[i - 1][2] + cols[i - 1][3] + Browse.COLUMN_GAP, cols[i][2]) end
+      end
+      assert.equal(60, Browse.columns(100)[1][3], "never narrower than a short name")
+    end)
+  end)
 end)

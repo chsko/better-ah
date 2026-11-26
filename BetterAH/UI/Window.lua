@@ -379,10 +379,44 @@ function Window:buildRows(panel, columns, onClick, onScroll, listWidth)
       if r == 0 then cell:SetText(col[1]) end
       row[c] = cell
     end
-    if r > 0 then rows[r] = row end
+    if r > 0 then rows[r] = row else rows.header = row end
   end
   if onScroll then rows.scrollBar = self:buildScrollBar(panel, onScroll, width + SCROLL_GAP) end
   return rows
+end
+
+-- Lays rows from buildRows out again for a new list width (Browse's results, as the history panel beside
+-- them is dragged wider or narrower, #129). columns are laid out for the rows' width (listWidth less the
+-- scroll bar's room), as Browse.columns gives them.
+function Window.layoutRows(rows, panel, columns, listWidth)
+  local width = rows.scrollBar and (listWidth - SCROLL_ROOM) or listWidth
+  rows.width = width
+  for r = 0, ROWS do
+    local row = r > 0 and rows[r] or rows.header
+    if row then
+      if row.button then row.button:SetWidth(width) end
+      for c, col in ipairs(columns) do
+        local cell = row[c]
+        if cell then
+          cell:ClearAllPoints()
+          if r == 0 then
+            cell:SetPoint("TOPLEFT", panel, "TOPLEFT", col[2], -32)
+          else
+            cell:SetPoint("LEFT", row.button, "LEFT", col[2], 0)
+          end
+          cell:SetWidth(col[3])
+        end
+      end
+    end
+  end
+  local bar = rows.scrollBar
+  if bar then
+    local x = width + SCROLL_GAP
+    bar:ClearAllPoints()
+    bar:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -32 - ROW_HEIGHT + 3)
+    bar:SetPoint("BOTTOMLEFT", panel, "TOPLEFT", x, -32 - (ROWS + 1) * ROW_HEIGHT + 3)
+    bar.x = x
+  end
 end
 
 -- A scroll bar beside the item rows: Blizzard's slim MinimalScrollBar (the classic AH's own bar is

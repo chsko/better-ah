@@ -23,6 +23,11 @@ frame:SetScript("OnEvent", function(self, event, loadedName)
     ns.tooltipSettings = BetterAHDB.tooltip
     BetterAHDB.disenchant = BetterAHDB.disenchant or {}
     ns.disenchant = BetterAHDB.disenchant
+    -- Browse's search history and history panel width (#129). A hand-edited or broken value starts over.
+    if type(BetterAHDB.browse) ~= "table" then BetterAHDB.browse = {} end
+    if type(BetterAHDB.browse.history) ~= "table" then BetterAHDB.browse.history = {} end
+    ns.browseSettings = BetterAHDB.browse
+    if ns.SearchHistory then ns.searchHistory = ns.SearchHistory.new(BetterAHDB.browse.history) end
     BetterAHDB.fullScan = BetterAHDB.fullScan or {}
     if ns.auctionAPI then ns.auctionAPI:useStore(BetterAHDB.fullScan) end
     self:UnregisterEvent("ADDON_LOADED")

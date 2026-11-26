@@ -1,0 +1,162 @@
+local helper = require("spec.helper")
+
+describe("SearchHistory", function()
+  local SearchHistory
+  before_each(function() SearchHistory = helper.load("BetterAH/Core/SearchHistory.lua").SearchHistory end)
+
+  local function names(list)
+    local out = {}
+    for i, e in ipairs(list) do out[i] = e.name end
+    return out
+  end
+
+  describe("label", function()
+    it("names a search by its text, or Everything, with what else limited it", function()
+      assert.same({ "Linen Cloth", "all categories" }, { SearchHistory.label({ text = " Linen Cloth " }) })
+      local name, detail = SearchHistory.label({ text = "", minLevel = 21, maxLevel = 30,
+        category = { label = "Armor › Mail" }, filters = { { key = "usable", label = "usable by me" } } })
+      assert.equal("Everything", name)
+      assert.equal("Armor › Mail · level 21-30 · usable by me", detail)
+    end)
+
+    it("words a level range every way it can be typed", function()
+      assert.equal("level 40", SearchHistory.levels(40, 40))
+      assert.equal("level 30 and up", SearchHistory.levels(30, 0))
+      assert.equal("up to level 20", SearchHistory.levels(0, 20))
+      assert.is_nil(SearchHistory.levels(0, 0))
+      assert.equal("level 21-30", select(2, SearchHistory.label({ text = "x", minLevel = 30, maxLevel = 21 })))
+    end)
+  end)
+
+  describe("key", function()
+    it("is the same for the same search, whatever the case or filter order", function()
+      local a = SearchHistory.key({ text = "Linen", filters = { { key = "a" }, { key = "b" } } })
+      local b = SearchHistory.key({ text = "linen ", filters = { { key = "b" }, { key = "a" } } })
+      assert.equal(a, b)
+      assert.not_equal(a, SearchHistory.key({ text = "linen" }))
+      assert.not_equal(SearchHistory.key({ text = "linen", minLevel = 10 }), SearchHistory.key({ text = "linen" }))
+    end)
+  end)
+
+  describe("add", function()
+    it("keeps searches newest first and saves them in the store", function()
+      local store = {}
+      local h = SearchHistory.new(store)
+      h:add({ text = "Linen" }, 100)
+      h:add({ text = "Wool", minLevel = "10" }, 200)
+      local pinned, recent = h:list()
+      assert.same({}, pinned)
+      assert.same({ "Wool", "Linen" }, names(recent))
+      assert.equal(200, recent[1].at)
+      assert.equal(10, recent[1].search.minLevel)
+      assert.equal(2, #store)
+      assert.same({ "Wool", "Linen" }, names(select(2, SearchHistory.new(store):list())), "survives a reload")
+    end)
+
+    it("moves a repeated search to the top instead of adding a copy", function()
+      local h = SearchHistory.new({})
+      h:add({ text = "Linen" }, 100)
+      h:add({ text = "Wool" }, 200)
+      h:add({ text = "linen" }, 300)
+      local _, recent = h:list()
+      assert.same({ "linen", "Wool" }, names(recent))
+      assert.equal(300, recent[1].at)
+    end)
+
+    it("does not remember a blank search that lists everything", function()
+      local h = SearchHistory.new({})
+      assert.is_nil(h:add({ text = "  " }, 1))
+      assert.truthy(h:add({ text = "", category = { label = "Recipes" } }, 2))
+      local _, recent = h:list()
+      assert.same({ "Everything" }, names(recent))
+      assert.equal("Recipes", recent[1].detail)
+    end)
+
+    it("keeps only the newest recent searches, but never drops a pinned one", function()
+      local h = SearchHistory.new({})
+      h:add({ text = "keep me" }, 0)
+      h:pin(SearchHistory.key({ text = "keep me" }), true)
+      for i = 1, SearchHistory.RECENT + 3 do h:add({ text = "s" .. i }, i) end
+      local pinned, recent = h:list()
+      assert.same({ "keep me" }, names(pinned))
+      assert.equal(SearchHistory.RECENT, #recent)
+      assert.equal("s" .. (SearchHistory.RECENT + 3), recent[1].name)
+      assert.equal("s4", recent[#recent].name)
+    end)
+
+    it("keeps a search's pin when it is run again", function()
+      local h = SearchHistory.new({})
+      h:add({ text = "Linen" }, 1)
+      h:pin(SearchHistory.key({ text = "Linen" }), true)
+      h:add({ text = "Linen" }, 5)
+      local pinned, recent = h:list()
+      assert.same({ "Linen" }, names(pinned))
+      assert.equal(5, pinned[1].at)
+      assert.same({}, recent)
+    end)
+  end)
+
+  describe("pin, remove and clear", function()
+    it("pins and unpins by key, and refuses past the pin limit", function()
+      local h = SearchHistory.new({})
+      for i = 1, SearchHistory.PINNED + 1 do
+        h:add({ text = "p" .. i }, i)
+        local ok = h:pin(SearchHistory.key({ text = "p" .. i }), true)
+        if i <= SearchHistory.PINNED then assert.is_true(ok) end
+      end
+      local ok, why = h:pin(SearchHistory.key({ text = "p" .. (SearchHistory.PINNED + 1) }), true)
+      assert.is_false(ok)
+      assert.truthy(why:find("up to 30"))
+      assert.is_true(h:pin(SearchHistory.key({ text = "p1" }), false))
+      local pinned, recent = h:list()
+      assert.equal(SearchHistory.PINNED - 1, #pinned)
+      assert.same({ "p1", "p31" }, names(recent), "unpinned goes to the top")
+      assert.is_false((h:pin("nothing", true)))
+    end)
+
+    it("removes one search, and clears only the unpinned ones", function()
+      local h = SearchHistory.new({})
+      h:add({ text = "a" }, 1)
+      h:add({ text = "b" }, 2)
+      h:add({ text = "c" }, 3)
+      h:pin(SearchHistory.key({ text = "a" }), true)
+      assert.is_true(h:remove(SearchHistory.key({ text = "b" })))
+      assert.is_false(h:remove(SearchHistory.key({ text = "b" })))
+      h:clearRecent()
+      local pinned, recent = h:list()
+      assert.same({ "a" }, names(pinned))
+      assert.same({}, recent)
+    end)
+  end)
+
+  it("puts an unpinned search at the top of the recent ones, so a full list doesn't drop it", function()
+    local h = SearchHistory.new({})
+    h:add({ text = "old" }, 0)
+    h:pin(SearchHistory.key({ text = "old" }), true)
+    for i = 1, SearchHistory.RECENT do h:add({ text = "s" .. i }, i) end
+    assert.is_true(h:pin(SearchHistory.key({ text = "old" }), false))
+    local _, recent = h:list()
+    assert.equal(SearchHistory.RECENT, #recent)
+    assert.equal("old", recent[1].name)
+    assert.equal("s2", recent[#recent].name, "the oldest other search went instead")
+  end)
+
+  it("keeps no more than the pin limit pinned from a hand-edited store", function()
+    local store = {}
+    for i = 1, SearchHistory.PINNED + 2 do store[i] = { search = { text = "p" .. i }, at = i, pinned = true } end
+    local pinned, recent = SearchHistory.new(store):list()
+    assert.equal(SearchHistory.PINNED, #pinned)
+    assert.equal(2, #recent)
+  end)
+
+  it("drops malformed and duplicate entries from an old or hand-edited store", function()
+    local store = { "junk", { search = { text = "Linen" }, at = 5 }, { search = "x" }, { search = { text = "" } },
+      { search = { text = "LINEN" }, at = 1 }, { search = { text = "Wool" }, at = "nope", pinned = "yes" } }
+    local h = SearchHistory.new(store)
+    local pinned, recent = h:list()
+    assert.same({}, pinned)
+    assert.same({ "Linen", "Wool" }, names(recent))
+    assert.equal(0, recent[2].at)
+    assert.equal(2, #store)
+  end)
+end)

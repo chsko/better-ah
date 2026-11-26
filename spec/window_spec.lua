@@ -4,6 +4,7 @@ local fake = require("spec.fake_client")
 local function setup(opts)
   local env = fake.new(opts)
   local ns = helper.load("BetterAH/Core/WindowModel.lua")
+  helper.load("BetterAH/Core/Browse.lua", ns)
   local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "Targets", "Sniper", "PriceDB",
     "CharacterRecords", "MatFloors", "Posting", "PostQueue", "SelfTest", "Probes" }
   for _, file in ipairs(core) do
@@ -18,6 +19,8 @@ local function setup(opts)
   helper.load("BetterAH/UI/SnipeView.lua", ns)
   helper.load("BetterAH/UI/DisenchantView.lua", ns)
   helper.load("BetterAH/UI/SettingsView.lua", ns)
+  helper.load("BetterAH/Game/BrowseAPI.lua", ns)
+  helper.load("BetterAH/UI/BrowseView.lua", ns)
   helper.load("BetterAH/UI/Window.lua", ns)
   ns.prices = ns.PriceDB.new({})
   -- Auto scan (#30) is off unless a spec turns it on, so scans start only where a spec starts one.
@@ -27,6 +30,7 @@ local function setup(opts)
   ns.AuctionAPI.install(env, ns)
   ns.PostingAPI.install(env, ns)
   ns.SnipeAPI.install(env, ns)
+  ns.BrowseAPI.install(env, ns)
   if opts and opts.tracker then
     helper.load("BetterAH/Game/CharacterTracker.lua", ns)
     ns.CharacterTracker.install(env, ns)
@@ -201,7 +205,7 @@ describe("Window", function()
     local last = results[#results]
     assert.equal("Better AH window", last.name)
     assert.equal("pass", last.status)
-    assert.equal("window created with 9 sidebar entries; close button CloseButton; auction house art found",
+    assert.equal("window created with 10 sidebar entries; close button CloseButton; auction house art found",
       last.detail)
   end)
 
@@ -210,7 +214,7 @@ describe("Window", function()
     local last = ns.Probes.suite():run(env, { db = {} })
     last = last[#last]
     assert.equal("pass", last.status)
-    assert.equal("window created with 9 sidebar entries; close button BetterAHFrameCloseButton; "
+    assert.equal("window created with 10 sidebar entries; close button BetterAHFrameCloseButton; "
       .. "auction house art found", last.detail)
   end)
 
@@ -228,7 +232,7 @@ describe("Window", function()
     local last = ns.Probes.suite():run(env, { db = {} })
     last = last[#last]
     assert.equal("pass", last.status)
-    assert.equal("window created with 9 sidebar entries; close button CloseButton; "
+    assert.equal("window created with 10 sidebar entries; close button CloseButton; "
       .. "art not checked (no C_Texture.GetAtlasInfo)", last.detail)
   end)
 
@@ -1890,5 +1894,198 @@ describe("Window", function()
       assert.is_false(w.postPanel:IsShown())
       assert.is_false(w.postView.editor:IsShown())
     end)
+  end)
+end)
+
+describe("Browse view", function()
+  local function browse()
+    local env, w, ns = setup()
+    env.openAuctionHouse()
+    w:select("browse")
+    return env, w, ns, w.browseView
+  end
+  local function results(env)
+    env.itemNames = { [1] = "Ridgeback Bracers", [2] = "Battleforge Shoulderpads" }
+    env.itemQualities = { [1] = 2, [2] = 2 }
+    env.browseResults = {
+      { itemKey = { itemID = 1, itemLevel = 28 }, totalQuantity = 3, minPrice = 890 },
+      { itemKey = { itemID = 2, itemLevel = 30 }, totalQuantity = 1, minPrice = 1250 },
+      { itemKey = { itemID = 3, itemLevel = 30 }, totalQuantity = 2, minPrice = 600 },
+    }
+  end
+
+  it("is the first Buy entry and takes the detail panel's room", function()
+    local _, w, _, view = browse()
+    assert.equal("Browse", w.heading:GetText())
+    assert.is_true(view.panel:IsShown())
+    assert.is_false(w.detailPanel:IsShown())
+    assert.is_false(w.placeholder:IsShown())
+    w:select("prices")
+    assert.is_true(w.detailPanel:IsShown(), "other views get the detail panel back")
+    assert.is_false(view.panel:IsShown())
+  end)
+
+  it("searches with the typed name and levels and lists the results cheapest first", function()
+    local env, w, ns, view = browse()
+    results(env)
+    ns.prices:recordScan(w:market(), env.now,
+      { { item = "i:1", name = "Ridgeback Bracers", count = 1, buyout = 1420 } })
+    view.searchBox:SetText("bracers")
+    view.minLevel:SetText("30")
+    view.maxLevel:SetText("21")
+    view.searchButton:Click()
+    assert.equal("Searching the auction house...", view.status:GetText())
+    assert.is_false(view.searchButton:IsEnabled(), "one search at a time")
+    env.runTimers()
+    local q = env.browses[#env.browses]
+    assert.equal("bracers", q.searchString)
+    assert.equal(21, q.minLevel)
+    assert.equal(30, q.maxLevel)
+    assert.equal("Loading item...", view.rows[1][1]:GetText(), "item 3 is cheapest but its name isn't loaded")
+    assert.equal("Ridgeback Bracers", view.rows[2][1]:GetText())
+    assert.equal("8s 90c", view.rows[2][4]:GetText())
+    assert.equal("14s 20c", view.rows[2][5]:GetText())
+    assert.equal("63%", view.rows[2][6]:GetText())
+    assert.same(ns.BrowseView.TONES.cheap, view.rows[2][6].textColor)
+    assert.equal("12s 50c", view.rows[3][4]:GetText())
+    assert.equal("-", view.rows[3][6]:GetText(), "no market value, no percent")
+    assert.truthy(view.status:GetText():find('^3 items for "bracers", level 21%-30%. Searched'))
+    assert.is_true(view.searchButton:IsEnabled())
+  end)
+
+  it("sorts by a clicked header and reverses on a second click", function()
+    local env, _, _, view = browse()
+    results(env)
+    view.searchButton:Click()
+    env.runTimers()
+    view.headers[1]:Click()
+    assert.equal("Battleforge Shoulderpads", view.rows[1][1]:GetText())
+    assert.is_true(view.headers[1].arrow:IsShown())
+    assert.is_false(view.headers[4].arrow:IsShown())
+    view.headers[1]:Click()
+    assert.equal("Ridgeback Bracers", view.rows[1][1]:GetText())
+    assert.equal("Loading item...", view.rows[3][1]:GetText(), "unknown names stay last")
+    assert.same({ 0, 1, 1, 0 }, view.headers[1].arrow.texCoord)
+  end)
+
+  it("redraws names once the client loads them", function()
+    local env, _, _, view = browse()
+    results(env)
+    view.searchButton:Click()
+    env.runTimers()
+    env.itemNames[3] = "Ironforge Chain"
+    env.fire("ITEM_KEY_ITEM_INFO_RECEIVED", 3)
+    env.runTimers(1)
+    assert.equal("Ironforge Chain", view.rows[1][1]:GetText())
+  end)
+
+  it("says so when the levels are wrong, the house is busy or the search fails", function()
+    local env, _, ns, view = browse()
+    view.minLevel:SetText("abc")
+    view.searchButton:Click()
+    assert.truthy(view.status:GetText():find("whole numbers"))
+    view.minLevel:SetText("")
+    ns.snipeAPI.browsing = {}
+    view.searchButton:Click()
+    assert.truthy(view.status:GetText():find("Disenchant sniping is checking"))
+    ns.snipeAPI.browsing = nil
+    view.searchButton:Click()
+    env.fire("AUCTION_HOUSE_BROWSE_FAILURE")
+    assert.equal("The search failed: the auction house couldn't browse.", view.status:GetText())
+  end)
+
+  it("asks for the auction house when it is closed", function()
+    local env, w, _, view = browse()
+    env.CloseAuctionHouse()
+    w.model.mode = "better"
+    view:search()
+    assert.equal("Open the auction house to search.", view.status:GetText())
+  end)
+
+  it("searches a shift-clicked item's name while the box has focus", function()
+    local env, _, _, view = browse()
+    view.searchBox:SetFocus()
+    view:insertLink("|cff1eff00|Hitem:1::::::::20:::::|h[Ridgeback Bracers]|h|r")
+    assert.equal("Ridgeback Bracers", env.browses[#env.browses].searchString)
+    view:insertLink("|cff1eff00|Hitem:2::::::::20:::::|h[Other]|h|r")
+    assert.equal(1, #env.browses, "no focus, no search")
+  end)
+
+  it("tells the player when a search hits the page limit", function()
+    local env, _, ns, view = browse()
+    results(env)
+    ns.SnipeAPI.MAX_PAGES = 0
+    env.browsePages = { {} }
+    view.searchButton:Click()
+    env.runTimers()
+    ns.SnipeAPI.MAX_PAGES = 10
+    assert.truthy(view.status:GetText():find("first ones only"))
+  end)
+end)
+
+describe("Browse view, after review", function()
+  local function browse()
+    local env, w, ns = setup()
+    env.openAuctionHouse()
+    w:select("browse")
+    env.itemNames = { [1] = "Ridgeback Bracers", [2] = "Battleforge Shoulderpads" }
+    env.browseResults = {
+      { itemKey = { itemID = 1, itemLevel = 28 }, totalQuantity = 3, minPrice = 890 },
+      { itemKey = { itemID = 2, itemLevel = 30 }, totalQuantity = 1, minPrice = 1250 },
+    }
+    return env, w, ns, w.browseView
+  end
+
+  it("ignores Enter during its own search and shows the results' summary after", function()
+    local env, _, _, view = browse()
+    view:search()
+    view:search()
+    assert.equal(1, #env.browses)
+    env.runTimers()
+    assert.truthy(view.status:GetText():find("^2 items"))
+  end)
+
+  it("clears an earlier message when results arrive", function()
+    local env, _, ns, view = browse()
+    ns.snipeAPI.browsing = {}
+    view:search()
+    assert.truthy(view.status:GetText():find("Disenchant sniping"))
+    ns.snipeAPI.browsing = nil
+    view:search()
+    env.runTimers()
+    assert.truthy(view.status:GetText():find("^2 items"))
+  end)
+
+  it("keeps the selected item across a redraw and fills in levels as they load", function()
+    local env, _, _, view = browse()
+    env.GetItemInfo = function(id)
+      if env.levels and env.levels[id] then return "x", "link", 2, 30, env.levels[id] end
+    end
+    view:search()
+    env.runTimers()
+    view.rows[1].button:Click()
+    assert.is_true(view.rows[1].button.selectedTexture:IsShown())
+    assert.equal("-", view.rows[1][2]:GetText())
+    env.levels = { [1] = 23, [2] = 25 }
+    env.fire("GET_ITEM_INFO_RECEIVED", 1)
+    env.runTimers(1)
+    assert.equal("23", view.rows[1][2]:GetText())
+    assert.is_true(view.rows[1].button.selectedTexture:IsShown(), "still selected after the rebuild")
+  end)
+
+  it("stops rebuilding when nothing new loads, and forgets results when the house closes", function()
+    local env, w, _, view = browse()
+    view:search()
+    env.runTimers()
+    local calls = 0
+    local rebuild = view.rebuild
+    view.rebuild = function(v) calls = calls + 1; return rebuild(v) end
+    for _ = 1, 10 do
+      env.fire("GET_ITEM_INFO_RECEIVED", 1)
+      env.runTimers(1)
+    end
+    assert.is_true(calls <= w.browseView.MAX_IDLE_REBUILDS, "gave up after a few rebuilds")
+    env.CloseAuctionHouse()
+    assert.is_nil(view.results)
   end)
 end)

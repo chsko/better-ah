@@ -182,6 +182,11 @@ function Window:build()
   self.postPanel = self.postView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
   self.disenchantView = ns.DisenchantView.new(self, self.addon)
   self.disenchantPanel = self.disenchantView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
+  if ns.BrowseView then
+    -- Browse uses the main and detail panels' room together (mockup on #90).
+    self.browseView = ns.BrowseView.new(self, self.addon)
+    self.browsePanel = self.browseView:build(f, SIDEBAR + 16, TOP - 42, ns.BrowseView.WIDTH, HEIGHT + TOP - 42 - 8)
+  end
   if ns.SettingsView then
     self.settingsView = ns.SettingsView.new(self, self.addon)
     self.settingsPanel = self.settingsView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
@@ -304,16 +309,18 @@ function Window:buildPrices(f)
     function(offset) self.offset = offset; self:renderPrices() end)
 end
 
--- A header row and ROWS selectable item rows under it, starting 32px below the panel's top.
+-- A header row and ROWS selectable item rows under it, starting 32px below the panel's top, across
+-- listWidth (LIST_WIDTH when nil).
 -- Returns the item rows; each is an array of cells (font strings) plus .button. With onScroll, the rows
 -- also get a scroll bar (rows.scrollBar, see buildScrollBar).
-function Window:buildRows(panel, columns, onClick, onScroll)
+function Window:buildRows(panel, columns, onClick, onScroll, listWidth)
   local env, rows = self.env, {}
+  listWidth = listWidth or LIST_WIDTH -- wider for a view without the detail panel (Browse)
   -- With a scroll bar the rows give up room for it. Columns laid out for the full width are narrowed
   -- to fit; a list can instead lay its columns out to fit the narrower rows and keep their widths.
-  local width = onScroll and (LIST_WIDTH - SCROLL_ROOM) or LIST_WIDTH
+  local width = onScroll and (listWidth - SCROLL_ROOM) or listWidth
   local last = columns[#columns]
-  local scale = (last[2] + last[3] > width) and width / LIST_WIDTH or 1
+  local scale = (last[2] + last[3] > width) and width / listWidth or 1
   rows.width = width
   for r = 0, ROWS do
     -- Item rows are buttons, so they can be selected; the header is plain text on the panel.
@@ -920,7 +927,9 @@ function Window:renderView()
   self.placeholder:SetText(Window.EMPTY[self.model.view] or "")
   local view = self.model.view
   self.placeholder:SetShown(view ~= "prices" and view ~= "alts" and view ~= "post" and view ~= "disenchant"
-    and view ~= "settings")
+    and view ~= "settings" and not (view == "browse" and self.browsePanel))
+  self:widenMain(view == "browse" and self.browsePanel ~= nil)
+  if self.browsePanel then self.browsePanel:SetShown(view == "browse") end
   self.pricesPanel:SetShown(view == "prices")
   self.disenchantPanel:SetShown(view == "disenchant")
   self.altsPanel:SetShown(view == "alts")
@@ -942,10 +951,23 @@ function Window:renderView()
     self.disenchantView:render()
   elseif view == "settings" and self.settingsView then
     self.settingsView:render()
+  elseif view == "browse" and self.browseView then
+    self.browseView:render()
   else
     self.detailTitle:SetText("")
     self.detailBody:SetText("")
   end
+end
+
+-- Browse spreads the main panel over the detail panel's place; every other view has both.
+function Window:widenMain(wide)
+  if self.wide == wide then return end
+  self.wide = wide
+  local f = self.frame
+  self.mainPanel:ClearAllPoints()
+  self.mainPanel:SetPoint("TOPLEFT", f, "TOPLEFT", SIDEBAR + 6, TOP)
+  self.mainPanel:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", wide and -6 or -(DETAIL + 10), 6)
+  self.detailPanel:SetShown(not wide)
 end
 
 function Window:render()
@@ -991,6 +1013,7 @@ function Window:onEvent(event)
     self.autoToken = nil
     self:renderScanState()
     if self.postView then self.postView:reset() end
+    if self.browseView then self.browseView:reset() end
     if self.disenchantView then self.disenchantView.snipe:stop("The auction house closed, so sniping stopped.") end
     self:render()
   end

@@ -13,11 +13,31 @@ Loading.BAR_WIDTH, Loading.BAR_HEIGHT = 120, 10
 Loading.SWEEP = 1.4
 Loading.BAR_TEXTURE = "Interface\\TargetingFrame\\UI-StatusBar"
 
+-- Turns pixel snapping off on every texture of a frame and its children. The client snaps textures to
+-- the pixel grid by default, and a texture that rotates can land on a slightly different pixel each
+-- frame and shake in place, most of all at a window scale other than 1 (#79; checked in game only).
+function Loading.unsnap(frame)
+  local function each(...)
+    for i = 1, select("#", ...) do
+      local r = select(i, ...)
+      if type(r) == "table" then
+        if r.SetSnapToPixelGrid then pcall(r.SetSnapToPixelGrid, r, false) end
+        if r.SetTexelSnappingBias then pcall(r.SetTexelSnappingBias, r, 0) end
+      end
+    end
+  end
+  if frame.GetRegions then each(frame:GetRegions()) end
+  if frame.GetChildren then
+    for _, child in ipairs({ frame:GetChildren() }) do Loading.unsnap(child) end
+  end
+end
+
 -- A spinner frame, hidden. Falls back to a plain frame on a client without SpinnerTemplate.
 function Loading.spinner(env, parent, size)
   local ok, f = pcall(env.CreateFrame, "Frame", nil, parent, "SpinnerTemplate")
   if not (ok and f) then f = env.CreateFrame("Frame", nil, parent) end
   f:SetSize(size or Loading.SPINNER, size or Loading.SPINNER)
+  Loading.unsnap(f)
   f:Hide()
   return f
 end

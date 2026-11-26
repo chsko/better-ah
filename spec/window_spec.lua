@@ -7,7 +7,8 @@ local function setup(opts)
   helper.load("BetterAH/Core/Browse.lua", ns)
   helper.load("BetterAH/Core/Buying.lua", ns)
   local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "ValueHistory", "Targets", "Sniper",
-    "PriceDB", "CharacterRecords", "MatFloors", "Posting", "PostQueue", "SelfTest", "Probes" }
+    "PriceDB", "CharacterRecords", "MatFloors", "Posting", "PostQueue", "SelfTest", "Probes", "Purchases",
+    "TooltipPrices" }
   for _, file in ipairs(core) do
     helper.load("BetterAH/Core/" .. file .. ".lua", ns)
   end
@@ -30,6 +31,8 @@ local function setup(opts)
   ns.autoScan = false
   ns.characters = ns.CharacterRecords.new({})
   ns.posting = ns.Posting.Settings.new({})
+  ns.purchases = ns.Purchases.new({})
+  ns.tooltipSettings = {}
   ns.AuctionAPI.install(env, ns)
   ns.PostingAPI.install(env, ns)
   ns.SnipeAPI.install(env, ns)
@@ -1647,6 +1650,25 @@ describe("Window", function()
       sv.resetButton:Click()
       assert.equal(3, ns.posting:defaultDuration())
       assert.is_false(sv.resetButton:IsEnabled())
+    end)
+
+    it("turns the tooltip parts on and off, all on to start with (#119)", function()
+      local env, w, ns = setup()
+      env.openAuctionHouse()
+      sidebarButton(w, "settings"):Click()
+      local checks = w.settingsView.tooltipChecks
+      assert.equal(4, #checks)
+      assert.equal("Show Better AH prices on item tooltips", checks[1].label:GetText())
+      for _, b in ipairs(checks) do assert.is_true(b:GetChecked()) end
+      checks[3]:Click()
+      assert.same({ paid = false }, ns.tooltipSettings)
+      assert.is_false(checks[3]:GetChecked())
+      checks[1]:Click()
+      assert.is_false(checks[2]:IsEnabled(), "the parts wait while the block is off")
+      assert.is_true(checks[1]:IsEnabled())
+      checks[1]:Click()
+      checks[3]:Click()
+      assert.same({}, ns.tooltipSettings, "back to everything on")
     end)
 
     it("keeps an item saved with only a limit on the default duration", function()

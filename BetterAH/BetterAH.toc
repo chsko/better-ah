@@ -28,11 +28,14 @@ Core/Browse.lua
 Core/Buying.lua
 Core/WindowScale.lua
 Core/AutoScan.lua
+Core/Purchases.lua
+Core/TooltipPrices.lua
 Game/AuctionAPI.lua
 Game/CharacterTracker.lua
 Game/PostingAPI.lua
 Game/SnipeAPI.lua
 Game/BrowseAPI.lua
+Game/TooltipHook.lua
 UI/Loading.lua
 UI/PostView.lua
 UI/SnipeView.lua

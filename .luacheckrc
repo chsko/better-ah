@@ -16,7 +16,8 @@ read_globals = {
   "ClickAuctionSellItemButton", "GetAuctionSellItemInfo", "CalculateAuctionDeposit", "GetOwnerAuctionItems",
   "DEFAULT_CHAT_FRAME", "UIParent", "UISpecialFrames", "GetCursorPosition", "IsMouseButtonDown", "GameTooltip",
   "AuctionFrame", "AuctionHouseFrame", "CloseAuctionHouse", "hooksecurefunc", "ChatEdit_InsertLink",
-  "GetItemQualityColor",
+  "GetItemQualityColor", "TooltipDataProcessor", "ItemRefTooltip", "GetCoinTextureString", "GetItemCount",
+  "IsShiftKeyDown",
 }
 
 files["spec/"] = { std = "+busted" }

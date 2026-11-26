@@ -53,6 +53,7 @@ function SettingsView:build(f, x, y, width, height)
   end
 
   self:buildDebug(panel)
+  self:buildTooltips(panel)
 
   -- On the shared detail panel, so shown only while this view is.
   local w = self.window
@@ -106,6 +107,41 @@ function SettingsView:buildDebug(panel)
   self.debugNote = note
 end
 
+-- Tooltips (#119): what Better AH adds to item tooltips, each part on unless turned off.
+SettingsView.TOOLTIPS_TOP = -196
+
+function SettingsView:buildTooltips(panel)
+  local env = self.env
+  local group = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  group:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, SettingsView.TOOLTIPS_TOP)
+  group:SetText("Tooltips")
+  self.tooltipGroupLabel = group
+
+  self.tooltipChecks = {}
+  for i, s in ipairs(ns.TooltipPrices.SETTINGS) do
+    local b = env.CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+    b:SetSize(24, 24)
+    b:SetPoint("TOPLEFT", panel, "TOPLEFT", s.sub and 28 or 4, SettingsView.TOOLTIPS_TOP - 20 - (i - 1) * 24)
+    b:SetScript("OnClick", function(c) self:setTooltip(s.key, c:GetChecked() and true or false) end)
+    ns.Window.tooltip(env, b, s.label, s.tip)
+    local label = b.Text
+    if not label then
+      label = b:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+      label:SetPoint("LEFT", b, "RIGHT", 2, 0)
+    end
+    label:SetText(s.label)
+    if b.SetHitRectInsets then b:SetHitRectInsets(0, -260, 0, 0) end
+    b.settingKey, b.label = s.key, label
+    self.tooltipChecks[i] = b
+  end
+end
+
+function SettingsView:setTooltip(key, on)
+  local saved = self.addon.tooltipSettings
+  if saved then ns.TooltipPrices.set(saved, key, on) end
+  self:render()
+end
+
 function SettingsView:setDebug(on)
   if ns.DebugHooks then ns.DebugHooks.setOn(self.env, on) end
   self:render()
@@ -134,6 +170,18 @@ function SettingsView:render()
   for _, b in ipairs(self.debugButtons or {}) do
     if log and log:isOn() == b.debugValue then b:LockHighlight() else b:UnlockHighlight() end
     if log then b:Enable() else b:Disable() end
+  end
+  local saved = self.addon.tooltipSettings
+  local opts = ns.TooltipPrices.options(saved)
+  for _, b in ipairs(self.tooltipChecks or {}) do
+    b:SetChecked(opts[b.settingKey])
+    -- The parts only matter while the tooltip block is on.
+    local usable = saved ~= nil and (b.settingKey == "show" or opts.show)
+    if usable then b:Enable() else b:Disable() end
+    -- Disable() doesn't grey a check button's label: grey it here, so a part that waits looks it.
+    if b.label and b.label.SetTextColor then
+      if usable then b.label:SetTextColor(1, 1, 1) else b.label:SetTextColor(0.5, 0.5, 0.5) end
+    end
   end
   self.resetButton:SetShown(settings ~= nil)
   if current and current ~= ns.Posting.DEFAULT_DURATION then self.resetButton:Enable()

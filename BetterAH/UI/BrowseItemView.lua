@@ -26,6 +26,11 @@ function ItemView.new(browse)
   return setmetatable({ browse = browse, window = w, env = w.env, addon = browse.addon, offset = 0 }, ItemView)
 end
 
+function ItemView:now()
+  local api = self.addon.auctionAPI
+  return api and api:now() or 0
+end
+
 function ItemView:api()
   return self.addon.browseAPI
 end
@@ -338,6 +343,8 @@ function ItemView:buyout()
   api:buyout(row.auctionID, price, function(bought, reason, kind)
     self.busy = nil
     if bought then
+      local ledger = self.addon and self.addon.purchases
+      if ledger then ledger:bought(self.row.itemID, row.link, 1, price, self:now()) end -- one auction
       self:say(string.format("Bought %s for %s.", name, money(price)))
       self.selected = nil
     elseif kind == "unknown" then
@@ -400,6 +407,8 @@ function ItemView:confirm()
   api:confirmCommodity(function(bought, reason)
     self.busy = nil
     if bought then
+      local ledger = self.addon and self.addon.purchases
+      if ledger then ledger:bought(self.row.itemID, nil, q.quantity, q.total, self:now()) end
       self:say(string.format("Bought %d %s for %s.", q.quantity, name, money(q.total)))
       self.commodityControls.quantity:SetText("")
       self:relayer()

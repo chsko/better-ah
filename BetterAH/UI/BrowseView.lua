@@ -9,21 +9,24 @@ local BrowseView = {}
 BrowseView.__index = BrowseView
 
 BrowseView.WIDTH = 848 -- the main and detail panels together: the results list has no detail panel
+BrowseView.DIVIDER = 8 -- the draggable gap between the results and the search history panel (#129)
 BrowseView.ITEM_WIDTH = 540 -- an item's page uses the main panel, with the buy controls on the detail panel
 BrowseView.DETAIL_WIDTH = 276 -- text width on the detail panel
--- { header, x, width, justify, sort column }
-BrowseView.COLUMNS = {
-  { "Item", 4, 300, "LEFT", "name" }, { "Req.", 310, 40, nil, "level" }, { "Listed", 356, 56, nil, "listed" },
-  { "Lowest buyout", 418, 100, nil, "lowest" }, { "Market value", 524, 100, nil, "value" },
-  { "Of market", 630, 70, nil, "percent" },
-}
+-- { header, x, width, justify, sort column }, for the width the results start at; Browse.columns lays
+-- them out again for any other width.
+BrowseView.COLUMNS = ns.Browse.columns(BrowseView.WIDTH - BrowseView.DIVIDER - ns.Browse.HISTORY_WIDTH - 22)
 BrowseView.TONES = { cheap = { 0.12, 1, 0 }, dear = { 1, 0.5, 0.25 } }
 BrowseView.REBUILD_DELAY = 0.3 -- item names that load in a burst are drawn once
 BrowseView.MAX_IDLE_REBUILDS = 5 -- rebuilds in a row that load nothing new before giving up
 
 function BrowseView.new(window, addon)
   return setmetatable({ window = window, env = window.env, addon = addon, offset = 0,
-    sortColumn = ns.Browse.DEFAULT_SORT, descending = false }, BrowseView)
+    sortColumn = ns.Browse.DEFAULT_SORT, descending = false, columns = BrowseView.COLUMNS }, BrowseView)
+end
+
+-- Where the history panel's width is kept (BetterAHDB.browse), or nil in specs without one.
+function BrowseView:settings()
+  return self.addon.browseSettings
 end
 
 function BrowseView:api()
@@ -48,6 +51,7 @@ function BrowseView:build(f, x, y, width, height)
   container:SetPoint("TOPLEFT", f, "TOPLEFT", x, y)
   container:SetSize(width, height)
   self.container = container
+  self.width, self.height = width, height
   local panel = env.CreateFrame("Frame", nil, container)
   panel:SetPoint("TOPLEFT", container, "TOPLEFT", 0, 0)
   panel:SetSize(width, height)
@@ -109,6 +113,14 @@ function BrowseView:build(f, x, y, width, height)
   self.loading = ns.Loading.attach(env, panel, status, { "BOTTOMLEFT", panel, "BOTTOMLEFT", 4, 4,
     width - 8, slot = true })
 
+  -- The search history (#129) right of the results, with a divider to drag between them.
+  if ns.BrowseHistory then
+    self.history = ns.BrowseHistory.new(self)
+    self.history:build(container, height)
+    self:buildDivider(container, height)
+  end
+  self:layout(self:settings() and self:settings().historyWidth)
+
   -- Shift-clicking an item while the search box has focus searches for its name, as in Blizzard's window.
   if type(env.hooksecurefunc) == "function" and type(env.ChatEdit_InsertLink) == "function" then
     env.hooksecurefunc("ChatEdit_InsertLink", function(link) self:insertLink(link) end)
@@ -122,7 +134,82 @@ function BrowseView:build(f, x, y, width, height)
   end
   self.item = ns.BrowseItemView.new(self)
   self.item:build(container, BrowseView.ITEM_WIDTH, height)
+  self.built = true
   return container
+end
+
+-- The divider between the results and the history: dragging it left widens the history, right narrows
+-- it. The width is saved when the drag ends; a double-click puts the default back.
+function BrowseView:buildDivider(container, height)
+  local env = self.env
+  local d = env.CreateFrame("Button", nil, container)
+  d:SetSize(BrowseView.DIVIDER, height)
+  local grip = d:CreateTexture(nil, "ARTWORK")
+  grip:SetSize(2, 40)
+  grip:SetPoint("CENTER", d, "CENTER", 0, 0)
+  grip:SetColorTexture(0.79, 0.64, 0.23, 0.6)
+  local highlight = d:CreateTexture(nil, "HIGHLIGHT")
+  highlight:SetSize(4, height)
+  highlight:SetPoint("CENTER", d, "CENTER", 0, 0)
+  highlight:SetColorTexture(0.79, 0.64, 0.23, 0.25)
+  ns.Window.tooltip(env, d, "Resize", "Drag to make the search history wider or narrower. Double-click to reset it.")
+  local function cursorX()
+    local x = env.GetCursorPosition()
+    local ui = env.UIParent and env.UIParent:GetEffectiveScale() or 1
+    local frame = self.window.frame
+    local scale = frame and frame:GetScale() or 1
+    return x / ui / scale
+  end
+  local function stop()
+    if not self.dragging then return end
+    self.dragging = nil
+    d:SetScript("OnUpdate", nil)
+    local settings = self:settings()
+    if settings then settings.historyWidth = self.historyWidth end
+  end
+  d:SetScript("OnMouseDown", function(_, button)
+    if button ~= "LeftButton" then return end
+    if env.GameTooltip then env.GameTooltip:Hide() end
+    self.dragging = { x = cursorX(), width = self.historyWidth }
+    d:SetScript("OnUpdate", function()
+      -- The button can come up where we don't hear it (the game lost focus mid-drag).
+      if env.IsMouseButtonDown and not env.IsMouseButtonDown("LeftButton") then return stop() end
+      local drag = self.dragging
+      if not drag then return end
+      local width = ns.Browse.historyWidth(drag.width - (cursorX() - drag.x))
+      if width ~= self.historyWidth then self:layout(width) end
+    end)
+  end)
+  d:SetScript("OnMouseUp", function(_, button) if button == "LeftButton" then stop() end end)
+  d:SetScript("OnHide", stop)
+  d:SetScript("OnDoubleClick", function()
+    stop()
+    local settings = self:settings()
+    if settings then settings.historyWidth = nil end
+    self:layout(nil)
+  end)
+  self.divider = d
+end
+
+-- Splits Browse's width between the results and a history panel historyWidth wide (kept in range),
+-- and lays the results out again for their new width.
+function BrowseView:layout(historyWidth)
+  if not self.history then return end
+  historyWidth = ns.Browse.historyWidth(historyWidth)
+  self.historyWidth = historyWidth
+  local listWidth = self.width - BrowseView.DIVIDER - historyWidth
+  self.listWidth = listWidth
+  self.panel:SetWidth(listWidth)
+  self.searchBox:SetWidth(math.min(260, listWidth - 250))
+  -- The status line's width, spinner room included, is set by Loading when the view renders.
+  if self.loading and self.loading.at then self.loading.at[6] = listWidth - 8 end
+  self.columns = ns.Browse.columns(listWidth - 22)
+  ns.Window.layoutRows(self.rows, self.panel, self.columns, listWidth)
+  self:layoutHeaders()
+  self.divider:ClearAllPoints()
+  self.divider:SetPoint("TOPLEFT", self.container, "TOPLEFT", listWidth, 0)
+  self.history:layout(listWidth + BrowseView.DIVIDER, historyWidth)
+  if self.built then self:render() end
 end
 
 -- Whether the view wants the detail panel's room: yes for the results list, no on an item's page.
@@ -132,6 +219,7 @@ end
 
 -- Opens a result's page: its auctions or price ladder, with the buy controls on the detail panel.
 function BrowseView:openItem(row)
+  self:showHistory(false)
   self.panel:Hide()
   self.item:open(row)
   self.window:widenMain(false)
@@ -144,6 +232,7 @@ function BrowseView:closeItem()
   self.window.detailTitle:SetText("")
   self.window.detailBody:SetText("")
   self.panel:Show()
+  self:showHistory(true)
   self:render()
 end
 
@@ -159,7 +248,7 @@ end
 function BrowseView:buildHeaders(panel)
   local env = self.env
   self.headers = {}
-  for c, col in ipairs(BrowseView.COLUMNS) do
+  for c, col in ipairs(self.columns) do
     local b = env.CreateFrame("Button", nil, panel)
     b:SetSize(col[3], 16)
     b:SetPoint("TOPLEFT", panel, "TOPLEFT", col[2], -29)
@@ -177,9 +266,18 @@ function BrowseView:buildHeaders(panel)
   end
 end
 
+function BrowseView:layoutHeaders()
+  for c, b in ipairs(self.headers) do
+    local col = self.columns[c]
+    b:ClearAllPoints()
+    b:SetPoint("TOPLEFT", self.panel, "TOPLEFT", col[2], -29)
+    b:SetWidth(col[3])
+  end
+end
+
 function BrowseView:renderHeaders()
   for c, b in ipairs(self.headers) do
-    local col = BrowseView.COLUMNS[c]
+    local col = self.columns[c]
     local on = col[5] == self.sortColumn
     b.arrow:SetShown(on)
     if on then
@@ -249,16 +347,42 @@ function BrowseView:search()
   api:search(query, function(results, truncated)
     if self.searching ~= job then return end
     self.searching = nil
+    if self.history then self.history.message = nil end -- "Wait for this search to finish."
     if not results then
       self.message = "The search failed: " .. tostring(truncated) .. "."
     else
       job.raw, job.truncated, job.at, job.values = results, truncated, self:now(), {}
+      self:remember(query, job.at)
       self.results, self.message = job, nil
       self.selected, self.offset = nil, 0
       self:rebuild()
     end
     self:render()
   end)
+end
+
+-- Saves a search that ran in the search history (a blank one is not kept).
+function BrowseView:remember(query, at)
+  local history = self.addon.searchHistory
+  if not history then return end
+  history:add({ text = query.searchString, minLevel = query.minLevel, maxLevel = query.maxLevel }, at)
+  if self.history then self.history:render() end
+end
+
+-- Fills the search row from a search in the history and runs it.
+function BrowseView:searchAgain(search)
+  if not search then return end
+  self.searchBox:SetText(search.text or "")
+  self.minLevel:SetText((search.minLevel or 0) > 0 and tostring(search.minLevel) or "")
+  self.maxLevel:SetText((search.maxLevel or 0) > 0 and tostring(search.maxLevel) or "")
+  self:search()
+end
+
+function BrowseView:showHistory(on)
+  if self.history then
+    self.history:show(on)
+    self.divider:SetShown(on)
+  end
 end
 
 function BrowseView:now()
@@ -303,6 +427,7 @@ function BrowseView:reset()
   if self.item and self.item.row then
     self.item:close()
     self.panel:Show()
+    self:showHistory(true)
   end
   if self.panel and self.panel:IsShown() then self:render() end
 end
@@ -361,6 +486,7 @@ function BrowseView:render()
   if not self.panel then return end
   if self.item and self.item.row then return self.item:render() end
   if self.results and self.results.stale then self:rebuild() end
+  if self.history then self.history:render() end
   local api = self:api()
   local rows = self.results and self.results.rows or {}
   local visible = #self.rows

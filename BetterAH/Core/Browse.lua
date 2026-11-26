@@ -54,6 +54,39 @@ function Browse.query(input)
     filters = {}, itemClassFilters = {}, sorts = Browse.PRICE_SORT }
 end
 
+-- The search history panel beside the results (#129): how wide it starts, and how far the divider
+-- between the two can be dragged. The results get the rest of Browse's width.
+Browse.HISTORY_WIDTH, Browse.HISTORY_MIN, Browse.HISTORY_MAX = 260, 160, 360
+
+-- A history panel width to use: a saved or dragged width rounded and kept in range, else the default.
+function Browse.historyWidth(width)
+  width = tonumber(width)
+  if not width or width ~= width then return Browse.HISTORY_WIDTH end
+  width = math.floor(width + 0.5)
+  return math.max(Browse.HISTORY_MIN, math.min(Browse.HISTORY_MAX, width))
+end
+
+-- The results table's columns for a table width (the room the rows get): { header, x, width, justify,
+-- sort column }. The number columns keep their widths at the right; the item name takes what is left.
+Browse.NUMBER_COLUMNS = {
+  { "Req.", 36, "level" }, { "Listed", 46, "listed" }, { "Lowest buyout", 92, "lowest" },
+  { "Market value", 92, "value" }, { "Of market", 62, "percent" },
+}
+Browse.COLUMN_GAP = 6
+function Browse.columns(width)
+  local gap, numbers = Browse.COLUMN_GAP, 0
+  for _, c in ipairs(Browse.NUMBER_COLUMNS) do numbers = numbers + c[2] + gap end
+  local x = 4
+  local name = math.max(60, width - x - numbers - 4)
+  local cols = { { "Item", x, name, "LEFT", "name" } }
+  x = x + name + gap
+  for _, c in ipairs(Browse.NUMBER_COLUMNS) do
+    cols[#cols + 1] = { c[1], x, c[2], nil, c[3] }
+    x = x + c[2] + gap
+  end
+  return cols
+end
+
 -- The percentage of the market value a price is, rounded; nil without both.
 function Browse.percent(price, value)
   if not (price and price > 0 and value and value > 0) then return nil end

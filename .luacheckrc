@@ -15,7 +15,8 @@ read_globals = {
   "CanSendAuctionQuery", "PostAuction", "StartAuction", "CancelAuction", "PlaceAuctionBid",
   "ClickAuctionSellItemButton", "GetAuctionSellItemInfo", "CalculateAuctionDeposit", "GetOwnerAuctionItems",
   "DEFAULT_CHAT_FRAME", "UIParent", "UISpecialFrames", "GetCursorPosition", "IsMouseButtonDown", "GameTooltip",
-  "AuctionFrame", "AuctionHouseFrame", "CloseAuctionHouse",
+  "AuctionFrame", "AuctionHouseFrame", "CloseAuctionHouse", "hooksecurefunc", "ChatEdit_InsertLink",
+  "GetItemQualityColor",
 }
 
 files["spec/"] = { std = "+busted" }

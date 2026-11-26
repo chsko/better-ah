@@ -108,6 +108,8 @@ function Frame:SetValue(v) self.value = v end
 function Frame:GetValue() return self.value end
 function Frame:SetAtlas(atlas) self.atlas = atlas end
 function Frame:SetAllPoints() end
+function Frame:SetTexCoord(...) self.texCoord = { ... } end
+function Frame:SetTextColor(...) self.textColor = { ... } end
 function Frame:SetSpacing() end
 function Frame:SetFrameLevel(level) self.level = level end
 function Frame:GetFrameLevel() return self.level or 1 end
@@ -355,7 +357,9 @@ function M.new(opts)
   env.uncached = {}
   ah.GetItemKeyInfo = function(key)
     if env.uncached[key.itemID] then return nil end
-    return { itemID = key.itemID, isCommodity = not (env.listings[key.itemID] or {}).item }
+    return { itemID = key.itemID, isCommodity = not (env.listings[key.itemID] or {}).item,
+      itemName = env.itemNames and env.itemNames[key.itemID],
+      quality = env.itemQualities and env.itemQualities[key.itemID] }
   end
   env.C_Item = { RequestLoadItemDataByID = function(id)
     if not env.uncached[id] then return end

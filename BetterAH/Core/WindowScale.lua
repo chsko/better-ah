@@ -31,6 +31,16 @@ function WindowScale.load(saved)
   return math.max(WindowScale.MIN, math.min(WindowScale.MAX, saved.scale))
 end
 
+-- The saved top-left corner (issue #103), or nil when none is usable: left from the screen's left edge
+-- and top as an offset from the screen's top edge (zero or less), in UIParent units.
+function WindowScale.loadCorner(saved)
+  if type(saved) ~= "table" then return nil end
+  local left, top = saved.left, saved.top
+  local function finite(v) return type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge end
+  if not (finite(left) and finite(top)) then return nil end
+  return left, top
+end
+
 -- The scale while the grip is dragged. The window's top-left corner (left, top) stays put; the drag
 -- started at (startX, startY) with the window at startScale, and the cursor is now at (x, y). The cursor
 -- is measured along the window's diagonal, so the corner follows it whichever way it moves, and the

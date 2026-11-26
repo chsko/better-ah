@@ -41,7 +41,8 @@ function Frame:SetFrameStrata() end
 function Frame:SetMovable() end
 function Frame:RegisterForDrag() end
 function Frame:StartMoving() end
-function Frame:StopMovingOrSizing() end
+function Frame:StopMovingOrSizing() self.stoppedMoving = (self.stoppedMoving or 0) + 1 end
+function Frame:SetUserPlaced(on) self.userPlaced = on end
 function Frame:EnableMouse(on) self.mouse = on end
 function Frame:IsMouseEnabled() return self.mouse end
 function Frame:SetClampedToScreen() end

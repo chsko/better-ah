@@ -1455,6 +1455,36 @@ describe("Window", function()
       assert.is_false(pv.ruleEditor:IsShown())
     end)
 
+    it("keeps its counts and what it found when an item's data unloads between switches (#82)", function()
+      local env, w, ns = postSetup()
+      env.openAuctionHouse()
+      local pv = w.postView
+      local searches = #env.searches
+      assert.equal("All items (3)", pv.filterButtons.all:GetText())
+      env.containers[0][4].unknown = true -- Silk Cloth: the client dropped its data
+      pv.filterButtons.mats:Click()
+      pv.filterButtons.all:Click()
+      assert.equal("All items (3)", pv.filterButtons.all:GetText())
+      assert.equal("3 items in your bags.", pv.status:GetText())
+      assert.equal(searches, #env.searches, "nothing looked up again")
+
+      -- Item loads re-read the bags only for an item the view asked for, once per burst.
+      env.containers[0][5] = { itemID = 777, count = 2, name = "Fresh Loot", unknown = true }
+      local reads, read = 0, ns.PostingAPI.readBags
+      ns.PostingAPI.readBags = function(...) reads = reads + 1 return read(...) end
+      pv:refresh()
+      reads = 0
+      env.fire("ITEM_DATA_LOAD_RESULT", 2589, true)
+      env.runTimers()
+      assert.equal(0, reads, "not for an item it didn't ask for")
+      env.containers[0][5].unknown = nil
+      env.fire("ITEM_DATA_LOAD_RESULT", 777, true)
+      env.fire("ITEM_DATA_LOAD_RESULT", 777, true)
+      env.runTimers()
+      assert.equal(1, reads)
+      assert.equal("All items (4)", pv.filterButtons.all:GetText())
+    end)
+
     it("posts one auction per click and moves on as the bags empty", function()
       local env, w = postSetup()
       env.openAuctionHouse()

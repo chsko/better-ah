@@ -78,6 +78,16 @@ describe("PostQueue", function()
     assert.equal(2, #q:setEntries({ { item = "i:1", have = 20 }, { item = "i:5", have = 1 } }))
   end)
 
+  it("keeps what it found when one bag read misses the item (#82)", function()
+    local q = setup()
+    q:setListings("i:1", { { unit = 990, count = 20 } })
+    q:setEntries({ { item = "i:5", name = "Eggs", have = 1 } })
+    local need = q:setEntries({ { item = "i:1", name = "Apple", have = 20 },
+      { item = "i:5", name = "Eggs", have = 1 } })
+    assert.equal(1, #need, "Apple isn't looked up again")
+    assert.equal("i:5", need[1].item)
+  end)
+
   it("prices in the client's step", function()
     local settings = ns.Posting.Settings.new({ profiles = { ["i:1"] = { stack = 1, duration = 2 } } })
     local q = ns.PostQueue.new({ settings = settings,

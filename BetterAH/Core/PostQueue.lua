@@ -51,18 +51,16 @@ end
 function PostQueue:setEntries(entries)
   self.all = entries or {}
   self.entries = {}
-  local need, present = {}, {}
+  local need = {}
   for _, e in ipairs(self.all) do
-    present[e.item] = true
     if shows(self.filter, e) then
       self.entries[#self.entries + 1] = e
       local found = self.found[e.item]
       if not found or found.failed then need[#need + 1] = e end
     end
   end
-  for item in pairs(self.found) do
-    if not present[item] then self.found[item] = nil end
-  end
+  -- What was found stays for the visit even when a bag read misses an item for a moment (#82): a post
+  -- forgets its item's listings itself.
   return need
 end
 

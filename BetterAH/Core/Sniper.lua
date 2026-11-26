@@ -166,7 +166,8 @@ function Session.new(saved, now)
   saved.log = saved.log or {}
   -- taken: per auction ID, how many of its items were bought this session; math.huge once it is written
   -- off (refused, gone). Treated as no longer buyable (#145).
-  return setmetatable({ saved = saved, finds = {}, seen = {}, looked = {}, taken = {} }, Session)
+  -- names: per item key, the item's full name (with its random suffix) from a lookup's links (#147).
+  return setmetatable({ saved = saved, finds = {}, seen = {}, looked = {}, taken = {}, names = {} }, Session)
 end
 
 Sniper.RELOOK = 60 -- seconds before an item whose cheapest price hasn't changed is looked up again
@@ -181,9 +182,18 @@ function Session:lookedUp(key, minPrice, time)
 end
 
 -- Keeps what an item's lookup saw (listings as Sniper.buys takes them): other sellers' buyouts at any
--- price, so Session:cheapest can say what is left once some are bought or gone (#145).
+-- price, so Session:cheapest can say what is left once some are bought or gone (#145). Also keeps the
+-- item's full name from the first auction link, for Session:nameOf (#147).
 function Session:sawListings(key, listings)
-  local l = self.looked[keyText(key)]
+  local text = keyText(key)
+  for _, x in ipairs(listings or {}) do
+    local name = type(x.link) == "string" and x.link:match("%[(.-)%]")
+    if name and name ~= "" then
+      self.names[text] = name
+      break
+    end
+  end
+  local l = self.looked[text]
   if not l then return end
   l.left = {}
   for _, x in ipairs(listings or {}) do
@@ -191,6 +201,11 @@ function Session:sawListings(key, listings)
       l.left[#l.left + 1] = { auctionID = x.auctionID, unit = x.unit, count = math.max(1, x.count or 1) }
     end
   end
+end
+
+-- An item's full name (with its random suffix, "of the Eagle") from a lookup's links, or nil.
+function Session:nameOf(key)
+  return self.names[keyText(key)]
 end
 
 -- The cheapest other seller's buyout left from an item's last lookup, leaving out what was bought or

@@ -1640,6 +1640,26 @@ describe("Window", function()
         assert.equal(5001, env.searches[1].itemKey.itemID)
       end)
 
+      it("names closest rows once the item loads, with the suffix from its lookup (#147)", function()
+        local env, _, _, s = snipeSetup()
+        env.uncached[5002] = true
+        env.GetItemInfoInstant = function(id)
+          if id == 5002 then return id, "Armor", "Leather", "INVTYPE_FEET", 0, 4, 2 end
+          return nil
+        end
+        env.listings[5001][1].itemLink = "[Ridgeback Bracers of the Eagle]"
+        local asked = {}
+        env.C_Item.RequestLoadItemDataByID = function(id) asked[id] = true end -- the client is slow to answer
+        s.startButton:Click()
+        env.runTimers()
+        assert.equal("Ridgeback Bracers of the Eagle", s.nearRows[1][1]:GetText(), "the full name from the lookup")
+        assert.equal("item 5002", s.nearRows[2][1]:GetText(), "not loaded yet")
+        assert.is_true(asked[5002], "the client is asked to load it")
+        env.uncached[5002] = nil
+        s:refresh()
+        assert.equal("Ridgeback Boots", s.nearRows[2][1]:GetText(), "named once it loads, without a new check")
+      end)
+
       it("shows the item tooltip over the next buy and the closest listings", function()
         local env, _, _, s = snipeSetup()
         local shown = {}

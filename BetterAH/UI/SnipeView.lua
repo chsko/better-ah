@@ -558,11 +558,7 @@ function SnipeView:tick(run)
     self.seen[entry.target] = #results
     self.why[entry.target] = ns.Sniper.why(band, results, max, level)
     local near = ns.Sniper.near(band, results, max, level)
-    for _, e in ipairs(near) do
-      local auctionAPI = self.addon.auctionAPI
-      e.name = auctionAPI and auctionAPI:itemName("i:" .. e.itemKey.itemID) or ("item " .. e.itemKey.itemID)
-      e.target = name
-    end
+    for _, e in ipairs(near) do e.target = name end
     self.near[entry.target] = near
     local candidates = ns.Sniper.candidates(band, results, max,
       function(key, minPrice) return self.session:fresh(key, minPrice, self:now()) end, level)
@@ -640,6 +636,24 @@ function SnipeView:passNext()
   self:refresh()
 end
 
+-- A closest-list row's item name, looked up each time the list is drawn: an item the client hadn't
+-- loaded at the check gets its name once it loads (#147). A lookup's link gives the full name with
+-- the random suffix, which tells "of the Eagle" from "of Stamina".
+function SnipeView:nearName(key)
+  local full = self.session and self.session:nameOf(key)
+  if full then return full end
+  local auctionAPI = self.addon.auctionAPI
+  local name = auctionAPI and auctionAPI:itemName("i:" .. key.itemID)
+  if name then return name end
+  local load = self.env.C_Item and self.env.C_Item.RequestLoadItemDataByID
+  self.requested = self.requested or {}
+  if type(load) == "function" and not self.requested[key.itemID] then
+    self.requested[key.itemID] = true
+    pcall(load, key.itemID)
+  end
+  return "item " .. key.itemID
+end
+
 -- The listings closest to the targets' max prices, from each ticked target's last check.
 function SnipeView:renderNear()
   local short = ns.Money.short
@@ -665,7 +679,7 @@ function SnipeView:renderNear()
         end
         if max and max > 0 and price then
           fresh[#fresh + 1] = { itemKey = e.itemKey, minPrice = price, browsePrice = e.minPrice, max = max,
-            delta = max - price, name = e.name, target = name, quantity = e.quantity }
+            delta = max - price, target = name, quantity = e.quantity }
         end
       end
       lists[#lists + 1] = fresh
@@ -700,7 +714,8 @@ function SnipeView:renderNear()
   for i, row in ipairs(self.nearRows) do
     local e = near[i]
     row.entry = e
-    row[1]:SetText(e and e.name or "")
+    -- Named only for the rows shown: the list behind them can hold hundreds of items.
+    row[1]:SetText(e and self:nearName(e.itemKey) or "")
     row[2]:SetText(e and e.target or "")
     row[3]:SetText(e and short(e.minPrice) or "")
     row[6]:SetText(e and e.quantity and tostring(e.quantity) or "")

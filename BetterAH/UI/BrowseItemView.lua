@@ -405,7 +405,7 @@ function ItemView:quote()
   if not (ladder and ladder.quantity > 0) then return self:say("Type how many to buy.") end
   local have = api and api:money()
   if have and ladder.total > have then return self:say("You don't have enough gold for that many.") end
-  local shown, qty = ladder.total, ladder.quantity
+  local shown, qty, typed = ladder.total, ladder.quantity, self:quantity()
   local token = {}
   self.busy, self.quoting, self.sending = true, token, nil -- a late answer to an older buy only books it
   -- The auction house can send the quote again (a new price): each one replaces the last.
@@ -416,7 +416,7 @@ function ItemView:quote()
       self.quoting = nil
       return self:say("No price: " .. tostring(total) .. ". Click Buy to try again.")
     end
-    self.quoted = { quantity = qty, unit = unit, total = total, shown = shown,
+    self.quoted = { quantity = qty, typed = typed, unit = unit, total = total, shown = shown,
       change = ns.Buying.quote(shown, total) }
     self.message = nil
     self:render()
@@ -425,7 +425,9 @@ end
 
 function ItemView:confirm()
   local api, q = self:api(), self.quoted
-  if not q or q.quantity ~= self:quantity() then return self:cancelQuote() end
+  -- The quote is for what was typed then, cut to what was for sale (a Refresh may change the ladder since;
+  -- the server's quote still stands). Typing again already drops the quote.
+  if not q or q.typed ~= self:quantity() then return self:cancelQuote() end
   local item = self.row
   local name, token = item.name or "the item", {}
   self.busy, self.quoted, self.quoting, self.sending = true, nil, nil, token

@@ -2618,6 +2618,21 @@ describe("Browse item page", function()
     assert.truthy(item.messageText:GetText():find("^Bid 12s 0c sent"))
   end)
 
+  it("takes only a bid-placed notice as the bid's answer (#163)", function()
+    local env, _, _, view = setupItem()
+    local item = open(view, env, "Battleforge Shoulderpads")
+    item.itemRows[2].button:Click()
+    item.itemControls.boxes[2]:SetText("12")
+    item:renderDetail()
+    env.C_AuctionHouse.PlaceBid = function() end -- the answer comes as a notification
+    item.itemControls.bid:Click()
+    env.runTimers(0)
+    env.fire("AUCTION_HOUSE_SHOW_NOTIFICATION", 4) -- AuctionSold, about another auction
+    assert.equal("Bidding...", item.messageText:GetText(), "not this bid's answer")
+    env.fire("AUCTION_HOUSE_SHOW_NOTIFICATION", 0) -- BidPlaced
+    assert.truthy(item.messageText:GetText():find("^Bid 12s 80c sent"))
+  end)
+
   it("can't buy your own auction", function()
     local env, _, _, view = setupItem()
     local item = open(view, env, "Battleforge Shoulderpads")
@@ -2650,6 +2665,53 @@ describe("Browse item page", function()
     assert.same({ itemID = 20, quantity = 20 }, env.commodityBuys[1])
     assert.equal("Bought 20 Strange Dust for 21s 52c.", item.messageText:GetText())
     assert.is_false(c.confirm:IsShown())
+  end)
+
+  it("confirms a quote when more were typed than are for sale (#163)", function()
+    local env, _, _, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    local c = item.commodityControls
+    c.quantity:SetText("5000")
+    item:quantityChanged()
+    local qty = item.ladder.quantity
+    assert.is_true(qty < 5000, "cut to what is listed")
+    env.quote = function(_, q) return 100, q * 100 end
+    c.buy:Click()
+    env.runTimers()
+    item.ladder.quantity = qty - 10 -- a Refresh found fewer for sale since the quote
+    c.confirm:Click()
+    env.runTimers()
+    assert.same({ itemID = 20, quantity = qty }, env.commodityBuys[1], "the server's quote still stands")
+  end)
+
+  it("says the quote ran out instead of confirming a stale one (#163)", function()
+    local env, _, _, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    local c = item.commodityControls
+    local left = 30
+    env.C_AuctionHouse.GetQuoteDurationRemaining = function() return left end
+    env.quote = function(_, q) return 98, q * 98 end
+    c.buy:Click()
+    env.runTimers()
+    left = 0
+    c.confirm:Click()
+    env.runTimers()
+    assert.equal(0, #env.commodityBuys)
+    assert.equal(1, env.quoteCancelled)
+    assert.truthy(item.messageText:GetText():find("quote ran out", 1, true))
+  end)
+
+  it("still confirms on a client that always says no quote time is left (#163)", function()
+    local env, _, _, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    local c = item.commodityControls
+    env.C_AuctionHouse.GetQuoteDurationRemaining = function() return 0 end
+    env.quote = function(_, q) return 98, q * 98 end
+    c.buy:Click()
+    env.runTimers()
+    c.confirm:Click()
+    env.runTimers()
+    assert.equal(1, #env.commodityBuys)
   end)
 
   it("starts a commodity at 1, and goes back to 1 after a buy (#125)", function()

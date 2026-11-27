@@ -101,10 +101,11 @@ describe("TooltipPrices, min buyout (#194)", function()
     assert.same({}, out.rows)
   end)
 
-  it("says each beside the bag totals, and goes with its setting", function()
+  it("prices all of the item in the bags while Shift is held, and goes with its setting", function()
     local item = { value = 2140, stackable = true, bags = 5, shift = true, now = 0,
       current = { lowest = 1990, listed = true, seen = 0 } }
-    assert.equal("Min buyout, each (just now)", TooltipPrices.lines(item, on).rows[2].label)
+    assert.same({ label = "Min buyout (just now)", money = 9950 }, TooltipPrices.lines(item, on).rows[2],
+      "for all 5 in the bags (#210)")
     assert.equal(1, #TooltipPrices.lines(item, TooltipPrices.options({ lowest = false })).rows)
   end)
 end)

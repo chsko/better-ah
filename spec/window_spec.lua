@@ -3576,7 +3576,7 @@ describe("Browse categories and filters", function()
       local body = w.detailBody:GetText()
       assert.matches("Sales %(1 auction%): |c%x+2g 20s 0c", body)
       assert.matches("Purchases %(1 item%): |c%x+22s 10c", body)
-      assert.matches("Deposits kept by the AH: |c%x+0c", body, "the deposit came back with the sale")
+      assert.matches("Deposits not back yet: |c%x+0c", body, "the deposit came back with the sale")
       assert.matches("%+1g 86s 90c", body, "22000 - 1100 - 2210 = 18690")
     end)
 

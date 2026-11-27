@@ -19,6 +19,34 @@ describe("Ledger", function()
     end)
   end)
 
+  describe("bareName", function()
+    it("takes the name out of an item link, and leaves a plain name alone", function()
+      local link = "|cff1eff00|Hitem:4251::::::::60:::::|h[Hillman's Shoulders]|h|r"
+      assert.equal("Hillman's Shoulders", Ledger.bareName(link))
+      assert.equal("Runecloth", Ledger.bareName("Runecloth"))
+      assert.is_nil(Ledger.bareName(""))
+    end)
+  end)
+
+  describe("migrate", function()
+    it("drops the mail buys of a version 1 store and makes its links plain names (#150)", function()
+      local link = "|cff1eff00|Hitem:5966::::::::60:::::|h[Guardian Gloves]|h|r"
+      local store = { entries = {
+        { t = NOW, k = "buy", name = link, n = 1, c = 1898, src = "Snipe" },
+        { t = NOW + 60, k = "buy", name = "Guardian Gloves", n = 1, c = 1898, src = "mail" },
+        { t = NOW, k = "deposit", name = "Soul Dust", n = 5, c = 1 },
+      }, own = { { t = NOW, name = link, n = 1, c = 1898 } } }
+      local l = Ledger.new(store)
+      assert.equal(2, #l.store.entries)
+      assert.equal("Guardian Gloves", l.store.entries[1].name)
+      assert.equal("Guardian Gloves", l.store.own[1].name)
+      assert.equal(Ledger.VERSION, store.v)
+      -- Done once: a mail buy recorded after it stays.
+      l:buy({ t = NOW, name = "X", c = 5, src = "mail" })
+      assert.equal(3, #Ledger.new(store).store.entries)
+    end)
+  end)
+
   describe("sale", function()
     it("works out what it sold for from the money taken, the cut and the deposit back", function()
       local e = ledger:sale({ t = NOW, char = "A", name = "Arcane Dust", n = 20, money = 3515 + 60, cut = 185,
@@ -41,8 +69,9 @@ describe("Ledger", function()
       assert.equal("Browse", e.src)
     end)
 
-    it("does not count the invoice of a Better AH buy again", function()
-      ledger:buy({ t = NOW, char = "A", name = "Ridge Cleaver", n = 1, c = 2210, src = "Snipe" }, true)
+    it("does not count the invoice of a Better AH buy again, named by a link (#150)", function()
+      local link = "|cff1eff00|Hitem:1::::::::60:::::|h[Ridge Cleaver]|h|r"
+      ledger:buy({ t = NOW, char = "A", name = link, n = 1, c = 2210, src = "Snipe" }, true)
       assert.is_nil(ledger:buyerInvoice({ t = NOW + 60, char = "A", name = "Ridge Cleaver", n = 1, c = 2210 }))
       assert.equal(1, #ledger.store.entries)
       assert.equal(0, #ledger.store.own)

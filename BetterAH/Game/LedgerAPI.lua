@@ -4,7 +4,7 @@
 --   Sales and buys from elsewhere: auction mail invoices (GetInboxInvoiceInfo), once their gold or item is
 --     taken (TakeInboxMoney, TakeInboxItem, AutoLootMailItem: hooked, so the game's mail frame and other mail
 --     addons count too). The inbox is read on each MAIL_INBOX_UPDATE, before anything is taken, because a
---     taken mail may no longer say what it held.
+--     taken mail may no longer say what it held; a take counts once the next read shows it done.
 --   Deposits: C_AuctionHouse.PostItem / PostCommodity and their Confirm calls (hooked, so posts from the
 --     game's own sell frame count too), with the deposit worked out at the call; it counts once
 --     AUCTION_HOUSE_AUCTION_CREATED says the auction is up.
@@ -20,7 +20,9 @@ local LedgerAPI = {}
 LedgerAPI.__index = LedgerAPI
 
 LedgerAPI.POST_WAIT = 60 -- seconds a post waits for AUCTION_HOUSE_AUCTION_CREATED
-LedgerAPI.EVENTS = { "MAIL_SHOW", "MAIL_INBOX_UPDATE", "AUCTION_HOUSE_AUCTION_CREATED", "PLAYER_ENTERING_WORLD" }
+LedgerAPI.TAKE_WAIT = 120 -- seconds a take from the mail waits for the inbox to show it done
+LedgerAPI.EVENTS = { "MAIL_SHOW", "MAIL_INBOX_UPDATE", "MAIL_CLOSED", "AUCTION_HOUSE_AUCTION_CREATED",
+  "PLAYER_ENTERING_WORLD" }
 
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
@@ -37,7 +39,7 @@ function LedgerAPI.itemName(env, itemID)
 end
 
 function LedgerAPI.new(env, addon)
-  return setmetatable({ env = env, addon = addon, inbox = {}, posts = {} }, LedgerAPI)
+  return setmetatable({ env = env, addon = addon, inbox = {}, posts = {}, pending = {} }, LedgerAPI)
 end
 
 function LedgerAPI:now()
@@ -54,63 +56,113 @@ function LedgerAPI:ledger()
   return self.addon.ledger
 end
 
--- One mail as the inbox shows it: { invoice = type, name, money, bid, buyout, deposit, cut, count, key }, or
--- nil for a mail that isn't an auction invoice.
+-- One mail as the inbox shows it: { invoice = type, name, money, bid, buyout, deposit, cut, count, hasItem,
+-- ident }, or nil for a mail that isn't an auction invoice. ident tells mails apart by what they are, not by
+-- what is still in them, so a mail is the same mail after its gold or item is taken.
 function LedgerAPI.readMail(env, index)
-  local _, _, sender, subject, money, _, daysLeft = try(env.GetInboxHeaderInfo, index)
+  local _, _, sender, subject, money, _, _, hasItem = try(env.GetInboxHeaderInfo, index)
   local kind, name, _, bid, buyout, deposit, cut, _, _, _, count = try(env.GetInboxInvoiceInfo, index)
   if kind ~= "seller" and kind ~= "buyer" then return nil end
   local m = { invoice = kind, name = name, money = tonumber(money) or 0, bid = tonumber(bid) or 0,
     buyout = tonumber(buyout) or 0, deposit = tonumber(deposit) or 0, cut = tonumber(cut) or 0,
-    count = tonumber(count) or 1 }
-  -- What tells a mail apart from the one at the same place before it, while the inbox doesn't move.
-  m.key = table.concat({ kind, tostring(name), tostring(sender), tostring(subject), m.money, m.bid, m.buyout,
-    m.count, string.format("%.4f", tonumber(daysLeft) or 0) }, "|")
+    count = tonumber(count) or 1, hasItem = hasItem and hasItem ~= 0 and true or false }
+  m.ident = table.concat({ kind, tostring(name), tostring(sender), tostring(subject), m.bid, m.buyout, m.deposit,
+    m.cut, m.count }, "|")
   return m
 end
 
--- Reads the inbox: what each auction invoice holds, and the sale gold still waiting (Ledger:setMail).
-function LedgerAPI:readInbox()
+-- What a take of a mail's part takes: "money" for a seller invoice's gold, "item" for a buyer invoice's item,
+-- or nil when there is nothing of it left to take.
+local function part(m, what)
+  if m.invoice == "seller" and what ~= "item" and m.money > 0 then return "money" end
+  if m.invoice == "buyer" and what ~= "money" and m.hasItem then return "item" end
+  return nil
+end
+
+-- Records a take the game has carried out.
+function LedgerAPI:record(p)
+  local ledger, m = self:ledger(), p.mail
+  if not ledger then return end
+  if m.invoice == "seller" then
+    ledger:sale({ t = p.t, char = p.char, name = m.name, n = m.count, money = m.money, cut = m.cut,
+      deposit = m.deposit })
+  else
+    ledger:buyerInvoice({ t = p.t, char = p.char, name = m.name, n = m.count,
+      c = m.bid > 0 and m.bid or m.buyout })
+  end
+  self.changed = true
+end
+
+-- How many mails of each kind (ident and part) still hold their part: the gold of a seller invoice, the item
+-- of a buyer invoice.
+local function holding(inbox, n)
+  local count = {}
+  for i = 1, n do
+    local m = inbox[i]
+    if m then
+      local p = part(m, "all")
+      if p then
+        local k = m.ident .. "|" .. p
+        count[k] = (count[k] or 0) + 1
+      end
+    end
+  end
+  return count
+end
+
+-- Reads the inbox: what each auction invoice holds, and the sale gold still waiting (Ledger:setMail). It is
+-- also where a take is confirmed (#150). A take only asks the server; mail addons and the game's Open All ask
+-- again for a mail that hasn't gone yet, and a failed take asks for nothing. So a take waits (self.pending)
+-- until the inbox shows it done: fewer mails of its kind (same invoice, same part) still hold their part
+-- than at the last read, one confirmed take for each, oldest first. Other mails coming and going don't
+-- confirm it. fresh = a new visit to the mailbox: what was waiting from the last one is forgotten.
+function LedgerAPI:readInbox(fresh)
   local env = self.env
-  local n = try(env.GetInboxNumItems) or 0
+  local n = tonumber((try(env.GetInboxNumItems))) or 0
   local inbox, waiting, mails = {}, 0, 0
-  -- A mail already taken stays taken while the inbox still holds as many mails and the same one sits at
-  -- its place: the server hasn't removed it yet. Once a mail goes, the rest move up and start fresh.
-  local before = self.inbox
-  local same = self.inboxSize == n
   for i = 1, n do
     local m = LedgerAPI.readMail(env, i)
-    if m and same and before[i] and before[i].taken and before[i].key == m.key then m.taken = true end
     inbox[i] = m
     if m and m.invoice == "seller" and m.money > 0 then waiting, mails = waiting + m.money, mails + 1 end
   end
-  self.inbox, self.inboxSize = inbox, n
+  local now = self:now()
+  local before = self.holding
+  local after = holding(inbox, n)
+  if fresh then self.pending, before = {}, nil end
+  local still = {}
+  for _, p in ipairs(self.pending) do
+    local k = p.mail.ident .. "|" .. p.part
+    local fewer = before and (before[k] or 0) - (after[k] or 0) or 0
+    if fewer > 0 then
+      before[k] = before[k] - 1
+      self:record(p)
+    elseif now - p.t <= LedgerAPI.TAKE_WAIT then
+      still[#still + 1] = p -- a take the server never carried out is dropped after a while
+    end
+  end
+  self.pending, self.inbox, self.holding = still, inbox, after
   local ledger = self:ledger()
-  if ledger then ledger:setMail(self:char(), waiting, mails, self:now()) end
+  if ledger then ledger:setMail(self:char(), waiting, mails, now) end
+  if self.changed then
+    self.changed = false
+    if self.onChange then pcall(self.onChange) end
+  end
 end
 
--- A mail's gold or item was taken: records its invoice once. what = "money", "item" or "all".
+-- A mail's gold or item was asked for: what = "money", "item" or "all". It waits for readInbox to confirm it.
 function LedgerAPI:took(index, what)
-  local m = self.inbox[index]
-  if not m then
-    -- A mail the inbox read hasn't seen: read it now, and keep it so a second take of it counts once.
-    m = LedgerAPI.readMail(self.env, index)
-    self.inbox[index] = m
+  -- No read yet this visit: read now. The server hasn't carried the take out yet, so this is the before.
+  if not self.holding then self:readInbox() end
+  -- The client's list as it is now: another addon may take on MAIL_INBOX_UPDATE before our read of it.
+  local m = LedgerAPI.readMail(self.env, index)
+  if not m then return end
+  local p = part(m, what)
+  if not p then return end
+  -- Asked again before the inbox changed: still the one take.
+  for _, q in ipairs(self.pending) do
+    if q.index == index and q.part == p and q.mail.ident == m.ident then return end
   end
-  local ledger = self:ledger()
-  if not (m and ledger) or m.taken then return end
-  if m.invoice == "seller" and what == "item" then return end
-  if m.invoice == "buyer" and what == "money" then return end
-  m.taken = true
-  local now = self:now()
-  if m.invoice == "seller" then
-    ledger:sale({ t = now, char = self:char(), name = m.name, n = m.count, money = m.money, cut = m.cut,
-      deposit = m.deposit })
-  else
-    ledger:buyerInvoice({ t = now, char = self:char(), name = m.name, n = m.count,
-      c = m.bid > 0 and m.bid or m.buyout })
-  end
-  if self.onChange then pcall(self.onChange) end
+  self.pending[#self.pending + 1] = { index = index, part = p, mail = m, t = self:now(), char = self:char() }
 end
 
 -- A post was sent: kind = "Item" or "Commodity", with the call's arguments. The deposit is worked out now,
@@ -162,8 +214,13 @@ function LedgerAPI:bought(itemID, name, n, copper, src)
 end
 
 function LedgerAPI:onEvent(event)
-  if event == "MAIL_SHOW" or event == "MAIL_INBOX_UPDATE" then
+  if event == "MAIL_SHOW" then
+    self:readInbox(true)
+  elseif event == "MAIL_INBOX_UPDATE" then
     self:readInbox()
+  elseif event == "MAIL_CLOSED" then
+    -- Closed: a list the client clears or shortens now is not mail taken. Waiting takes are dropped.
+    self.pending, self.holding = {}, nil
   elseif event == "AUCTION_HOUSE_AUCTION_CREATED" then
     self:created()
   elseif event == "PLAYER_ENTERING_WORLD" then

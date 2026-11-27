@@ -430,7 +430,11 @@ function M.new(opts)
   env.needsConfirmation = false
   -- Like the client, a post needs the item at the location; a warning asks for a confirmation.
   -- A post the client takes fires AUCTION_HOUSE_AUCTION_CREATED once the server answers.
-  local function created() env.C_Timer.After(0, function() env.fire("AUCTION_HOUSE_AUCTION_CREATED", 1) end) end
+  -- env.postSilent: the server never answers a post.
+  local function created()
+    if env.postSilent then return end
+    env.C_Timer.After(0, function() env.fire("AUCTION_HOUSE_AUCTION_CREATED", 1) end)
+  end
   local function holds(loc)
     if not slotAt(loc) then error("item not found", 0) end
     if env.needsConfirmation then

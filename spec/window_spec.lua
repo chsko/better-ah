@@ -2173,6 +2173,21 @@ describe("Window", function()
       assert.equal("Ready: 40", cells(w, 1)[5], "a new visit forgets it")
     end)
 
+    it("says how far under the competitor a post goes, and when it can only tie (#163)", function()
+      local _, _, ns = postSetup()
+      local function text(undercut, price, step)
+        local row = { state = "ready", have = 1, plan = { action = "post", undercut = undercut, price = price,
+          floor = 1, posts = 1, remainder = 0 } }
+        return (ns.PostView.detailText(row, 1, nil, step):match("^[^\n]*"))
+      end
+      assert.equal("The cheapest other listing is 1s 0c each, the lowest price the auction house takes, so this "
+        .. "posts at 1s 0c too.", text(100, 100, 100))
+      assert.equal("The cheapest other listing is 1s 50c each, so this posts at 1s 0c, 50c under it.",
+        text(150, 100, 100))
+      assert.equal("The cheapest other listing is 3s 0c each, so this posts at 2s 0c, a silver under it.",
+        text(300, 200, 100))
+    end)
+
     it("explains the price and saves a posting profile from the detail panel", function()
       local env, w, ns = postSetup()
       env.openAuctionHouse()
@@ -2294,6 +2309,26 @@ describe("Window", function()
       env.fire("AUCTION_HOUSE_POST_ERROR")
       env.runTimers()
       assert.equal("Ready: 20", cells(w, 1)[5])
+    end)
+
+    it("takes back a post with no answer, and counts it again if it goes up late (#163)", function()
+      local env, w, ns = postSetup()
+      ns.posting:setProfile("i:2589", 20, 2)
+      env.openAuctionHouse()
+      env.runTimers()
+      env.postSilent = true
+      w.postView.postButton:Click()
+      assert.equal(20, env.posts[1].quantity)
+      env.runTimers(5)
+      env.runTimers()
+      assert.equal("Ready: 20", cells(w, 1)[5], "the unanswered post doesn't count toward Post at most")
+      assert.matches("No answer from the auction house for that post yet", w.postView.message, 1, true)
+      env.fire("AUCTION_HOUSE_SHOW_ERROR", 7)
+      assert.matches("No answer from the auction house", w.postView.message, 1, true,
+        "a later error is not about that post")
+      env.fire("AUCTION_HOUSE_AUCTION_CREATED", 1)
+      env.runTimers()
+      assert.equal("Leftover", cells(w, 1)[5], "it went up after all")
     end)
 
     it("hides the editor on other views and says when nothing can be posted", function()

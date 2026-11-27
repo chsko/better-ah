@@ -11,12 +11,15 @@ SnipeView.__index = SnipeView
 
 SnipeView.REST = 0.5 -- seconds between browses; the auction house's own throttle paces the queries
 SnipeView.HISTORY = 20 -- finished sessions kept
--- The "closest to your max prices" list: columns as { label, x, width, justify } on a 540 px row.
+-- The "closest to your max prices" list: columns as { label, x, width, justify } on a row NEAR_BAR_ROOM
+-- narrower than the panel, which leaves room for its scroll bar inside the panel (#201).
 -- Listed (how many the auction house has of the item, at all prices: a browse doesn't say how many
 -- are at the cheapest) is last in the list but sits
 -- between Target and Cheapest.
-SnipeView.NEAR_COLUMNS = { { "Item", 4, 150, "LEFT" }, { "Target", 158, 116, "LEFT" }, { "Cheapest", 316, 70 },
-  { "Max", 390, 70 }, { "vs. max", 462, 74 }, { "Listed", 274, 38 } }
+SnipeView.NEAR_COLUMNS = { { "Item", 4, 140, "LEFT" }, { "Target", 148, 116, "LEFT" }, { "Cheapest", 304, 68 },
+  { "Max", 374, 68 }, { "vs. max", 444, 74 }, { "Listed", 264, 38 } }
+-- Room right of the rows for the scroll bar, and the gap before it, as the other lists have (Window).
+SnipeView.NEAR_BAR_ROOM, SnipeView.NEAR_BAR_GAP = 22, 8
 SnipeView.NEAR_ROW = 17
 -- Rows the closest list shows at a time; a scroll bar beside it reaches the rest (Sniper.CLOSEST, #201).
 -- The mouse wheel over the tab still buys, so the list scrolls only by its bar (Christian, #201).
@@ -188,18 +191,19 @@ function SnipeView:build(p, width)
   self.nearEmpty:SetWidth(width - 8)
   self.nearEmpty:SetJustifyH("LEFT")
   self.nearRows = {}
+  local rowWidth = width - SnipeView.NEAR_BAR_ROOM
   for i = 1, SnipeView.NEAR_VISIBLE do
     local y = top - 16 - i * SnipeView.NEAR_ROW
     local row = {}
     local shade = p:CreateTexture(nil, "BACKGROUND")
     shade:SetPoint("TOPLEFT", p, "TOPLEFT", 0, y + 2)
-    shade:SetSize(width, SnipeView.NEAR_ROW)
+    shade:SetSize(rowWidth, SnipeView.NEAR_ROW)
     shade:SetColorTexture(0.12, 1, 0, 0.12)
     shade:Hide()
     row.bg = shade
     local flash = p:CreateTexture(nil, "BORDER")
     flash:SetPoint("TOPLEFT", p, "TOPLEFT", 0, y + 2)
-    flash:SetSize(width, SnipeView.NEAR_ROW)
+    flash:SetSize(rowWidth, SnipeView.NEAR_ROW)
     flash:SetColorTexture(1, 0.82, 0, 1)
     flash:SetAlpha(0)
     flash:Hide()
@@ -209,10 +213,10 @@ function SnipeView:build(p, width)
     end
     row.hover = self:hoverItem(p, function() return row.entry end)
     row.hover:SetPoint("TOPLEFT", p, "TOPLEFT", 0, y + 2)
-    row.hover:SetSize(width, SnipeView.NEAR_ROW)
+    row.hover:SetSize(rowWidth, SnipeView.NEAR_ROW)
     self.nearRows[i] = row
   end
-  self:buildNearBar(p, width, top - 16 - SnipeView.NEAR_ROW + 2)
+  self:buildNearBar(p, rowWidth, top - 16 - SnipeView.NEAR_ROW + 2)
   -- Drives the row blinks while any is running; hidden (so no OnUpdate) otherwise.
   self.flashDriver = env.CreateFrame("Frame", nil, p)
   self.flashDriver:Hide()
@@ -222,13 +226,14 @@ function SnipeView:build(p, width)
   self:buildLog()
 end
 
--- The closest list's scroll bar, right of the rows from y (its top) down NEAR_VISIBLE rows. It hides
--- itself while every row fits. Dragging it, clicking its track or arrows, or wheeling over the bar
+-- The closest list's scroll bar, right of the rows (rowWidth wide), from y (its top) down NEAR_VISIBLE
+-- rows. It hides itself while every row fits. Dragging it, clicking its track or arrows, or wheeling over the bar
 -- itself scrolls the list a row at a time.
-function SnipeView:buildNearBar(p, width, y)
+function SnipeView:buildNearBar(p, rowWidth, y)
   local bar = self.env.CreateFrame("EventFrame", nil, p, "MinimalScrollBar")
-  bar:SetPoint("TOPLEFT", p, "TOPLEFT", width + 8, y)
-  bar:SetPoint("BOTTOMLEFT", p, "TOPLEFT", width + 8, y - SnipeView.NEAR_VISIBLE * SnipeView.NEAR_ROW)
+  local x = rowWidth + SnipeView.NEAR_BAR_GAP
+  bar:SetPoint("TOPLEFT", p, "TOPLEFT", x, y)
+  bar:SetPoint("BOTTOMLEFT", p, "TOPLEFT", x, y - SnipeView.NEAR_VISIBLE * SnipeView.NEAR_ROW)
   bar:SetHideIfUnscrollable(true)
   bar.wheelPanScalar = 1
   bar:RegisterCallback("OnScroll", function(_, percentage)

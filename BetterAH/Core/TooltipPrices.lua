@@ -25,6 +25,9 @@ TooltipPrices.SETTINGS = {
     tip = "The cheapest buyout in your latest scan, and how old that scan is. With Shift held, for all in your bags." },
   { key = "sales", label = "Sold, past 7 days", sub = true,
     tip = "How many you sold, of how many you posted, on all your characters in the last 7 days (from the Ledger)." },
+  { key = "sellTime", label = "Best time to sell", sub = true,
+    tip = "How good now is for selling the item, and its best 3 hours of the week, on the tooltip and the Post "
+      .. "screen. Needs the companion app's data file (see docs/setup/companion.md)." },
 }
 
 function TooltipPrices.options(saved)
@@ -60,12 +63,13 @@ end
 --   current    { lowest, listed, seen } from PriceDB:current, or nil (never in a scan)
 --   now        the time, for how old the scan is
 --   sales      { sold, posted } over the past 7 days from Ledger:soldAndPosted, or nil
+--   sellTime   SellTimes.hint(...) for the item, or nil
 -- }
 -- opts: TooltipPrices.options(...).
 -- Returns nil when nothing should be added, else { title, note, message, rows, hint }: note is dim text
 -- after the title, message a dim line under it when the item has no market value, each row
 -- { label, money (copper, rounded), sign = true for a profit (shown with + or -) } or
--- { label, text, dim = true for "nothing there" }, and
+-- { label, text, dim = true for "nothing there", rating = 0-3 to colour a sell time }, and
 -- hint a dim line
 -- at the end. note, message and hint may be nil.
 function TooltipPrices.lines(item, opts)
@@ -131,6 +135,13 @@ function TooltipPrices.lines(item, opts)
       if de then money("Profit if disenchanted", TooltipPrices.afterCut(de) - paid.unit, true) end
     end
     if opts.shift and bags > 1 then out.hint = "Hold Shift for all " .. bags .. " in your bags" end
+  end
+  -- Best time to sell (#221): how good now is, then the best window and the advice.
+  local st = opts.sellTime and item.sellTime
+  if st and not st.none then
+    rows[#rows + 1] = { label = "Sell now", text = st.word, rating = st.rating }
+    rows[#rows + 1] = { label = "Best time", text = st.window }
+    rows[#rows + 1] = { label = "", text = st.better .. " · " .. st.advice, dim = true }
   end
   if not value then
     out.message = TooltipPrices.NO_PRICE

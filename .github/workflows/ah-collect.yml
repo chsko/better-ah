@@ -5,8 +5,9 @@ name: AH collect
 
 on:
   schedule:
-    # Off the quarter hours GitHub's scheduler drops runs at, and a few minutes after the export (about :22).
-    - cron: "12,27,42,57 * * * *"
+    # Away from the top of the hour, when GitHub's scheduler is busiest and drops runs, and a few minutes after the export (about :22).
+    # GitHub runs schedules as whoever last changed this cron, who needs write access to the repo.
+    - cron: "12-57/15 * * * *" # :12, :27, :42, :57
   workflow_dispatch:
 
 # Shared with anything else that calls the export, so runs never overlap.

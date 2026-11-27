@@ -58,6 +58,10 @@ pub struct Stats {
     pub items: BTreeMap<u32, Vec<HourRow>>,
     /// Item names from the static API; `None` when the API has no entry for the item.
     pub names: BTreeMap<u32, Option<String>>,
+    /// How many name sources the `None` entries in `names` were looked up in. When the
+    /// collector learns a new source, `forget_missing_names` lets them be tried again.
+    #[serde(default)]
+    pub name_sources: u32,
 }
 
 /// What applying one export did.
@@ -179,6 +183,15 @@ impl Stats {
         self.prune(hour_of(now))
     }
 
+    /// Drops the `None` names, so items no source knew get looked up again, and records
+    /// that they will be looked up in `sources` sources from now on.
+    pub fn forget_missing_names(&mut self, sources: u32) {
+        if self.name_sources < sources {
+            self.names.retain(|_, n| n.is_some());
+            self.name_sources = sources;
+        }
+    }
+
     /// Items that have rows but no name lookup yet.
     pub fn unnamed(&self) -> Vec<u32> {
         self.items
@@ -237,6 +250,19 @@ mod tests {
 
     fn rows(s: &Stats, item: u32) -> Vec<HourRow> {
         s.items.get(&item).cloned().unwrap_or_default()
+    }
+
+    #[test]
+    fn missing_names_are_retried_once_per_new_source() {
+        let mut s = Stats::new();
+        s.names.insert(1, Some("Linen Cloth".into()));
+        s.names.insert(2, None);
+        s.forget_missing_names(2);
+        assert_eq!(s.names.len(), 1);
+        assert_eq!(s.name_sources, 2);
+        s.names.insert(2, None);
+        s.forget_missing_names(2);
+        assert_eq!(s.names.get(&2), Some(&None));
     }
 
     #[test]

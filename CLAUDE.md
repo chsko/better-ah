@@ -8,6 +8,8 @@ Goal: everything TradeSkillMaster does for the auction house, with improvements.
 - `BetterAH/` is the addon folder that gets copied into `Interface/AddOns/`. The `.toc` lists load order.
 - `BetterAH/Core/` holds shared modules. Each file starts with `local addonName, ns = ...` and hangs
   its module on `ns` (for example `ns.Money`). No new globals except saved variables.
+- `companion/` is the Rust companion app (`better-ah-companion`, spec #215): a pure library crate (`core`)
+  and a CLI (`app`) that collects Blizzard's Forever AH export on GitHub Actions and syncs stats to the addon.
 - `spec/` holds busted tests. `spec/helper.lua` loads an addon file with `(addonName, ns)` like the client does.
 - `.claude/skills/` holds Matt Pocock's skills (installed with `npx skills@latest add mattpocock/skills`).
 
@@ -31,6 +33,14 @@ Run both before every commit. Do not commit if either fails.
 ```sh
 luacheck .
 busted
+```
+
+When `companion/` (the Rust companion app, spec #215) changes, also run these from `companion/`:
+
+```sh
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
 ```
 
 Things that need the real client (frames, events, AH queries) cannot be tested here. Say so in the

@@ -24,6 +24,14 @@ _Avoid_: AuctionDB, cache
 An item's typical price on a market: the average of the cheapest part of each scan's listings, leaving out troll prices far below the rest, smoothed over 14 days (UTC days).
 _Avoid_: DBMarket, average price, AH price
 
+**Sell times**:
+When an item sells best on a market, by weekday and hour: estimated sales, typical price, min price and supply over a rolling 30 days, from Blizzard's hourly export (ADR 0006). Sales are estimated, since the export has no sales: a listing gone before its time ran out counts as sold.
+_Avoid_: best time (on its own), sales history
+
+**Companion app**:
+`better-ah-companion`, the Rust app outside the game that collects sell times on GitHub Actions and syncs them to the addon (ADR 0006).
+_Avoid_: desktop app, helper
+
 ## Selling
 
 **Floor price**:

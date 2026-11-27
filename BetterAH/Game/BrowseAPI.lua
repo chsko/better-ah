@@ -340,7 +340,14 @@ function BrowseAPI:onEvent(event, a, b)
     if self.bidding then self:finishBid(self.bidding, false, "the auction house closed") end
     local job = self.commodity
     if job then
-      if job.step == "quoted" then self.commodity = nil
+      -- A quote, asked for or given, still holds the sniper and posting: drop it in the client and free
+      -- them, or every buy waits for it until /reload (#161).
+      local ah = self.env.C_AuctionHouse
+      if job.step ~= "buying" and ah and ah.CancelCommoditiesPurchase then try(ah.CancelCommoditiesPurchase) end
+      if job.step == "quoted" then
+        -- No callback: the view resets on close.
+        self.commodity = nil
+        self:releasePosting()
       else self:endCommodity(job, job.step == "buying" and false or nil, "the auction house closed") end
     end
   end

@@ -284,10 +284,12 @@ end
 function PostingAPI:onEvent(event, arg)
   local job = self.active
   if event == "AUCTION_HOUSE_SHOW" then
-    self.open = true
+    self.open, self.closed = true, nil
   elseif event == "AUCTION_HOUSE_CLOSED" then
-    self.open = false
+    self.open, self.closed = false, true
     self.pending = nil
+    -- Every buy, bid and quote ends when the AH closes; whatever set buying may hear the close later (#161).
+    self.buying = nil
     local waiting = self.queue
     self.queue = {}
     if job then self:finishSearch(job, nil, "the auction house closed") end
@@ -332,8 +334,10 @@ function PostingAPI:onEvent(event, arg)
     self.pending = nil
     if self.onPosted then self.onPosted(true) end
   elseif event == "AUCTION_HOUSE_POST_ERROR" or event == "AUCTION_HOUSE_SHOW_ERROR" then
-    -- While the sniper waits on a buy (SnipeAPI sets buying), the error is about that buy.
-    if event == "AUCTION_HOUSE_SHOW_ERROR" and self.buying then return end
+    -- While the sniper waits on a buy (SnipeAPI sets buying), the error is about that buy. Once the AH
+    -- has closed (not merely never seen open, as after a /reload at the AH), no post can be waiting, so
+    -- an error then is not a post's (most likely a late answer to a buy that ended on close, #161).
+    if event == "AUCTION_HOUSE_SHOW_ERROR" and (self.buying or self.closed) then return end
     self.pending = nil
     if self.onPosted then self.onPosted(false, arg, event) end
   end

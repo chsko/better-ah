@@ -17,6 +17,17 @@ local post = { action = "post", price = 99, duration = 2, quantity = 20, posts =
 local function commodity(id) return { itemID = id, itemKey = { itemID = id }, commodity = true } end
 
 describe("PostingAPI", function()
+  it("stops holding error events for a buy once the auction house closes (#161)", function()
+    local env, api = setup()
+    api.buying = true
+    env.fire("AUCTION_HOUSE_CLOSED")
+    assert.is_nil(api.buying)
+    local posted
+    api.onPosted = function(ok) posted = ok end
+    env.fire("AUCTION_HOUSE_SHOW_ERROR", 4)
+    assert.is_nil(posted, "a late buy error after the close is not a failed post")
+  end)
+
   it("finds the items in the bags the auction house accepts, grouped and sorted by name", function()
     local env, _, ns = setup()
     env.containers[0] = {

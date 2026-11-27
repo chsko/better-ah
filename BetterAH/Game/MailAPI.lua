@@ -11,7 +11,9 @@ ns = ns or {}
 local MailAPI = {}
 MailAPI.__index = MailAPI
 
-MailAPI.EVENTS = { "MAIL_SHOW", "MAIL_INBOX_UPDATE", "MAIL_CLOSED", "MAIL_FAILED", "MAIL_OPEN_ALL_CANCELED" }
+MailAPI.EVENTS = { "MAIL_SHOW", "MAIL_INBOX_UPDATE", "MAIL_CLOSED", "MAIL_FAILED", "MAIL_OPEN_ALL_CANCELED",
+  "MAIL_SEND_INFO_UPDATE", "MAIL_SEND_SUCCESS", "UI_ERROR_MESSAGE" }
+MailAPI.SEND_SLOTS = 12 -- ATTACHMENTS_MAX_SEND
 MailAPI.ATTACHMENTS = 16 -- ATTACHMENTS_MAX_RECEIVE in Forever's MailFrame.lua
 
 local function try(fn, ...)
@@ -184,6 +186,91 @@ function MailAPI:checkInbox()
   try(self.env.CheckInbox)
 end
 
+-- The new mail (#158). Its attachments live in the game, as in Blizzard's send frame:
+-- { { slot, name, itemID, texture, count } } for the slots that hold an item.
+function MailAPI:sendItems()
+  local env, out = self.env, {}
+  for slot = 1, MailAPI.SEND_SLOTS do
+    local name, itemID, texture, count = try(env.GetSendMailItem, slot)
+    if name or itemID then
+      out[#out + 1] = { slot = slot, name = name, itemID = itemID, texture = texture, count = tonumber(count) or 1 }
+    end
+  end
+  return out
+end
+
+-- A bag item into the first free slot: Blizzard's cursor flow (pick it up, drop it on the mail). In a click.
+function MailAPI:attachFromBag(bag, slot)
+  local c = self.env.C_Container
+  if not (c and type(c.PickupContainerItem) == "function") then return false end
+  try(c.PickupContainerItem, bag, slot)
+  try(self.env.ClickSendMailItemButton)
+  -- Refused (soulbound, all 12 slots full, ...): back to the bag rather than left on the cursor.
+  if self:cursorHasItem() then
+    try(self.env.ClearCursor)
+    return false
+  end
+  return true
+end
+
+-- What the cursor holds, dropped on attachment slot i (or the first free one).
+function MailAPI:dropOnMail(i)
+  try(self.env.ClickSendMailItemButton, i)
+end
+
+-- Attachment slot i back to the bags (a right-click on it in Blizzard's frame).
+function MailAPI:detach(i)
+  try(self.env.ClickSendMailItemButton, i, true)
+end
+
+function MailAPI:cursorHasItem()
+  return try(self.env.CursorHasItem) and true or false
+end
+
+function MailAPI:postage()
+  return tonumber(try(self.env.GetSendMailPrice)) or 0
+end
+
+function MailAPI:playerMoney()
+  return tonumber(try(self.env.GetMoney))
+end
+
+function MailAPI:codEnabled()
+  local c = self.env.C_Mail
+  if c and type(c.IsCODEnabled) == "function" then return try(c.IsCODEnabled) and true or false end
+  return true
+end
+
+-- Sends as Blizzard's Send button does: both amounts cleared, then gold or COD, then SendMail. In a click.
+-- replyTo: the inbox index of the mail this answers.
+function MailAPI:send(mail, replyTo)
+  local env = self.env
+  try(env.SetSendMailCOD, 0)
+  try(env.SetSendMailMoney, 0)
+  if (mail.money or 0) > 0 then try(env.SetSendMailMoney, mail.money)
+  elseif (mail.cod or 0) > 0 then try(env.SetSendMailCOD, mail.cod) end
+  try(env.SendMail, mail.to, mail.subject, mail.body or "", replyTo)
+end
+
+-- Alt-click on a bag item (#158): Blizzard's bag buttons hand every modified click to HandleModifiedItemClick,
+-- looked up when called, so one hook covers every bag button (and bag addons that call it too).
+-- fn(bag, slot) runs only for Alt, with nothing on the cursor.
+function MailAPI:hookBagClicks(fn)
+  local env = self.env
+  if self.bagHook or type(env.hooksecurefunc) ~= "function" or type(env.HandleModifiedItemClick) ~= "function" then
+    return
+  end
+  self.bagHook = fn
+  env.hooksecurefunc("HandleModifiedItemClick", function(_, itemLocation)
+    if not (try(env.IsAltKeyDown) and self.open) or self:cursorHasItem() then return end
+    if type(itemLocation) ~= "table" or not itemLocation.IsBagAndSlot then return end
+    local ok, isBag = pcall(itemLocation.IsBagAndSlot, itemLocation)
+    if not (ok and isBag) then return end
+    local got, bag, slot = pcall(itemLocation.GetBagAndSlot, itemLocation)
+    if got and bag and slot then self.bagHook(bag, slot) end
+  end)
+end
+
 -- Collect's single takes (Game/MailCollector.lua): it never plans COD mail.
 function MailAPI:takeMoney(index)
   try(self.env.TakeInboxMoney, index)
@@ -266,8 +353,8 @@ function MailAPI:freeSlots()
   return free
 end
 
--- handlers: onOpen(mails), onInbox(mails), onClose(), onFailed(itemID), onCancelled(). Only while replacing
--- Blizzard's frame.
+-- handlers: onOpen(mails), onInbox(mails), onClose(), onFailed(itemID), onCancelled(), onSendInfo(),
+-- onSent(), onError(message). Only while replacing Blizzard's frame.
 function MailAPI:onEvent(event, handlers, ...)
   if event == "MAIL_SHOW" then
     if not self:replacing() then
@@ -289,6 +376,13 @@ function MailAPI:onEvent(event, handlers, ...)
     if self.open and handlers.onInbox then handlers.onInbox(self:readInbox()) end
   elseif event == "MAIL_FAILED" then
     if self.open and handlers.onFailed then handlers.onFailed(...) end
+  elseif event == "MAIL_SEND_INFO_UPDATE" then
+    if self.open and handlers.onSendInfo then handlers.onSendInfo() end
+  elseif event == "MAIL_SEND_SUCCESS" then
+    if self.open and handlers.onSent then handlers.onSent() end
+  elseif event == "UI_ERROR_MESSAGE" then
+    local _, message = ...
+    if self.open and handlers.onError then handlers.onError(message) end
   elseif event == "MAIL_OPEN_ALL_CANCELED" then
     if self.open and handlers.onCancelled then handlers.onCancelled() end
   elseif event == "MAIL_CLOSED" then

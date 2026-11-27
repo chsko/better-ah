@@ -34,6 +34,7 @@ Core/Purchases.lua
 Core/Ledger.lua
 Core/Mailbox.lua
 Core/MailCollect.lua
+Core/MailSend.lua
 Core/TooltipPrices.lua
 Core/MyAuctions.lua
 Game/AuctionAPI.lua
@@ -60,5 +61,6 @@ UI/MyAuctionsView.lua
 UI/LedgerView.lua
 UI/WindowResize.lua
 UI/Window.lua
+UI/MailSendPanel.lua
 UI/MailboxWindow.lua
 Game/DebugHooks.lua

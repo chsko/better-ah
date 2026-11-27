@@ -9,11 +9,13 @@ local function setup(opts)
   helper.load("BetterAH/Core/WindowScale.lua", ns)
   helper.load("BetterAH/Core/Mailbox.lua", ns)
   helper.load("BetterAH/Core/MailCollect.lua", ns)
+  helper.load("BetterAH/Core/MailSend.lua", ns)
   helper.load("BetterAH/UI/Loading.lua", ns)
   helper.load("BetterAH/UI/WindowResize.lua", ns)
   helper.load("BetterAH/UI/Window.lua", ns)
   helper.load("BetterAH/Game/MailAPI.lua", ns)
   helper.load("BetterAH/Game/MailCollector.lua", ns)
+  helper.load("BetterAH/UI/MailSendPanel.lua", ns)
   helper.load("BetterAH/UI/MailboxWindow.lua", ns)
   ns.db = {}
   ns.mailSettings = opts.settings or {}
@@ -128,6 +130,73 @@ local function setup(opts)
     IsCommandPending = function() return env.pending end,
     SetOpeningAll = function(on) env.openingAll[#env.openingAll + 1] = on end,
   }
+  -- Sending, as the client does it: the attachments live in the game; the cursor carries a bag item.
+  env.bags = opts.bags or {}
+  env.sendSlots = {}
+  env.cursor = nil
+  env.sent = {}
+  env.player = { money = opts.money or 1000000 }
+  env.C_Container.PickupContainerItem = function(bag, slot)
+    env.cursor = env.bags[bag] and env.bags[bag][slot]
+  end
+  env.CursorHasItem = function() return env.cursor ~= nil end
+  env.ClickSendMailItemButton = function(i, clear)
+    if clear then
+      env.sendSlots[i] = nil
+    elseif env.cursor then
+      local slot = i
+      if not slot then
+        for s = 1, 12 do if not env.sendSlots[s] then slot = s break end end
+      end
+      env.sendSlots[slot] = env.cursor
+      env.cursor = nil
+    end
+    env.fire("MAIL_SEND_INFO_UPDATE")
+  end
+  env.GetSendMailItem = function(i)
+    local it = env.sendSlots[i]
+    if it then return it[1], it.id or 1, "icon-" .. it[1], it[2] end
+  end
+  env.GetSendMailPrice = function()
+    local n = 0
+    for s = 1, 12 do if env.sendSlots[s] then n = n + 1 end end
+    return 30 * math.max(1, n)
+  end
+  env.GetMoney = function() return env.player.money end
+  env.C_Mail.IsCODEnabled = function() return not env.codOff end
+  env.SetSendMailMoney = function(c) env.sendMoney = c end
+  env.SetSendMailCOD = function(c) env.sendCOD = c end
+  env.SendMail = function(to, subject, body, replyTo)
+    env.sent[#env.sent + 1] = { to = to, subject = subject, body = body, money = env.sendMoney, cod = env.sendCOD,
+      replyTo = replyTo }
+    if env.refuseSend then
+      env.fire("UI_ERROR_MESSAGE", 1, env.refuseSend)
+      env.fire("MAIL_FAILED")
+      return
+    end
+    env.sendSlots = {}
+    env.fire("MAIL_SEND_SUCCESS")
+  end
+  -- Alt-click on a bag item: Blizzard's bag button hands it to HandleModifiedItemClick.
+  env.alt = false
+  env.IsAltKeyDown = function() return env.alt end
+  env.HandleModifiedItemClick = function() return false end
+  env.hooksecurefunc = function(name, fn)
+    local orig = env[name]
+    env[name] = function(...)
+      local r = orig(...)
+      fn(...)
+      return r
+    end
+  end
+  env.altClick = function(bag, slot)
+    env.alt = true
+    env.HandleModifiedItemClick("link", {
+      IsBagAndSlot = function() return true end,
+      GetBagAndSlot = function() return bag, slot end,
+    })
+    env.alt = false
+  end
   env.chat = {}
   env.DEFAULT_CHAT_FRAME = { AddMessage = function(_, line) env.chat[#env.chat + 1] = line end }
   env.ReturnInboxItem = function(i) call("return", i) end
@@ -537,9 +606,19 @@ describe("Mailbox window: an open mail", function()
     assert.truthy(w.letterBody:GetText():find("Sold to Buyer", 1, true))
   end)
 
-  it("has a Reply button that stays off until the Send tab can write mail", function()
-    local _, _, w = open()
-    assert.is_true(w.replyButton:IsShown())
+  it("replies to a player's mail: the Send tab opens with the sender and Re: filled in", function()
+    local env, _, w = open()
+    assert.is_true(w.replyButton:IsEnabled())
+    w.replyButton:Click()
+    assert.are.equal("send", w.tab)
+    assert.are.equal("Mirella", w.sendPanel.to:GetText())
+    assert.are.equal("Re: About the raid", w.sendPanel.subject:GetText())
+    w.sendPanel.sendButton:Click()
+    assert.are.equal(3, env.sent[1].replyTo)
+  end)
+
+  it("can't reply to the auction house", function()
+    local _, _, w = open(nil, 1)
     assert.is_false(w.replyButton:IsEnabled())
   end)
 
@@ -882,6 +961,183 @@ describe("Mailbox window: Collect past the 50 mails the game shows", function()
     w.collectButton:Click()
     run(env, w, 10)
     assert.are.equal(0, #env.mails + #env.waiting)
+  end)
+end)
+
+describe("Mailbox window: a new mail", function()
+  local BAGS = { [0] = { { "Runecloth", 20, id = 14047 }, { "Arcane Dust", 5, id = 16204 } } }
+
+  local function send(opts)
+    opts = opts or {}
+    opts.mails = opts.mails or {}
+    opts.bags = opts.bags or BAGS
+    local env, ns, w = setup(opts)
+    env.UnitFactionGroup = function() return "Horde" end
+    env.UnitGUID = function() return "Player-7-0A1B2C3D" end
+    ns.characters = {
+      characters = function()
+        return { { key = "Dustwick-7", name = "Dustwick", faction = "Horde" },
+          { key = "Korvak-7", name = "Korvak", faction = "Horde" },
+          { key = "Mailbank-7", name = "Mailbank", faction = "Horde" },
+          { key = "Jaina-7", name = "Jaina", faction = "Alliance" },
+          { key = "Twin-5", name = "Twin", faction = "Horde" } }
+      end,
+    }
+    env.openMailbox()
+    w.tabs.send:Click()
+    return env, ns, w, w.sendPanel
+  end
+
+  it("shows the new mail in the Send tab's side panel", function()
+    local _, _, w, p = send()
+    assert.is_true(p.frame:IsShown())
+    assert.is_false(w.collect:IsShown())
+    assert.are.equal("Items (0 of 12)  ·  alt-click bag items", p.itemsLabel:GetText())
+    assert.are.equal("Postage 30c", p.postage:GetText())
+  end)
+
+  it("picks the recipient from your characters on this server and faction", function()
+    local _, _, _, p = send()
+    p.pick:Click()
+    assert.is_true(p.list:IsShown())
+    assert.are.same({ "Dustwick", "Mailbank" }, { p.listButtons[1].name, p.listButtons[2].name })
+    assert.is_false(p.listButtons[3]:IsShown())
+    p.listButtons[2]:Click()
+    assert.are.equal("Mailbank", p.to:GetText())
+    assert.is_false(p.list:IsShown())
+  end)
+
+  it("adds alt-clicked bag items, and a right-click on a slot takes one back", function()
+    local env, _, _, p = send()
+    env.altClick(0, 1)
+    env.altClick(0, 2)
+    assert.are.equal("Items (2 of 12)  ·  alt-click bag items", p.itemsLabel:GetText())
+    assert.are.equal("20", p.slots[1].count:GetText())
+    p.slots[1]:GetScript("OnClick")(p.slots[1], "RightButton")
+    assert.is_nil(env.sendSlots[1])
+    assert.are.equal("Items (1 of 12)  ·  alt-click bag items", p.itemsLabel:GetText())
+  end)
+
+  it("ignores alt-clicks while the Inbox tab is open", function()
+    local env, _, w = send()
+    w.tabs.inbox:Click()
+    env.altClick(0, 1)
+    assert.is_nil(env.sendSlots[1])
+  end)
+
+  it("takes an item dropped on a slot from the cursor", function()
+    local env, _, _, p = send()
+    env.C_Container.PickupContainerItem(0, 2)
+    p.slots[4]:Click()
+    assert.are.equal("Arcane Dust", env.sendSlots[1][1], "into the first free slot, like Blizzard's drop")
+  end)
+
+  it("sends gold with the recipient, subject and message, then clears the mail", function()
+    local env, _, _, p = send()
+    p.to:SetText("Dustwick")
+    p.to:GetScript("OnTextChanged")(p.to)
+    p.subject:SetText("Gold")
+    p.subject:GetScript("OnTextChanged")(p.subject)
+    p.body:SetText("For the mats.")
+    p.body:GetScript("OnTextChanged")(p.body)
+    p.amount:SetText("5g 20s")
+    p.amount:GetScript("OnTextChanged")(p.amount)
+    p.sendButton:Click()
+    assert.are.same({ to = "Dustwick", subject = "Gold", body = "For the mats.", money = 52000, cod = 0 },
+      env.sent[1])
+    assert.are.equal("Sent to Dustwick.", p.status:GetText())
+    assert.are.equal("", p.to:GetText())
+  end)
+
+  it("sends a COD for the items, never gold with it, named after the first item", function()
+    local env, _, _, p = send()
+    env.altClick(0, 1)
+    p.draft.to, p.draft.amount = "Dustwick", "3g"
+    p.modes.cod:Click()
+    p.sendButton:Click()
+    assert.are.same({ "Runecloth (20)", 0, 30000 }, { env.sent[1].subject, env.sent[1].money, env.sent[1].cod })
+  end)
+
+  it("says what's missing instead of sending", function()
+    local env, _, _, p = send()
+    p.sendButton:Click()
+    assert.are.equal(0, #env.sent)
+    assert.truthy(p.status:GetText():find("Type who gets the mail", 1, true))
+  end)
+
+  it("shows the game's reason when a send fails, and lets the player try again", function()
+    local env, _, _, p = send()
+    env.refuseSend = "Cannot find player"
+    p.draft.to, p.draft.subject = "Nobody", "Hi"
+    p.sendButton:Click()
+    assert.are.equal("|cffff6060Not sent: Cannot find player|r", p.status:GetText())
+    assert.is_true(p.sendButton:IsEnabled())
+    assert.are.equal("Nobody", p.draft.to, "the mail stays as written")
+  end)
+
+  it("keeps Send off while Collect runs, so the two don't share the game's answers", function()
+    local env, _, w, p = send({ mails = { { invoice = "seller", sender = "Horde Auction House",
+      subject = "Auction successful: A", money = 100 } } })
+    env.pending = true
+    w.tabs.inbox:Click()
+    w.collectButton:Click()
+    w.tabs.send:Click()
+    assert.is_false(p.sendButton:IsEnabled())
+    p.draft.to, p.draft.subject = "Dustwick", "Hi"
+    p:send()
+    assert.are.equal(0, #env.sent)
+    w.collector:stop()
+  end)
+
+  it("puts a refused item back rather than leaving it on the cursor", function()
+    local env, _, _, p = send()
+    env.ClickSendMailItemButton = function() end -- the game refuses it
+    env.ClearCursor = function() env.cursor = nil end
+    env.altClick(0, 1)
+    assert.is_nil(env.cursor)
+    assert.are.equal("Items (0 of 12)  ·  alt-click bag items", p.itemsLabel:GetText())
+  end)
+
+  it("gives Send back on the next visit when a send never got an answer", function()
+    local env, _, _, p = send()
+    env.SendMail = function() end -- no answer, say the player closed Blizzard's confirmation
+    p.draft.to, p.draft.subject = "Dustwick", "Hi"
+    p.sendButton:Click()
+    assert.is_false(p.sendButton:IsEnabled())
+    env.CloseMail()
+    env.openMailbox()
+    assert.is_true(p.sendButton:IsEnabled())
+  end)
+
+  it("gives Send back after a while without an answer", function()
+    local env, _, _, p = send()
+    env.SendMail = function() end
+    p.draft.to, p.draft.subject = "Dustwick", "Hi"
+    p.sendButton:Click()
+    env.runTimers(31)
+    assert.is_true(p.sendButton:IsEnabled())
+    assert.truthy(p.status:GetText():find("No answer", 1, true))
+  end)
+
+  it("doesn't send as a reply once the recipient changed", function()
+    local env, ns, w = setup({ mails = MAILS })
+    env.openMailbox()
+    w.listRows[3].button:Click()
+    w.replyButton:Click()
+    local p = w.sendPanel
+    p.to:SetText("Dustwick")
+    p.to:GetScript("OnTextChanged")(p.to)
+    p.sendButton:Click()
+    assert.is_nil(env.sent[1].replyTo)
+    assert.is_table(ns)
+  end)
+
+  it("keeps a half-written mail when another addon's send succeeds", function()
+    local env, _, _, p = send()
+    p.to:SetText("Dustwick")
+    p.to:GetScript("OnTextChanged")(p.to)
+    env.fire("MAIL_SEND_SUCCESS")
+    assert.are.equal("Dustwick", p.to:GetText())
   end)
 end)
 

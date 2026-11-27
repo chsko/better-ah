@@ -131,7 +131,7 @@ end
 -- take: Take all (money and every item); pay: the COD amount to pay before the items can be taken;
 -- ret: Return to sender, for player mail that holds something (an empty letter is deleted); delete: only once
 -- the mail holds nothing, so nothing is lost by a misclick.
--- reply is the Reply button's state; it stays off until the Send tab can write a mail (#158).
+-- reply: Reply opens the Send tab addressed to the sender (#158); not for the auction house or a Game Master.
 Mailbox.DELETE_OFF = "Delete is off until the mail is empty."
 Mailbox.COD_NOTE = "Pay %s to take the items. The gold goes to %s."
 function Mailbox.actions(mail)
@@ -141,7 +141,7 @@ function Mailbox.actions(mail)
     pay = (cod > 0 and items > 0) and cod or nil,
     ret = (holds and mail.canReply and not mail.wasReturned and not mail.isGM) and true or false,
     delete = not holds,
-    reply = false,
+    reply = (mail.canReply and not mail.isGM) and true or false,
   }
   a.take = holds and not a.pay
   if a.pay then

@@ -37,7 +37,21 @@ local function setup(opts)
     end
     env.mails[i] = copy
   end
-  env.GetInboxNumItems = function() return #env.mails end
+  -- The game sends at most 50 mails; the rest wait on the server until a refresh (env.waiting).
+  env.waiting = {}
+  env.GetInboxNumItems = function() return #env.mails, #env.mails + #env.waiting end
+  env.canCheckIn = 0
+  env.answerRefresh = function()
+    while #env.mails < 50 and #env.waiting > 0 do env.mails[#env.mails + 1] = table.remove(env.waiting, 1) end
+    env.fire("MAIL_INBOX_UPDATE")
+  end
+  env.checks = 0
+  env.CheckInbox = function()
+    env.checks = env.checks + 1
+    if env.slowRefresh then return end -- the answer comes later, with env.answerRefresh()
+    while #env.mails < 50 and #env.waiting > 0 do env.mails[#env.mails + 1] = table.remove(env.waiting, 1) end
+    env.fire("MAIL_INBOX_UPDATE")
+  end
   env.GetInboxHeaderInfo = function(i)
     local m = env.mails[i]
     -- Nobody can reply to the auction house's mail.
@@ -107,6 +121,10 @@ local function setup(opts)
   env.pending = false
   env.openingAll = {}
   env.C_Mail = {
+    CanCheckInbox = function()
+      local left = env.canCheckIn - env.now
+      return left <= 0, math.max(0, left)
+    end,
     IsCommandPending = function() return env.pending end,
     SetOpeningAll = function(on) env.openingAll[#env.openingAll + 1] = on end,
   }
@@ -735,6 +753,135 @@ describe("Mailbox window: Collect", function()
   it("greys a skipped row's coloured cells too", function()
     local _, _, w = collect()
     assert.is_nil(w.listRows[4][4]:GetText():find("|c", 1, true), "COD row")
+  end)
+end)
+
+describe("Mailbox window: Collect past the 50 mails the game shows", function()
+  local AH = "Horde Auction House"
+  local function sold(i)
+    return { invoice = "seller", sender = AH, subject = "Auction successful: Item " .. i, money = 100 }
+  end
+
+  local function big(shown, waiting, opts)
+    opts = opts or {}
+    local mails = {}
+    for i = 1, shown do mails[i] = opts.letters and { sender = "P" .. i, subject = "s", hasText = true,
+      body = "hi", read = true } or sold(i) end
+    local env, ns, w = setup({ mails = mails })
+    for i = 1, waiting do env.waiting[i] = sold(shown + i) end
+    env.openMailbox()
+    return env, ns, w
+  end
+
+  local function run(env, w, seconds)
+    for _ = 1, seconds do
+      if not w.collector:running() then return end
+      env.runTimers(1)
+    end
+  end
+
+  it("says how many more mails wait beyond the ones shown", function()
+    local _, _, w = big(50, 18)
+    assert.truthy(w.footerText:GetText():find("50 of 68 shown  ·  18 more waiting", 1, true))
+  end)
+
+  it("finishes the batch, counts down to the refresh, refreshes and carries on", function()
+    local env, _, w = big(3, 2)
+    env.canCheckIn = env.now + 40
+    w.collectButton:Click()
+    run(env, w, 5)
+    assert.are.equal(0, #env.mails, "the first batch is taken")
+    assert.is_true(w.collector:running())
+    assert.truthy(w.collectBags:GetText():find("Next mails in 0:3", 1, true))
+    assert.are.equal(0, env.checks)
+    run(env, w, 60)
+    assert.are.equal(1, env.checks)
+    assert.is_false(w.collector:running())
+    assert.are.equal(0, #env.mails + #env.waiting)
+    assert.truthy(w.lastRunText:GetText():find("5 sold", 1, true))
+  end)
+
+  it("stops waiting when the mailbox closes", function()
+    local env, _, w = big(2, 2)
+    env.canCheckIn = env.now + 40
+    w.collectButton:Click()
+    run(env, w, 4)
+    assert.is_true(w.collector:running())
+    env.CloseMail()
+    assert.is_false(w.collector:running())
+    env.runTimers(60)
+    assert.are.equal(0, env.checks)
+  end)
+
+  it("says so when the mails shown hold nothing to take, as no refresh brings in the rest", function()
+    local mails = {}
+    for i = 1, 50 do mails[i] = { sender = "P" .. i, subject = "s", hasText = true, body = "hi", read = true } end
+    mails[50] = sold(50)
+    local env, _, w = setup({ mails = mails })
+    for i = 1, 5 do env.waiting[i] = { sender = "Q" .. i, subject = "s", hasText = true, body = "hi", read = true } end
+    env.openMailbox()
+    -- The sale is taken and the refresh brings in a letter: now 50 letters fill what the game shows.
+    w.collectButton:Click()
+    run(env, w, 120)
+    assert.is_false(w.collector:running())
+    assert.are.equal(1, env.checks)
+    assert.truthy(w.lastRunText:GetText():find("4 more can't come in", 1, true))
+  end)
+
+  it("keeps waiting for the refresh's answer through an inbox update that changes nothing", function()
+    local env, _, w = big(2, 2)
+    env.slowRefresh = true
+    w.collectButton:Click()
+    run(env, w, 4)
+    assert.are.equal(1, env.checks)
+    env.fire("MAIL_INBOX_UPDATE") -- a late update, not the refresh's answer
+    run(env, w, 2)
+    assert.is_true(w.collector:running())
+    assert.truthy(w.collectBags:GetText():find("Fetching the next mails", 1, true))
+    env.answerRefresh()
+    run(env, w, 10)
+    assert.is_false(w.collector:running())
+    assert.are.equal(0, #env.mails)
+    assert.truthy(w.lastRunText:GetText():find("4 sold", 1, true))
+  end)
+
+  it("says so when the game never sends the next mails", function()
+    local env, _, w = big(2, 2)
+    env.slowRefresh = true
+    w.collectButton:Click()
+    run(env, w, 40)
+    assert.is_false(w.collector:running())
+    assert.truthy(w.lastRunText:GetText():find("didn't send the next mails", 1, true))
+  end)
+
+  it("still refreshes for waiting gold once the bags are full", function()
+    local env, _, w = big(2, 2)
+    env.free = 0
+    w.collectButton:Click()
+    run(env, w, 10)
+    assert.are.equal(1, env.checks)
+    assert.are.equal(0, #env.mails + #env.waiting)
+  end)
+
+  it("asks for the refresh anyway when the countdown never ends", function()
+    local env, _, w = big(1, 1)
+    env.C_Mail.CanCheckInbox = function() return false, 0 end
+    w.collectButton:Click()
+    run(env, w, 120)
+    assert.are.equal(1, env.checks)
+  end)
+
+  it("can fetch the next mails after a stop, when the ones shown hold nothing to take", function()
+    local env, _, w = big(1, 2)
+    env.canCheckIn = env.now + 40
+    w.collectButton:Click()
+    run(env, w, 3)
+    w.collectButton:Click() -- Stop during the countdown
+    assert.are.equal("Fetch the next mails", w.collectButton:GetText())
+    env.canCheckIn = 0
+    w.collectButton:Click()
+    run(env, w, 10)
+    assert.are.equal(0, #env.mails + #env.waiting)
   end)
 end)
 

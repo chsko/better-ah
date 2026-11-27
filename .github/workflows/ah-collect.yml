@@ -11,6 +11,13 @@ on:
     - cron: "*/15 * * * *"
       timezone: "Europe/Oslo"
   workflow_dispatch:
+  # A change to the page or the collector goes live right away, without waiting for a new
+  # export (the run then publishes from the cached stats).
+  push:
+    branches: [main]
+    paths:
+      - "companion/**"
+      - ".github/workflows/ah-collect.yml"
 
 # Shared with anything else that calls the export, so runs never overlap.
 concurrency:
@@ -71,11 +78,13 @@ jobs:
           REGION: eu
           RULESET: "2"
           HOUSE: "114"
+          PUBLISH: ${{ github.event_name == 'push' && '--publish' || '' }}
         # github.event has no repository on schedule runs, so build the URL from GITHUB_REPOSITORY.
         run: |
           companion/target/release/better-ah-companion collect \
             --out site --cache ah-cache \
-            --pages-url "https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}"
+            --pages-url "https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}" \
+            $PUBLISH
 
       - uses: actions/cache/save@v4
         if: steps.collect.outputs.changed == 'true'

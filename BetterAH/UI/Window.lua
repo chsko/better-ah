@@ -220,6 +220,7 @@ function Window:build()
     self.settingsView = ns.SettingsView.new(self, self.addon)
     self.settingsPanel = self.settingsView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
   end
+  self:buildPaneDivider(f)
   self:attachResize(f)
   self:renderView()
   return f
@@ -1045,6 +1046,7 @@ function Window:renderView()
     and not (view == "auctions" and self.myAuctionsPanel) and not (view == "ledger" and self.ledgerPanel)
     and not (view == "bids" and self.myBidsPanel))
   self:widenMain(view == "browse" and self.browsePanel ~= nil and self.browseView:wide())
+  self:applyPane()
   if self.browsePanel then self.browsePanel:SetShown(view == "browse") end
   self.pricesPanel:SetShown(view == "prices")
   self.disenchantPanel:SetShown(view == "disenchant")
@@ -1091,11 +1093,131 @@ end
 function Window:widenMain(wide)
   if self.wide == wide then return end
   self.wide = wide
+  self:placeMain()
+  self.detailPanel:SetShown(not wide)
+  -- Browse opens and closes an item's page by itself: its panel width and divider follow.
+  if self.paneDivider then self:applyPane() end
+end
+
+-- The main panel: up to the detail panel (as wide as the view's saved width), or to the window's edge
+-- while Browse's results use both panels' room.
+function Window:placeMain()
   local f = self.frame
+  local detail = self.detailWidth or DETAIL
   self.mainPanel:ClearAllPoints()
   self.mainPanel:SetPoint("TOPLEFT", f, "TOPLEFT", SIDEBAR + 6, TOP)
-  self.mainPanel:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", wide and -6 or -(DETAIL + 10), 6)
-  self.detailPanel:SetShown(not wide)
+  self.mainPanel:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", self.wide and -6 or -(detail + 10), 6)
+end
+
+-- The divider between the main and detail panels (#236): each view that allows it (DetailPane.VIEWS)
+-- keeps its own detail panel width, saved in BetterAHDB.panes.
+function Window:buildPaneDivider(f)
+  if not (ns.Divider and ns.DetailPane) then return end
+  local Pane = ns.DetailPane
+  self.paneDivider = ns.Divider.new(self.env, self.textLayer, {
+    height = HEIGHT + TOP - 6,
+    window = f,
+    get = function() return self.detailWidth or DETAIL end,
+    set = function(width) self:setDetailWidth(width) end,
+    clamp = Pane.width,
+    -- The view is taken as the drag starts, so a drag carried into another view saves to the one it began in.
+    begin = function() return self:paneView() end,
+    save = function(width, view)
+      if view then Pane.save(self.addon.paneSettings, view, width) end
+    end,
+    reset = function() self:setDetailWidth(Pane.DEFAULT) end,
+    text = "Drag to make this panel wider or narrower. Each view keeps its own width. Double-click to reset it.",
+  })
+end
+
+-- The view whose detail panel width is in use, or nil when the panel keeps its default width (Settings,
+-- the placeholders) or is hidden (Browse's results).
+function Window:paneView()
+  local view = self.model.view
+  if not (ns.DetailPane and ns.DetailPane.resizable(view)) then return nil end
+  if self.wide then return nil end
+  -- Only a view that can lay itself out for another width (tickets under #236 add them view by view).
+  if view ~= "prices" and view ~= "alts" then
+    local v = self:viewObject(view)
+    if not (v and v.layoutPanes) then return nil end
+  end
+  return view
+end
+
+-- Sets the detail panel to the shown view's saved width and shows the divider where it can be dragged.
+function Window:applyPane()
+  if not ns.DetailPane then return end
+  -- A drag still going when the view changes ends there, saved to the view it began in.
+  if self.paneDivider and self.paneDivider.dragging then self.paneDivider.stop() end
+  local view = self:paneView()
+  self:setDetailWidth(view and ns.DetailPane.saved(self.addon.paneSettings, view) or DETAIL, true)
+  if self.paneDivider then self.paneDivider:SetShown(view ~= nil) end
+end
+
+-- Lays the window out for a detail panel width wide (kept in range): the main panel gets the rest, and
+-- the shown view lays its lists and texts out again (layoutPanes(listWidth, detailWidth) on the view).
+-- force: lay the view out even when the width hasn't changed (it may have been laid out for another).
+function Window:setDetailWidth(width, force)
+  local Pane = ns.DetailPane
+  width = Pane and Pane.width(width) or DETAIL
+  if width == self.detailWidth and not force then return end
+  self.detailWidth = width
+  local listWidth = Pane and Pane.listWidth(width) or LIST_WIDTH
+  self.listWidth = listWidth
+  self:placeMain()
+  self.detailPanel:SetWidth(width)
+  self.detailTitle:SetWidth(width - 24)
+  self.detailBody:SetWidth(width - 24)
+  if self.paneDivider then
+    self.paneDivider:ClearAllPoints()
+    -- Centred on the gap between the two panels.
+    self.paneDivider:SetPoint("TOPRIGHT", self.frame, "TOPRIGHT", -(width + 6 + 4 / 2 - ns.Divider.WIDTH / 2), TOP)
+  end
+  local view = self.model.view
+  if view == "prices" then
+    self:layoutPrices(listWidth)
+  elseif view == "alts" then
+    self:layoutAlts(listWidth)
+  else
+    local v = self:viewObject(view)
+    if v and v.layoutPanes then v:layoutPanes(listWidth, width) end
+  end
+end
+
+-- The view object behind a sidebar entry, for the views that have one.
+function Window:viewObject(view)
+  return ({ post = self.postView, auctions = self.myAuctionsView, browse = self.browseView,
+    bids = self.myBidsView, disenchant = self.disenchantView, ledger = self.ledgerView,
+    settings = self.settingsView })[view]
+end
+
+-- Columns laid out for the default list width, laid out for listWidth the way buildRows places them:
+-- the first column takes the change (DetailPane.columns), and with a scroll bar (scrolls) columns too
+-- wide for the narrower rows are scaled to fit.
+function Window.fitColumns(columns, listWidth, scrolls)
+  if ns.DetailPane then columns = ns.DetailPane.columns(columns, listWidth) end
+  local width = scrolls and (listWidth - SCROLL_ROOM) or listWidth
+  local last = columns[#columns]
+  local scale = (last[2] + last[3] > width) and width / listWidth or 1
+  local out = {}
+  for i, col in ipairs(columns) do
+    local copy = {}
+    for k, v in pairs(col) do copy[k] = v end
+    copy[2], copy[3] = math.floor(col[2] * scale + 0.5), math.floor(col[3] * scale)
+    out[i] = copy
+  end
+  return out
+end
+
+function Window:layoutPrices(listWidth)
+  self.pricesPanel:SetWidth(listWidth)
+  Window.layoutRows(self.rows, self.pricesPanel, Window.fitColumns(COLUMNS, listWidth, true), listWidth)
+end
+
+function Window:layoutAlts(listWidth)
+  self.altsPanel:SetWidth(listWidth)
+  self.altsStatus:SetWidth(listWidth)
+  Window.layoutRows(self.altsRows, self.altsPanel, Window.fitColumns(ALT_COLUMNS, listWidth, true), listWidth)
 end
 
 function Window:render()

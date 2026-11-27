@@ -10,12 +10,17 @@ local function setup(opts)
   helper.load("BetterAH/Core/Mailbox.lua", ns)
   helper.load("BetterAH/Core/MailCollect.lua", ns)
   helper.load("BetterAH/Core/MailSend.lua", ns)
+  helper.load("BetterAH/Core/Disenchant.lua", ns)
+  helper.load("BetterAH/Core/Targets.lua", ns)
+  helper.load("BetterAH/Core/SendRules.lua", ns)
   helper.load("BetterAH/UI/Loading.lua", ns)
   helper.load("BetterAH/UI/WindowResize.lua", ns)
   helper.load("BetterAH/UI/Window.lua", ns)
   helper.load("BetterAH/Game/MailAPI.lua", ns)
   helper.load("BetterAH/Game/MailCollector.lua", ns)
+  helper.load("BetterAH/Game/MailSender.lua", ns)
   helper.load("BetterAH/UI/MailSendPanel.lua", ns)
+  helper.load("BetterAH/UI/MailRulesPanel.lua", ns)
   helper.load("BetterAH/UI/MailboxWindow.lua", ns)
   ns.db = {}
   ns.mailSettings = opts.settings or {}
@@ -140,6 +145,33 @@ local function setup(opts)
     env.cursor = env.bags[bag] and env.bags[bag][slot]
   end
   env.CursorHasItem = function() return env.cursor ~= nil end
+  -- A bag item: { name, count, id = itemID, bound, class, subclass, quality, level }; locked while on the mail.
+  local function attached(it)
+    for s = 1, 12 do if env.sendSlots[s] == it then return true end end
+    return false
+  end
+  env.C_Container.GetContainerNumSlots = function(bag) return env.bags[bag] and 16 or 0 end
+  env.C_Container.GetContainerItemInfo = function(bag, slot)
+    local it = env.bags[bag] and env.bags[bag][slot]
+    if not it then return nil end
+    return { itemID = it.id or 1, stackCount = it[2], itemName = it[1], isBound = it.bound or false,
+      isLocked = attached(it), quality = it.quality or 1 }
+  end
+  local function find(id)
+    for _, bag in pairs(env.bags) do
+      for _, it in pairs(bag) do if it.id == id then return it end end
+    end
+  end
+  env.C_Item = {
+    GetItemInfoInstant = function(id)
+      local it = find(id) or {}
+      return id, nil, nil, it.equip, nil, it.class, it.subclass
+    end,
+    GetItemInfo = function(id)
+      local it = find(id)
+      if it then return it[1], nil, it.quality or 1, it.level or 1 end
+    end,
+  }
   env.ClickSendMailItemButton = function(i, clear)
     if clear then
       env.sendSlots[i] = nil
@@ -174,8 +206,17 @@ local function setup(opts)
       env.fire("MAIL_FAILED")
       return
     end
+    -- What went is gone from the bags.
+    for s = 1, 12 do
+      local it = env.sendSlots[s]
+      if it then
+        for _, bag in pairs(env.bags) do
+          for slot, b in pairs(bag) do if b == it then bag[slot] = nil end end
+        end
+      end
+    end
     env.sendSlots = {}
-    env.fire("MAIL_SEND_SUCCESS")
+    if not env.quietSend then env.fire("MAIL_SEND_SUCCESS") end
   end
   -- Alt-click on a bag item: Blizzard's bag button hands it to HandleModifiedItemClick.
   env.alt = false
@@ -414,12 +455,12 @@ describe("Mailbox window", function()
     assert.are.equal("P30: s30", w.listRows[14][2]:GetText())
   end)
 
-  it("has an Inbox and a Send tab; Send is empty for now", function()
+  it("has an Inbox and a Send tab with the send rules", function()
     local env, _, w = setup({ mails = MAILS })
     env.openMailbox()
     w.tabs.send:Click()
     assert.is_false(w.list:IsShown())
-    assert.is_true(w.sendNote:IsShown())
+    assert.is_true(w.rulesPanel.frame:IsShown())
     w.tabs.inbox:Click()
     assert.is_true(w.list:IsShown())
   end)
@@ -1141,3 +1182,222 @@ describe("Mailbox window: a new mail", function()
   end)
 end)
 
+
+describe("Mailbox window: send rules and Send all", function()
+  local function bags()
+    local cloth = {}
+    for i = 1, 14 do cloth[i] = { "Runecloth", 20, id = 14047, class = 7, subclass = 5 } end
+    return {
+      [0] = cloth,
+      [1] = { { "Dream Dust", 10, id = 11176 }, { "Thorium Bar", 10, id = 12359, class = 7, subclass = 7 },
+        { "Hearthstone", 1, id = 6948, bound = true } },
+    }
+  end
+  local function rules()
+    return {
+      { match = "type", type = "cloth", to = "Dustwick", keep = 20 },
+      { match = "group", group = "all", to = "Mailbank" },
+      { match = "item", itemID = 12359, name = "Thorium Bar", to = "Gorvash", keep = 10 },
+    }
+  end
+
+  local function open(opts)
+    opts = opts or {}
+    local env, ns, w = setup({ mails = {}, bags = opts.bags or bags(), settings = { rules = opts.rules or rules() } })
+    env.UnitFactionGroup = function() return "Horde" end
+    env.UnitGUID = function() return "Player-7-0A1B2C3D" end
+    ns.characters = { characters = function()
+      return { { key = "Dustwick-7", name = "Dustwick", faction = "Horde" },
+        { key = "Mailbank-7", name = "Mailbank", faction = "Horde" } }
+    end }
+    env.openMailbox()
+    w.tabs.send:Click()
+    return env, ns, w, w.rulesPanel
+  end
+
+  -- Runs the timers until Send all is done.
+  local function finish(env, w)
+    for _ = 1, 200 do
+      if not w.sender:running() then return end
+      env.runTimers(1)
+    end
+  end
+
+  it("lists each rule with what it sends now, and sums it up in the footer", function()
+    local _, _, _, r = open()
+    assert.are.same({ "Cloth", "type", "Dustwick", "20", "260" },
+      { r.rows[1][1]:GetText(), r.rows[1][2]:GetText(), r.rows[1][3]:GetText(), r.rows[1][4]:GetText(),
+        r.rows[1][5]:GetText() })
+    assert.are.same({ "Enchanting mats", "DE group", "10" },
+      { r.rows[2][1]:GetText(), r.rows[2][2]:GetText(), r.rows[2][5]:GetText() })
+    assert.are.equal("keeps all", r.rows[3][5]:GetText())
+    assert.are.equal("270 items in 3 mails to 2 characters  ·  postage 4s 20c", r.footer:GetText())
+    assert.is_true(r.sendAllButton:IsEnabled())
+  end)
+
+  it("sends every mail, one at a time, each after the game's answer, then reports", function()
+    local env, _, w, r = open()
+    local answers = {}
+    env.quietSend = true -- the game answers each mail later
+    r.sendAllButton:Click()
+    assert.are.equal("Stop", r.sendAllButton:GetText())
+    env.runTimers(1)
+    assert.are.equal(1, #env.sent)
+    env.runTimers(5)
+    assert.are.equal(1, #env.sent, "no second mail before the first one's answer")
+    for _ = 1, 3 do
+      answers[#answers + 1] = #env.sent
+      env.fire("MAIL_SEND_SUCCESS")
+      env.runTimers(2)
+    end
+    assert.are.same({ 1, 2, 3 }, answers)
+    assert.are.equal(3, #env.sent)
+    assert.are.same({ "Dustwick", "Dustwick", "Mailbank" }, { env.sent[1].to, env.sent[2].to, env.sent[3].to })
+    assert.are.same({ 0, 0 }, { env.sent[1].money, env.sent[1].cod }, "rules never move gold")
+    assert.are.equal("Runecloth (20)", env.sent[1].subject)
+    assert.is_false(w.sender:running())
+    assert.are.equal("Last Send all: Sent 270 items in 3 mails: 2 to Dustwick, 1 to Mailbank.", r.lastText:GetText())
+    assert.truthy(env.chat[#env.chat]:find("Sent 270 items", 1, true))
+    local left = 0
+    for _ in pairs(env.bags[0]) do left = left + 1 end
+    assert.are.equal(1, left, "keeps 20 Runecloth")
+  end)
+
+  it("stops on MAIL_FAILED, puts the items back and says why", function()
+    local env, _, w, r = open()
+    env.refuseSend = "Cannot find player"
+    r.sendAllButton:Click()
+    finish(env, w)
+    assert.are.equal(1, #env.sent)
+    assert.are.same({}, env.sendSlots)
+    assert.are.equal("Last Send all: Nothing sent. Stopped: Cannot find player.", r.lastText:GetText())
+  end)
+
+  it("stops once the game answers the mail on its way when Stop is pressed", function()
+    local env, _, w, r = open()
+    env.quietSend = true
+    r.sendAllButton:Click()
+    env.runTimers(1)
+    r.sendAllButton:Click()
+    assert.is_true(w.sender:running())
+    env.fire("MAIL_SEND_SUCCESS")
+    assert.is_false(w.sender:running())
+    assert.are.equal(1, #env.sent)
+    assert.truthy(r.lastText:GetText():find("Sent 240 items in 1 of 3 mails: 1 to Dustwick. Stopped", 1, true))
+  end)
+
+  it("won't start while the new mail holds items, or while Collect runs", function()
+    local env, ns, w, r = open()
+    env.altClick(1, 1) -- onto the new mail: no rule is being written
+    assert.is_table(env.sendSlots[1])
+    r.sendAllButton:Click()
+    assert.is_false(w.sender:running())
+    assert.are.equal(ns.MailRulesPanel.MAIL_BUSY, r.lastText:GetText())
+  end)
+
+  it("won't start while Collect runs", function()
+    local env, ns, w, r = open()
+    env.mails[1] = { invoice = "seller", sender = "Horde Auction House", subject = "Auction successful: A",
+      money = 100 }
+    env.fire("MAIL_INBOX_UPDATE")
+    env.pending = true
+    w.tabs.inbox:Click()
+    w.collectButton:Click()
+    w.tabs.send:Click()
+    r:clickSendAll()
+    assert.is_false(w.sender:running())
+    assert.are.equal(ns.MailRulesPanel.COLLECTING, r.lastText:GetText())
+    w.collector:stop()
+  end)
+
+  it("lets go of Blizzard's hidden To box after each mail, and keeps the slots for the run", function()
+    local env, _, w, r = open()
+    local focused = true
+    env.SendMailNameEditBox = { HasFocus = function() return focused end, ClearFocus = function() focused = false end }
+    env.quietSend = true
+    r.sendAllButton:Click()
+    local slot = w.sendPanel.slots[1]
+    slot:GetScript("OnClick")(slot, "RightButton")
+    assert.is_table(env.sendSlots[1], "a right-click doesn't pull an item off Send all's mail")
+    env.runTimers(1)
+    focused = true
+    env.fire("MAIL_SEND_SUCCESS")
+    assert.is_false(focused)
+    w.sender:stop()
+  end)
+
+  it("says a rule is to you on its own recipient", function()
+    local _, _, _, r = open({ rules = { { match = "type", type = "cloth", to = "Korvak" } } })
+    assert.are.equal("to you", r.rows[1][5]:GetText())
+    assert.are.equal("Nothing to send.", r.footer:GetText())
+  end)
+
+  it("reads only the carried bags, not a bank bag", function()
+    local _, _, _, r = open({ bags = { [5] = { { "Runecloth", 20, id = 14047, class = 7, subclass = 5 } } } })
+    assert.are.equal("Nothing to send.", r.footer:GetText())
+  end)
+
+  it("keeps Collect and the new mail's Send off while Send all runs", function()
+    local env, _, w, r = open()
+    env.quietSend = true
+    r.sendAllButton:Click()
+    assert.is_false(w.sendPanel.sendButton:IsEnabled())
+    w.tabs.inbox:Click()
+    assert.is_false(w.collectButton:IsEnabled())
+    env.CloseMail()
+    assert.is_false(w.sender:running())
+  end)
+
+  it("gives up when the game never answers", function()
+    local env, _, w, r = open()
+    env.quietSend = true
+    r.sendAllButton:Click()
+    env.runTimers(31)
+    assert.is_false(w.sender:running())
+    assert.truthy(r.lastText:GetText():find("no answer from the game", 1, true))
+  end)
+
+  it("adds a rule for an alt-clicked bag item, edits it and deletes it", function()
+    local env, ns, _, r = open({ rules = {} })
+    assert.is_true(r.emptyText:IsShown())
+    assert.is_false(r.sendAllButton:IsEnabled())
+    r.addButton:Click()
+    assert.is_true(r.editor:IsShown())
+    assert.are.equal("Dustwick", r.toBox:GetText(), "your first character to start with")
+    r.saveButton:Click()
+    assert.truthy(r.editStatus:GetText():find("Pick what the rule sends", 1, true))
+    env.altClick(1, 2)
+    assert.is_nil(env.sendSlots[1], "the item names the rule; it isn't attached")
+    assert.are.equal("Thorium Bar", r.choiceText:GetText())
+    r.keepBox:SetText("5")
+    r.keepBox:GetScript("OnTextChanged")(r.keepBox)
+    r.saveButton:Click()
+    assert.is_false(r.editor:IsShown())
+    assert.are.same({ { match = "item", itemID = 12359, name = "Thorium Bar", to = "Dustwick", keep = 5 } },
+      ns.mailSettings.rules)
+    assert.are.equal("keeps all", r.rows[1][5]:GetText(), "whole stacks: the stack of 10 would leave less than 5")
+
+    r.rows[1].button:Click()
+    assert.are.equal("Change rule", r.editTitle:GetText())
+    r.matchButtons.type:Click()
+    r.nextButton:Click()
+    assert.are.equal("Leather", r.choiceText:GetText())
+    r.toNext:Click()
+    assert.are.equal("Mailbank", r.toBox:GetText())
+    r.saveButton:Click()
+    assert.are.same({ match = "type", type = "leather", to = "Mailbank", keep = 5 }, ns.mailSettings.rules[1])
+
+    r.rows[1].button:Click()
+    r.deleteButton:Click()
+    assert.are.same({}, ns.mailSettings.rules)
+  end)
+
+  it("won't save a second rule for the same thing", function()
+    local _, ns, _, r = open()
+    r.addButton:Click()
+    r.matchButtons.type:Click()
+    r.saveButton:Click()
+    assert.truthy(r.editStatus:GetText():find("There is a rule for that already", 1, true))
+    assert.are.equal(3, #ns.mailSettings.rules)
+  end)
+end)

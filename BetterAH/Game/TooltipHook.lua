@@ -200,8 +200,9 @@ function TooltipHook.install(env, addon)
   events:SetScript("OnEvent", function(_, event, key)
     if event == "MODIFIER_STATE_CHANGED" then
       if key == "LSHIFT" or key == "RSHIFT" then hook:refresh() end
-    elseif event == "PLAYER_ENTERING_WORLD" and addon.purchases then
-      addon.purchases:prune(try(env.GetServerTime) or 0)
+    elseif event == "PLAYER_ENTERING_WORLD" then
+      if addon.purchases then addon.purchases:prune(try(env.GetServerTime) or 0) end
+      if addon.snipeProfit then addon.snipeProfit:prune(try(env.GetServerTime) or 0) end
     end
   end)
   return hook

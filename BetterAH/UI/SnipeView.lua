@@ -758,12 +758,34 @@ function SnipeView:buyNext(source)
       -- single auctions), and PlaceBid buys one of them.
       if self.addon.purchases then self.addon.purchases:bought(find.itemID, find.link, 1, find.price, self:now()) end
       if self.addon.ledgerAPI then self.addon.ledgerAPI:bought(find.itemID, find.name, 1, find.price, "Snipe") end
+      -- pcall: the record must never cost the redraw below.
+      if self.addon.snipeProfit then
+        pcall(function()
+          self.addon.snipeProfit:bought(find.itemID, find.link, find.price, self:now(), self:profitTarget(find))
+        end)
+      end
     else
       session:missed(self:now(), find, failure, kind)
     end
     self:refresh()
   end, source)
   self:refresh()
+end
+
+-- The target a bought find counts toward in Disenchant > Results (#254): a copy of its name, item level
+-- band, profit and the worth the sniper saw, taken now so a later edit of the target doesn't move it.
+function SnipeView:profitTarget(find)
+  local target = find.source
+  if type(target) ~= "table" then return nil end
+  local row = self.dview and self.dview:rowFor(find.band)
+  local max = row and row.band.max
+  if not max then
+    for _, b in ipairs(ns.Disenchant.greenBands()) do
+      if b.min == find.band then max = b.max end
+    end
+  end
+  return { name = ns.Targets.typesText(target), min = find.band, max = max,
+    profit = ns.Targets.profitText(target), worth = find.worth }
 end
 
 function SnipeView:passNext()

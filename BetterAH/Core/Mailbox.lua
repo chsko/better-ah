@@ -127,6 +127,62 @@ function Mailbox.totals(rows)
   return t
 end
 
+-- What the side panel lets the player do with an open mail (#155): { take, pay, ret, delete, reply, note }.
+-- take: Take all (money and every item); pay: the COD amount to pay before the items can be taken;
+-- ret: Return to sender, for player mail that holds something (an empty letter is deleted); delete: only once
+-- the mail holds nothing, so nothing is lost by a misclick.
+-- reply is the Reply button's state; it stays off until the Send tab can write a mail (#158).
+Mailbox.DELETE_OFF = "Delete is off until the mail is empty."
+Mailbox.COD_NOTE = "Pay %s to take the items. The gold goes to %s."
+function Mailbox.actions(mail)
+  local items, money, cod = mail.items or 0, mail.money or 0, mail.cod or 0
+  local holds = items > 0 or money > 0
+  local a = {
+    pay = (cod > 0 and items > 0) and cod or nil,
+    ret = (holds and mail.canReply and not mail.wasReturned and not mail.isGM) and true or false,
+    delete = not holds,
+    reply = false,
+  }
+  a.take = holds and not a.pay
+  if a.pay then
+    a.note = string.format(Mailbox.COD_NOTE, ns.Money.format(a.pay), mail.sender or "the sender")
+  elseif holds then
+    a.note = Mailbox.DELETE_OFF
+  end
+  return a
+end
+
+-- The line under an auction invoice's subject: who bought or sold, and what the gold is made of.
+-- inv: { type, player, bid, deposit, consignment } from GetInboxInvoiceInfo.
+function Mailbox.invoiceText(inv)
+  if type(inv) ~= "table" or not inv.type then return nil end
+  local fmt, who = ns.Money.format, inv.player or "?"
+  local bid = inv.bid or 0
+  if inv.type == "buyer" then return string.format("Bought from %s for %s.", who, fmt(bid)) end
+  local s = string.format("Sold to %s for %s. Deposit back %s, auction house cut %s.", who, fmt(bid),
+    fmt(inv.deposit or 0), fmt(inv.consignment or 0))
+  if inv.type == "seller_temp_invoice" then s = s .. " The gold comes in a later mail." end
+  return s
+end
+
+-- Where a mail went after the inbox changed: the row with the same sender and subject nearest its old place
+-- (mail moves up as mail before it goes), or nil once it may be gone. Auction mail often shares its sender and
+-- subject, so when the inbox got shorter (taken empty, returned or deleted) nil is the safe answer: following a
+-- look-alike would let the next click act on a mail the player never opened. oldCount: mails before the change.
+function Mailbox.find(rows, mail, oldCount)
+  if not mail then return nil end
+  if oldCount and #rows < oldCount then return nil end
+  local best, dist
+  for _, row in ipairs(rows) do
+    local m = row.mail
+    if m.sender == mail.sender and m.subject == mail.subject then
+      local d = math.abs(row.index - mail.index)
+      if not dist or d < dist then best, dist = row, d end
+    end
+  end
+  return best
+end
+
 -- The subject formats from the client's globals (env is _G in the client).
 function Mailbox.subjects(env)
   local s = {}

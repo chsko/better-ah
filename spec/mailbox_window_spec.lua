@@ -24,14 +24,24 @@ local function setup(opts)
   env.UnitName = function() return "Korvak" end
   env.C_Container = { CalculateTotalNumberOfFreeBagSlots = function() return env.free or 9 end }
 
-  env.mails = opts.mails or {}
+  -- A copy, as takes change the mails.
+  env.mails = {}
+  for i, m in ipairs(opts.mails or {}) do
+    local copy = {}
+    for k, v in pairs(m) do copy[k] = v end
+    if m.attachments then
+      copy.attachments = {}
+      for slot, a in pairs(m.attachments) do copy.attachments[slot] = a end
+    end
+    env.mails[i] = copy
+  end
   env.GetInboxNumItems = function() return #env.mails end
   env.GetInboxHeaderInfo = function(i)
     local m = env.mails[i]
     -- Nobody can reply to the auction house's mail.
     local canReply = not (m.sender or ""):find("Auction House", 1, true)
     return nil, nil, m.sender, m.subject, m.money or 0, m.cod or 0, m.daysLeft or 30, m.items or 0, m.read or false,
-      false, false, canReply, m.isGM or false
+      m.returned or false, false, canReply, m.isGM or false
   end
   env.GetInboxInvoiceInfo = function(i)
     local m = env.mails[i]
@@ -39,6 +49,11 @@ local function setup(opts)
   end
   env.GetInboxItem = function(i, slot)
     local m = env.mails[i]
+    if m.attachments then
+      local a = m.attachments[slot]
+      if a then return a[1], 1, "icon-" .. a[1], a[2] end
+      return nil
+    end
     if m.itemName and (slot == (m.slot or 1) or (m.slot == "all" and slot <= m.items)) then
       return m.itemName, 1, nil, m.count or 1
     end
@@ -46,7 +61,34 @@ local function setup(opts)
   env.textRead = {}
   env.GetInboxText = function(i)
     env.textRead[i] = true
+    env.mails[i].read = true
     return env.mails[i].body
+  end
+
+  -- What the player did with mail, in order: { "loot", 3 }, { "item", 4, 1 }, { "return", 3 }, ...
+  env.mailCalls = {}
+  local function call(...) env.mailCalls[#env.mailCalls + 1] = { ... } end
+  env.AutoLootMailItem = function(i)
+    call("loot", i)
+    local m = env.mails[i]
+    m.money, m.items, m.itemName, m.attachments = 0, 0, nil, nil
+  end
+  env.TakeInboxMoney = function(i) call("money", i); env.mails[i].money = 0 end
+  env.TakeInboxItem = function(i, slot)
+    call("item", i, slot)
+    local m = env.mails[i]
+    m.cod = 0
+    if m.attachments then m.attachments[slot] = nil end
+  end
+  env.ReturnInboxItem = function(i) call("return", i) end
+  env.DeleteInboxItem = function(i) call("delete", i) end
+  env.StaticPopupDialogs = {}
+  env.StaticPopup_Show = function(which, a1, a2, data) env.popup = { which = which, a1, a2, data = data } end
+  env.StaticPopup_Hide = function(which) if env.popup and env.popup.which == which then env.popup = nil end end
+  env.acceptPopup = function()
+    local p = env.popup
+    env.popup = nil
+    env.StaticPopupDialogs[p.which].OnAccept(nil, p.data)
   end
 
   -- Like the client: MAIL_SHOW shows Blizzard's frame; CloseMail fires MAIL_CLOSED and hides it, and its
@@ -282,3 +324,177 @@ describe("Mailbox window", function()
     assert.are.equal("P1: s1", w.listRows[1][2]:GetText())
   end)
 end)
+
+describe("Mailbox window: an open mail", function()
+  local function open(mails, row)
+    local env, ns, w = setup({ mails = mails or MAILS })
+    env.openMailbox()
+    w.listRows[row or 3].button:Click()
+    return env, ns, w
+  end
+
+  it("opens the clicked mail in the side panel: subject, sender, time left, text and attachments", function()
+    local env, _, w = open()
+    assert.is_true(w.letter:IsShown())
+    assert.is_false(w.detailBody:IsShown())
+    assert.are.equal("About the raid", w.letterTitle:GetText())
+    assert.truthy(w.letterMeta:GetText():find("From Mirella", 1, true))
+    assert.truthy(w.letterMeta:GetText():find("12d left", 1, true))
+    assert.are.equal("See you at 20:00.", w.letterBody:GetText())
+    assert.is_true(w.icons[1]:IsShown())
+    assert.is_false(w.icons[2]:IsShown())
+    assert.is_true(env.textRead[3])
+    assert.is_true(w.listRows[3].button.selectedTexture:IsShown())
+    assert.is_false(w.listRows[1].button.selectedTexture:IsShown())
+  end)
+
+  it("goes back to the inbox summary when the open mail is clicked again", function()
+    local _, _, w = open()
+    w.listRows[3].button:Click()
+    assert.is_false(w.letter:IsShown())
+    assert.are.equal("In this inbox", w.detailTitle:GetText())
+  end)
+
+  it("takes the money and every attachment with Take all, through the game's own call", function()
+    local env, _, w = open({ { sender = "Gorvash", subject = "Mats", money = 15000,
+      attachments = { { "Linen Cloth", 20 }, { "Wool Cloth", 5 } }, items = 2 } }, 1)
+    assert.truthy(w.goldLine:GetText():find("1g 50s 0c", 1, true))
+    assert.are.equal("20", w.icons[1].count:GetText())
+    w.takeButton:Click()
+    assert.are.same({ { "loot", 1 } }, env.mailCalls)
+    assert.are.equal(0, env.mails[1].money)
+  end)
+
+  it("takes one item when its icon is clicked", function()
+    local env, _, w = open({ { sender = "Gorvash", subject = "Mats",
+      attachments = { { "Linen Cloth", 20 }, { "Wool Cloth", 5 } }, items = 2 } }, 1)
+    w.icons[2]:Click()
+    assert.are.same({ { "item", 1, 2 } }, env.mailCalls)
+  end)
+
+  it("returns a player's mail to its sender, and can't return auction house mail", function()
+    local env, _, w = open()
+    w.returnButton:Click()
+    assert.are.same({ { "return", 3 } }, env.mailCalls)
+    w.listRows[2].button:Click()
+    assert.is_false(w.returnButton:IsEnabled())
+  end)
+
+  it("keeps Delete off while the mail holds items or gold, and deletes it once empty", function()
+    local env, _, w = open()
+    assert.is_false(w.deleteButton:IsEnabled())
+    assert.are.equal("Delete is off until the mail is empty.", w.letterNote:GetText())
+    w.deleteButton:Click()
+    assert.are.same({}, env.mailCalls)
+    env.mails[3].items, env.mails[3].itemName = 0, nil
+    env.fire("MAIL_INBOX_UPDATE")
+    assert.is_true(w.deleteButton:IsEnabled())
+    w.deleteButton:Click()
+    assert.are.same({ { "delete", 3 } }, env.mailCalls)
+  end)
+
+  it("doesn't delete a mail that got something in it after the panel last looked", function()
+    local env, _, w = open({ { sender = "Mirella", subject = "Hi", body = "hey", read = true } }, 1)
+    env.mails[1].money = 500 -- no inbox update yet
+    w.deleteButton:Click()
+    assert.are.same({}, env.mailCalls)
+  end)
+
+  it("asks before paying a COD, and pays only on yes", function()
+    local env, _, w = open(nil, 4)
+    assert.are.equal("Pay 4g 0s 0c and take", w.takeButton:GetText())
+    assert.truthy(w.letterNote:GetText():find("The gold goes to Krugg", 1, true))
+    w.takeButton:Click()
+    assert.are.same({}, env.mailCalls, "nothing paid before the yes")
+    assert.are.equal("4g 0s 0c", env.popup[1])
+    assert.are.equal("Krugg", env.popup[2])
+    w.icons[1]:Click()
+    assert.are.same({}, env.mailCalls, "an icon asks too")
+    env.acceptPopup()
+    assert.are.same({ { "item", 4, 1 } }, env.mailCalls)
+  end)
+
+  it("pays the mail the player said yes to, even after mail before it went", function()
+    local env, _, w = open(nil, 4)
+    w.takeButton:Click()
+    table.insert(env.mails, 1, { sender = "Newcomer", subject = "Hi" })
+    env.fire("MAIL_INBOX_UPDATE")
+    env.acceptPopup()
+    assert.are.same({ { "item", 5, 1 } }, env.mailCalls)
+  end)
+
+  it("pays with the clicked item first, and keeps the mail open to take the rest", function()
+    local env, _, w = open({ { sender = "Krugg", subject = "Herbs", cod = 500, items = 2,
+      attachments = { { "Peacebloom", 5 }, { "Silverleaf", 5 } } } }, 1)
+    w.icons[2]:Click()
+    env.acceptPopup()
+    assert.are.same({ { "item", 1, 2 } }, env.mailCalls)
+    env.fire("MAIL_INBOX_UPDATE")
+    assert.is_true(w.letter:IsShown())
+    assert.are.equal("Take all", w.takeButton:GetText())
+  end)
+
+  it("closes the COD question when the mailbox closes or the mail is gone", function()
+    local env, _, w = open(nil, 4)
+    w.takeButton:Click()
+    env.CloseMail()
+    assert.is_nil(env.popup)
+    env.openMailbox()
+    w.listRows[4].button:Click()
+    w.takeButton:Click()
+    table.remove(env.mails, 4)
+    env.fire("MAIL_INBOX_UPDATE")
+    assert.is_nil(env.popup)
+  end)
+
+  it("takes the item an icon shows, also once the slots before it are empty", function()
+    local env, _, w = open({ { sender = "Gorvash", subject = "Mats", items = 2,
+      attachments = { { "Linen Cloth", 20 }, { "Wool Cloth", 5 } } } }, 1)
+    w.icons[1]:Click()
+    env.fire("MAIL_INBOX_UPDATE")
+    w.icons[1]:Click()
+    assert.are.same({ { "item", 1, 1 }, { "item", 1, 2 } }, env.mailCalls)
+  end)
+
+  it("doesn't move on to a look-alike mail once the open one is gone", function()
+    local env, _, w = open({ { sender = "M", subject = "Hi", body = "a", read = true },
+      { sender = "M", subject = "Hi", body = "b", read = true } }, 1)
+    w.deleteButton:Click()
+    table.remove(env.mails, 1)
+    env.fire("MAIL_INBOX_UPDATE")
+    assert.is_false(w.letter:IsShown())
+    assert.is_nil(env.textRead[2])
+  end)
+
+  it("keeps the open mail open as new mail comes in, and closes it once the inbox gets shorter", function()
+    local env, _, w = open()
+    table.insert(env.mails, 1, { sender = "Newcomer", subject = "Hi" })
+    env.fire("MAIL_INBOX_UPDATE")
+    assert.are.equal("About the raid", w.letterTitle:GetText())
+    assert.is_true(w.listRows[4].button.selectedTexture:IsShown())
+    table.remove(env.mails, 4)
+    env.fire("MAIL_INBOX_UPDATE")
+    assert.is_false(w.letter:IsShown())
+  end)
+
+  it("shows a sale's buyer and what the gold is made of", function()
+    local mails = { { invoice = "seller", sender = "Horde Auction House", subject = "Auction successful: Arcane Dust",
+      money = 3515, invoiceItem = "Arcane Dust", invoiceCount = 20 } }
+    local _, _, w = open(mails, 1)
+    assert.truthy(w.letterBody:GetText():find("Sold to Buyer", 1, true))
+  end)
+
+  it("has a Reply button that stays off until the Send tab can write mail", function()
+    local _, _, w = open()
+    assert.is_true(w.replyButton:IsShown())
+    assert.is_false(w.replyButton:IsEnabled())
+  end)
+
+  it("opens each visit on the inbox summary, with no mail open", function()
+    local env, _, w = open()
+    env.CloseMail()
+    env.openMailbox()
+    assert.is_false(w.letter:IsShown())
+  end)
+end)
+

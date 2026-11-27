@@ -1,6 +1,7 @@
 -- The Mailbox window (#149, #154): Better AH's own window, separate from the auction house window, shown instead
--- of Blizzard's mail frame at a mailbox. Inbox lists every mail with its kind (Core/Mailbox.lua); Send comes in
--- later tickets. Layout follows the mockup linked from #149. Game calls go through Game/MailAPI.lua.
+-- of Blizzard's mail frame at a mailbox. Inbox lists every mail with its kind (Core/Mailbox.lua); clicking a row
+-- opens it in the side panel (#155). Send comes in later tickets. Layout follows the mockup linked from #149.
+-- Game calls go through Game/MailAPI.lua.
 local _, ns = ...
 ns = ns or {}
 
@@ -18,6 +19,14 @@ MailboxWindow.COLUMNS = {
 }
 MailboxWindow.SEND_EMPTY = "Send rules, Send all and new mail come here."
 MailboxWindow.EMPTY = "No mail."
+MailboxWindow.HINT = "click a row to open it"
+MailboxWindow.REPLY_SOON = "Reply opens the Send tab addressed to the sender, once the Send tab can write mail."
+MailboxWindow.COD_POPUP = "BETTERAH_MAIL_COD"
+local ICON, ICON_STEP, ICONS_PER_ROW = 28, 32, 8
+
+local function money(copper)
+  return ns.Money.format(copper)
+end
 
 function MailboxWindow.new(env, addon)
   local self = setmetatable({ env = env, addon = addon or {}, rows = {}, offset = 0, tab = "inbox" }, MailboxWindow)
@@ -46,6 +55,7 @@ function MailboxWindow:build()
   f:Hide()
   -- Escape or the close button: the player is done with the mailbox.
   f:SetScript("OnHide", function()
+    self:hideCOD()
     if self.api.open and not self.closing then self.api:closeMail() end
   end)
   if env.UISpecialFrames then table.insert(env.UISpecialFrames, "BetterAHMailFrame") end
@@ -118,6 +128,7 @@ function MailboxWindow:build()
   body:SetJustifyH("LEFT")
   body:SetSpacing(3)
   self.detailPanel, self.detailTitle, self.detailBody = detail, title, body
+  self:buildLetter(dtext)
 
   if ns.WindowResize and ns.WindowScale then
     local db = self.addon.db
@@ -129,12 +140,152 @@ function MailboxWindow:build()
   return f
 end
 
+-- The side panel's open mail (#155): who and when, the text, attachments, gold, and what can be done with it.
+function MailboxWindow:buildLetter(parent)
+  local env, inner = self.env, DETAIL - 24
+  local letter = env.CreateFrame("Frame", nil, parent)
+  letter:SetAllPoints(parent)
+  self.letter = letter
+  local function text(font, y, height)
+    local fs = letter:CreateFontString(nil, "OVERLAY", font)
+    fs:SetPoint("TOPLEFT", letter, "TOPLEFT", 12, y)
+    fs:SetWidth(inner)
+    if height then fs:SetHeight(height) end
+    fs:SetJustifyH("LEFT")
+    if fs.SetJustifyV then fs:SetJustifyV("TOP") end
+    return fs
+  end
+  self.letterTitle = text("GameFontNormal", -12)
+  self.letterMeta = text("GameFontHighlightSmall", -30)
+  self.letterBody = text("GameFontHighlightSmall", -50, 130)
+  self.letterBody:SetSpacing(3)
+  if self.letterBody.SetMaxLines then self.letterBody:SetMaxLines(9) end
+  self.attachLabel = text("GameFontNormalSmall", -188)
+  self.attachLabel:SetText("Attached")
+  self.icons = {}
+  for slot = 1, ns.MailAPI.ATTACHMENTS do
+    local b = env.CreateFrame("Button", nil, letter)
+    b:SetSize(ICON, ICON)
+    local col, row = (slot - 1) % ICONS_PER_ROW, math.floor((slot - 1) / ICONS_PER_ROW)
+    b:SetPoint("TOPLEFT", letter, "TOPLEFT", 12 + col * ICON_STEP, -204 - row * ICON_STEP)
+    b.icon = b:CreateTexture(nil, "ARTWORK")
+    b.icon:SetAllPoints(b)
+    b.count = b:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
+    b.count:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -1, 2)
+    -- The icon's own attachment slot: slots keep their gaps as items are taken, the icons don't.
+    b:SetScript("OnClick", function() if b.attachment then self:clickAttachment(b.attachment.slot) end end)
+    b:SetScript("OnEnter", function() self:attachmentTooltip(b) end)
+    b:SetScript("OnLeave", function() if env.GameTooltip then env.GameTooltip:Hide() end end)
+    b:Hide()
+    self.icons[slot] = b
+  end
+  self.goldLine = text("GameFontHighlight", -276)
+
+  local function button(label, w, h, x, y, onClick)
+    local b = env.CreateFrame("Button", nil, letter, "UIPanelButtonTemplate")
+    b:SetSize(w, h)
+    b:SetPoint("BOTTOMLEFT", letter, "BOTTOMLEFT", x, y)
+    b:SetText(label)
+    b:SetScript("OnClick", onClick)
+    return b
+  end
+  self.takeButton = button("Take all", inner, 28, 12, 70, function() self:takeOpen() end)
+  local small = math.floor((inner - 10) / 3)
+  self.replyButton = button("Reply", small, 22, 12, 42, function() end)
+  ns.Window.tooltip(env, self.replyButton, "Reply", MailboxWindow.REPLY_SOON)
+  self.returnButton = button("Return", small, 22, 12 + small + 5, 42, function() self:returnOpen() end)
+  self.deleteButton = button("Delete", small, 22, 12 + 2 * (small + 5), 42, function() self:deleteOpen() end)
+  local note = letter:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  note:SetPoint("BOTTOMLEFT", letter, "BOTTOMLEFT", 12, 12)
+  note:SetWidth(inner)
+  note:SetJustifyH("LEFT")
+  self.letterNote = note
+  letter:Hide()
+end
+
 function MailboxWindow:selectTab(id)
   self.tab = id
   self:render()
 end
 
-function MailboxWindow.clickRow() end -- opening a mail comes with #155
+-- Opens the clicked mail in the side panel; clicking the open mail again goes back to the inbox summary.
+function MailboxWindow:clickRow(r)
+  local row = self.rows[self.offset + r]
+  if not row then return end
+  if self.selected and self.selected.index == row.index then
+    self.selected = nil
+  else
+    self.selected = row.mail
+  end
+  self:hideCOD()
+  self:readLetter()
+  self:render()
+end
+
+function MailboxWindow:readLetter()
+  self.openLetter = self.selected and self.api:letter(self.selected.index) or nil
+end
+
+function MailboxWindow:takeOpen()
+  local mail = self.selected
+  if not mail then return end
+  if (mail.cod or 0) > 0 then return self:askCOD() end
+  self.api:takeAll(mail)
+end
+
+function MailboxWindow:clickAttachment(slot)
+  local mail = self.selected
+  if not mail then return end
+  if (mail.cod or 0) > 0 then return self:askCOD(slot) end
+  self.api:takeItem(mail, slot)
+end
+
+-- COD: the game takes the gold with the first item, so the player says yes first, in Blizzard's own popup.
+-- slot: the clicked attachment, taken first (like Blizzard's); else the first one.
+-- The yes pays the open mail as it is then (the panel follows it as the inbox changes), only if it is still the
+-- same mail with the same amount.
+function MailboxWindow:askCOD(slot)
+  local env, mail = self.env, self.selected
+  if not (env.StaticPopupDialogs and env.StaticPopup_Show) then return end
+  if not env.StaticPopupDialogs[MailboxWindow.COD_POPUP] then
+    env.StaticPopupDialogs[MailboxWindow.COD_POPUP] = {
+      text = "Pay %s to %s for this mail's items?", button1 = "Pay", button2 = "Cancel",
+      OnAccept = function(_, data)
+        local open = self.selected
+        if data and open and open.sender == data.mail.sender and open.subject == data.mail.subject
+          and open.cod == data.mail.cod then
+          self.api:payCOD(open, data.slot)
+        end
+      end,
+      timeout = 0, whileDead = true, hideOnEscape = true, showAlert = true,
+    }
+  end
+  env.StaticPopup_Show(MailboxWindow.COD_POPUP, money(mail.cod), mail.sender or "the sender",
+    { mail = mail, slot = slot })
+end
+
+function MailboxWindow:hideCOD()
+  if self.env.StaticPopup_Hide then self.env.StaticPopup_Hide(MailboxWindow.COD_POPUP) end
+end
+
+function MailboxWindow:returnOpen()
+  if self.selected then self.api:returnMail(self.selected) end
+end
+
+function MailboxWindow:deleteOpen()
+  local mail = self.selected
+  if mail and ns.Mailbox.actions(mail).delete then self.api:deleteMail(mail) end
+end
+
+function MailboxWindow:attachmentTooltip(b)
+  local tip, a, mail = self.env.GameTooltip, b.attachment, self.selected
+  if not (tip and a and mail) then return end
+  tip:SetOwner(b, "ANCHOR_RIGHT")
+  if not (tip.SetInboxItem and pcall(tip.SetInboxItem, tip, mail.index, a.slot)) then
+    tip:SetText(a.name, 1, 1, 1)
+  end
+  tip:Show()
+end
 
 function MailboxWindow:scrollTo(offset)
   local max = math.max(0, #self.rows - #self.listRows)
@@ -147,6 +298,12 @@ function MailboxWindow:setMails(mails)
   local Mailbox = ns.Mailbox
   self.rows = Mailbox.rows(mails, Mailbox.subjects(self.env))
   self.totals = Mailbox.totals(self.rows)
+  -- The open mail stays open as the inbox changes under it, until it is gone.
+  local found = Mailbox.find(self.rows, self.selected, self.mailCount)
+  self.mailCount = #self.rows
+  if self.selected and not found then self:hideCOD() end
+  self.selected = found and found.mail or nil
+  self:readLetter()
   self:scrollTo(self.offset)
   self:render()
 end
@@ -155,6 +312,7 @@ function MailboxWindow:open(mails)
   self:build()
   self.offset = 0
   self.tab = "inbox"
+  self.selected, self.mailCount = nil, nil
   self:setMails(mails)
   self.frame:Show()
 end
@@ -164,10 +322,6 @@ function MailboxWindow:close()
   self.closing = true
   self.frame:Hide()
   self.closing = nil
-end
-
-local function money(copper)
-  return ns.Money.format(copper)
 end
 
 -- One row's cells: kind, item or sender, qty, gold, left. COD shows what it costs to take.
@@ -187,6 +341,9 @@ function MailboxWindow:renderRows()
     local row = inbox and self.rows[self.offset + i]
     local cells = row and MailboxWindow.cells(row)
     r.button:SetShown(row and true or false)
+    if r.button.selectedTexture then
+      r.button.selectedTexture:SetShown(row and self.selected and row.index == self.selected.index or false)
+    end
     for c = 1, #MailboxWindow.COLUMNS do r[c]:SetText(cells and cells[c] or "") end
   end
   ns.Window.syncScrollBar(self.listRows.scrollBar, self.offset, inbox and #self.rows or 0)
@@ -217,6 +374,7 @@ end
 function MailboxWindow.footer(totals)
   local n = totals.mails
   local s = n == 1 and "1 mail" or (n .. " mails")
+  if n > 0 then s = s .. "  ·  " .. MailboxWindow.HINT end
   if totals.expiring > 0 then
     s = s .. string.format("  ·  |cffff9a3c%d expire in under %d days|r", totals.expiring, ns.Mailbox.EXPIRING_DAYS)
   end
@@ -238,7 +396,13 @@ function MailboxWindow:render()
   local name = self.env.UnitName and self.env.UnitName("player")
   local free = self.api:freeSlots()
   self.statusText:SetText((name or "") .. (free and string.format("  ·  bags %d free", free) or ""))
-  if inbox then
+  local open = inbox and self.selected
+  self.letter:SetShown(open and true or false)
+  self.detailTitle:SetShown(not open)
+  self.detailBody:SetShown(not open)
+  if open then
+    self:renderLetter()
+  elseif inbox then
     self.detailTitle:SetText("In this inbox")
     self.detailBody:SetText(MailboxWindow.summaryText(totals))
   else
@@ -246,6 +410,47 @@ function MailboxWindow:render()
     self.detailBody:SetText(MailboxWindow.SEND_EMPTY)
   end
   self:renderRows()
+end
+
+-- The side panel's text for an open mail: "From Mirella · 12d left", the gold line, the body.
+function MailboxWindow.letterText(mail, letter)
+  local Mailbox = ns.Mailbox
+  local left = Mailbox.timeLeft(mail.daysLeft)
+  if Mailbox.isExpiring(mail) then left = "|cffff9a3c" .. left .. " left|r" else left = left .. " left" end
+  local meta = string.format("From %s  ·  %s", mail.sender or "?", left)
+  local gold = ""
+  if (mail.cod or 0) > 0 then gold = "COD  |cffff9a3c" .. money(mail.cod) .. "|r"
+  elseif (mail.money or 0) > 0 then gold = "Gold attached  |cff8fd0ff+" .. money(mail.money) .. "|r" end
+  local body = letter and letter.body or ""
+  local invoice = letter and Mailbox.invoiceText(letter.invoice)
+  if invoice then body = body ~= "" and (invoice .. "\n\n" .. body) or invoice end
+  return meta, gold, body
+end
+
+function MailboxWindow:renderLetter()
+  local mail, letter = self.selected, self.openLetter or { attachments = {} }
+  local meta, gold, body = MailboxWindow.letterText(mail, letter)
+  self.letterTitle:SetText((mail.subject and mail.subject ~= "") and mail.subject or "(no subject)")
+  self.letterMeta:SetText(meta)
+  self.letterBody:SetText(body)
+  self.goldLine:SetText(gold)
+  self.attachLabel:SetShown(#letter.attachments > 0)
+  for i, b in ipairs(self.icons) do
+    local a = letter.attachments[i]
+    b.attachment = a
+    b:SetShown(a and true or false)
+    if a then
+      b.icon:SetTexture(a.texture or "Interface\\Icons\\INV_Misc_QuestionMark")
+      b.count:SetText(a.count > 1 and tostring(a.count) or "")
+    end
+  end
+  local acts = ns.Mailbox.actions(mail)
+  self.takeButton:SetText(acts.pay and ("Pay " .. money(acts.pay) .. " and take") or "Take all")
+  self.takeButton:SetEnabled(acts.take or acts.pay ~= nil)
+  self.replyButton:SetEnabled(acts.reply)
+  self.returnButton:SetEnabled(acts.ret)
+  self.deleteButton:SetEnabled(acts.delete)
+  self.letterNote:SetText(acts.note or "")
 end
 
 function MailboxWindow:onEvent(event)

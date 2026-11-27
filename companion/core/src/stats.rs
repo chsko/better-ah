@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn utc_day_boundary_splits_hours() {
-        let midnight = 1_795_046_400; // 2026-11-17 00:00:00 UTC
+        let midnight = 1_795_046_400; // 2026-11-19 00:00:00 UTC
         assert_eq!(midnight % 86_400, 0);
         let mut s = Stats::new();
         let a = snap(midnight - 600, vec![l(1, 720, 1, 5, TimeLeft::Long)]);

@@ -3,7 +3,9 @@
 //! Nothing in this crate does I/O: snapshots go in, sales and stats come out.
 //! The `better-ah-companion` binary wraps it with HTTP and files.
 
+pub mod export;
 pub mod infer;
+pub mod rank;
 pub mod snapshot;
 pub mod stats;
 

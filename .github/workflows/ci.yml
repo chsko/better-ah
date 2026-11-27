@@ -16,6 +16,8 @@ jobs:
       - run: luarocks install luacheck && luarocks install busted
       - run: luacheck .
       - run: busted
+      # The companion's generated addon data file must be valid Lua 5.1.
+      - run: luac -p companion/core/tests/golden/SellTimes.lua
 
   rust:
     runs-on: ubuntu-latest

@@ -217,6 +217,19 @@ MailboxWindow.COLLECTING_HINT = "Taking one mail every 0.15 s. You can keep play
 MailboxWindow.KIND_LABELS = { other = "Other player mail", letter = "Letters with text" }
 MailboxWindow.BAGS_FULL = "Bags full. Gold keeps coming; %s stay in the mail until you free up bag space."
 MailboxWindow.ITEMS_LEFT = "%s stay in the mail; open it to take them."
+MailboxWindow.NEXT_BATCH = "Next mails in %s. The game allows one inbox refresh a minute. " ..
+  "Collect carries on by itself while the mailbox stays open."
+MailboxWindow.REFRESHING = "Fetching the next mails..."
+MailboxWindow.NO_REFRESH = "The game didn't send the next mails. Close and reopen the mailbox to carry on."
+MailboxWindow.FETCH = "Fetch the next mails"
+MailboxWindow.BLOCKED = "The mails shown hold nothing Collect takes, so the %d more can't come in. " ..
+  "Take or delete some of them first."
+
+-- 0:42 for a countdown.
+function MailboxWindow.clock(seconds)
+  seconds = math.max(0, math.floor(seconds))
+  return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
+end
 local KIND_ROW = 20
 
 function MailboxWindow:buildCollect(parent)
@@ -298,6 +311,8 @@ function MailboxWindow:collected(run)
   local line = run.summary
   if run.reason == "stuck" then line = line .. " Stopped: the game stopped handing mail over." end
   if run.reason == "cancelled" then line = line .. " Stopped: the game cancelled collecting." end
+  if run.reason == "blocked" then line = line .. " " .. string.format(MailboxWindow.BLOCKED, run.more or 0) end
+  if run.reason == "norefresh" then line = line .. " " .. MailboxWindow.NO_REFRESH end
   if run.itemsLeft and run.itemsLeft > 0 then
     local left = MailboxWindow.items(run.itemsLeft)
     if run.bagsFull then
@@ -360,14 +375,27 @@ function MailboxWindow:renderCollect(totals)
     local done = run.done == 1 and "1 mail done" or (run.done .. " mails done")
     self.collectProgress:SetText(done .. (run.money > 0 and ("  ·  |cff8fd0ff+" .. money(run.money) .. "|r") or ""))
     local left = run.bagsFull and Collect.itemsLeft(self.rows, ticks) or 0
-    self.collectBags:SetText(run.bagsFull and string.format(MailboxWindow.BAGS_FULL, MailboxWindow.items(left)) or "")
+    local notes = {}
+    if run.bagsFull then notes[#notes + 1] = string.format(MailboxWindow.BAGS_FULL, MailboxWindow.items(left)) end
+    if run.waiting then
+      notes[#notes + 1] = string.format(MailboxWindow.NEXT_BATCH, MailboxWindow.clock(run.waiting))
+    elseif run.awaitInbox then
+      notes[#notes + 1] = MailboxWindow.REFRESHING
+    end
+    self.collectBags:SetText(table.concat(notes, "\n\n"))
     self.collectButton:SetText("Stop collecting")
     self.collectButton:SetEnabled(true)
   else
     local n = preview.mails
-    self.collectButton:SetText(n == 0 and "Nothing to collect" or (n == 1 and "Collect 1 mail" or
-      ("Collect " .. n .. " mails")))
-    self.collectButton:SetEnabled(n > 0 and self.collector ~= nil)
+    -- Nothing to take here, but mail waits beyond what is shown and there is room for it.
+    local fetch = n == 0 and self.api:moreWaiting() > 0 and (self.api.shown or 0) < ns.MailCollector.SHOWN
+    if fetch then
+      self.collectButton:SetText(MailboxWindow.FETCH)
+    else
+      self.collectButton:SetText(n == 0 and "Nothing to collect" or (n == 1 and "Collect 1 mail" or
+        ("Collect " .. n .. " mails")))
+    end
+    self.collectButton:SetEnabled((n > 0 or fetch) and self.collector ~= nil)
   end
   self.lastRunText:SetText(self.lastRun and ("Last run: " .. self.lastRun) or "")
 end
@@ -526,9 +554,11 @@ function MailboxWindow:renderRows()
   ns.Window.syncScrollBar(self.listRows.scrollBar, self.offset, inbox and #self.rows or 0)
 end
 
-function MailboxWindow.footer(totals)
+-- more: mails the game hasn't sent yet (it shows 50 at once, #157).
+function MailboxWindow.footer(totals, more)
   local n = totals.mails
   local s = n == 1 and "1 mail" or (n .. " mails")
+  if more and more > 0 then s = string.format("%d of %d shown  ·  %d more waiting", n, n + more, more) end
   if n > 0 then s = s .. "  ·  " .. MailboxWindow.HINT end
   if totals.expiring > 0 then
     s = s .. string.format("  ·  |cffff9a3c%d expire in under %d days|r", totals.expiring, ns.Mailbox.EXPIRING_DAYS)
@@ -547,7 +577,7 @@ function MailboxWindow:render()
   self.footerText:SetShown(inbox)
   self.sendNote:SetShown(not inbox)
   self.emptyText:SetText(inbox and #self.rows == 0 and MailboxWindow.EMPTY or "")
-  self.footerText:SetText(MailboxWindow.footer(totals))
+  self.footerText:SetText(MailboxWindow.footer(totals, self.api.moreWaiting and self.api:moreWaiting()))
   local name = self.env.UnitName and self.env.UnitName("player")
   local free = self.api:freeSlots()
   self.statusText:SetText((name or "") .. (free and string.format("  ·  bags %d free", free) or ""))
@@ -612,7 +642,10 @@ function MailboxWindow:onEvent(event, ...)
   local c = self.collector
   self.api:onEvent(event, {
     onOpen = function(mails) self:open(mails) end,
-    onInbox = function(mails) self:setMails(mails) end,
+    onInbox = function(mails)
+      if c then c:inboxUpdated() end
+      self:setMails(mails)
+    end,
     onClose = function()
       if c then c:stop("closed") end
       self:close()

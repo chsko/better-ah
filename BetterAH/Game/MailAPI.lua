@@ -74,7 +74,10 @@ end
 -- log: write the raw headers to the debug log (on MAIL_SHOW only, as MAIL_INBOX_UPDATE fires on every take).
 function MailAPI:readInbox(log)
   self.subjects = ns.Mailbox and ns.Mailbox.subjects(self.env)
-  local n = try(self.env.GetInboxNumItems) or 0
+  -- shown: what the game sent (at most 50); total: what the inbox really holds (#157).
+  local n, total = try(self.env.GetInboxNumItems)
+  n = tonumber(n) or 0
+  self.shown, self.total = n, math.max(n, tonumber(total) or n)
   local mails = {}
   for i = 1, n do mails[i] = self:readMail(i) end
   if log then MailAPI.log(mails) end
@@ -162,6 +165,23 @@ function MailAPI:payCOD(mail, slot)
     end
   end
   return false
+end
+
+-- Mail the game hasn't sent yet: the inbox holds more than the 50 it shows at once (#157).
+function MailAPI:moreWaiting()
+  return math.max(0, (self.total or 0) - (self.shown or 0))
+end
+
+-- May the inbox be refreshed now? Else the seconds until the game allows it (about one refresh a minute).
+function MailAPI:canRefresh()
+  local c = self.env.C_Mail
+  if not (c and type(c.CanCheckInbox) == "function") then return true, 0 end
+  local can, seconds = try(c.CanCheckInbox)
+  return can and true or false, tonumber(seconds) or 0
+end
+
+function MailAPI:checkInbox()
+  try(self.env.CheckInbox)
 end
 
 -- Collect's single takes (Game/MailCollector.lua): it never plans COD mail.

@@ -11,7 +11,7 @@ ns = ns or {}
 local MailAPI = {}
 MailAPI.__index = MailAPI
 
-MailAPI.EVENTS = { "MAIL_SHOW", "MAIL_INBOX_UPDATE", "MAIL_CLOSED" }
+MailAPI.EVENTS = { "MAIL_SHOW", "MAIL_INBOX_UPDATE", "MAIL_CLOSED", "MAIL_FAILED", "MAIL_OPEN_ALL_CANCELED" }
 MailAPI.ATTACHMENTS = 16 -- ATTACHMENTS_MAX_RECEIVE in Forever's MailFrame.lua
 
 local function try(fn, ...)
@@ -33,7 +33,7 @@ function MailAPI:replacing()
 end
 
 -- One mail: { index, sender, subject, money, cod, daysLeft, items, itemName, count, hasText, invoice, isGM,
--- canReply, wasReturned }.
+-- canReply, wasReturned, slots = { { slot, itemID } } (the attachments, for Collect) }.
 function MailAPI:readMail(i)
   local env = self.env
   local _, _, sender, subject, money, cod, daysLeft, items, wasRead, wasReturned, _, canReply, isGM =
@@ -47,11 +47,13 @@ function MailAPI:readMail(i)
   -- The first attachment names the mail; count adds up every attachment.
   if mail.items > 0 then
     local total = 0
+    mail.slots = {}
     for slot = 1, MailAPI.ATTACHMENTS do
-      local name, _, _, count = try(env.GetInboxItem, i, slot)
-      if name then
+      local name, itemID, _, count = try(env.GetInboxItem, i, slot)
+      if name or itemID then -- an item not cached yet has an ID but no name
         mail.itemName = mail.itemName or name
         total = total + (tonumber(count) or 1)
+        mail.slots[#mail.slots + 1] = { slot = slot, itemID = itemID }
       end
     end
     if total > 0 then mail.count = total end
@@ -162,6 +164,26 @@ function MailAPI:payCOD(mail, slot)
   return false
 end
 
+-- Collect's single takes (Game/MailCollector.lua): it never plans COD mail.
+function MailAPI:takeMoney(index)
+  try(self.env.TakeInboxMoney, index)
+end
+
+function MailAPI:takeSlot(index, slot)
+  try(self.env.TakeInboxItem, index, slot)
+end
+
+-- Is the game still busy with the last mail command? Then the next take waits.
+function MailAPI:commandPending()
+  local c = self.env.C_Mail
+  return c and type(c.IsCommandPending) == "function" and try(c.IsCommandPending) and true or false
+end
+
+function MailAPI:setOpeningAll(on)
+  local c = self.env.C_Mail
+  if c and type(c.SetOpeningAll) == "function" then try(c.SetOpeningAll, on) end
+end
+
 function MailAPI:returnMail(mail)
   try(self.env.ReturnInboxItem, mail.index)
 end
@@ -224,8 +246,9 @@ function MailAPI:freeSlots()
   return free
 end
 
--- handlers: onOpen(mails), onInbox(mails), onClose(). Only while replacing Blizzard's frame.
-function MailAPI:onEvent(event, handlers)
+-- handlers: onOpen(mails), onInbox(mails), onClose(), onFailed(itemID), onCancelled(). Only while replacing
+-- Blizzard's frame.
+function MailAPI:onEvent(event, handlers, ...)
   if event == "MAIL_SHOW" then
     if not self:replacing() then
       self:revealBlizzard()
@@ -244,6 +267,10 @@ function MailAPI:onEvent(event, handlers)
     end
   elseif event == "MAIL_INBOX_UPDATE" then
     if self.open and handlers.onInbox then handlers.onInbox(self:readInbox()) end
+  elseif event == "MAIL_FAILED" then
+    if self.open and handlers.onFailed then handlers.onFailed(...) end
+  elseif event == "MAIL_OPEN_ALL_CANCELED" then
+    if self.open and handlers.onCancelled then handlers.onCancelled() end
   elseif event == "MAIL_CLOSED" then
     local was = self.open
     self.open = false

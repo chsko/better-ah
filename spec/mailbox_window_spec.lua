@@ -8,10 +8,12 @@ local function setup(opts)
   local ns = helper.load("BetterAH/Core/Money.lua")
   helper.load("BetterAH/Core/WindowScale.lua", ns)
   helper.load("BetterAH/Core/Mailbox.lua", ns)
+  helper.load("BetterAH/Core/MailCollect.lua", ns)
   helper.load("BetterAH/UI/Loading.lua", ns)
   helper.load("BetterAH/UI/WindowResize.lua", ns)
   helper.load("BetterAH/UI/Window.lua", ns)
   helper.load("BetterAH/Game/MailAPI.lua", ns)
+  helper.load("BetterAH/Game/MailCollector.lua", ns)
   helper.load("BetterAH/UI/MailboxWindow.lua", ns)
   ns.db = {}
   ns.mailSettings = opts.settings or {}
@@ -73,13 +75,43 @@ local function setup(opts)
     local m = env.mails[i]
     m.money, m.items, m.itemName, m.attachments = 0, 0, nil, nil
   end
-  env.TakeInboxMoney = function(i) call("money", i); env.mails[i].money = 0 end
-  env.TakeInboxItem = function(i, slot)
-    call("item", i, slot)
+  env.takeTimes = {}
+  -- Like the server: auction house mail goes once it is empty.
+  local function afterTake(i)
+    env.takeTimes[#env.takeTimes + 1] = env.now
     local m = env.mails[i]
+    if (m.sender or ""):find("Auction House", 1, true) and (m.money or 0) == 0 and (m.items or 0) == 0 then
+      table.remove(env.mails, i)
+    end
+    env.fire("MAIL_INBOX_UPDATE")
+  end
+  env.TakeInboxMoney = function(i)
+    call("money", i)
+    env.mails[i].money = 0
+    afterTake(i)
+  end
+  env.TakeInboxItem = function(i, slot)
+    local m = env.mails[i]
+    if env.free == 0 then
+      call("full", i, slot)
+      env.fire("MAIL_FAILED", 1)
+      return
+    end
+    call("item", i, slot)
     m.cod = 0
     if m.attachments then m.attachments[slot] = nil end
+    m.items = math.max(0, (m.items or 0) - 1)
+    if m.items == 0 then m.itemName = nil end
+    afterTake(i)
   end
+  env.pending = false
+  env.openingAll = {}
+  env.C_Mail = {
+    IsCommandPending = function() return env.pending end,
+    SetOpeningAll = function(on) env.openingAll[#env.openingAll + 1] = on end,
+  }
+  env.chat = {}
+  env.DEFAULT_CHAT_FRAME = { AddMessage = function(_, line) env.chat[#env.chat + 1] = line end }
   env.ReturnInboxItem = function(i) call("return", i) end
   env.DeleteInboxItem = function(i) call("delete", i) end
   env.StaticPopupDialogs = {}
@@ -257,10 +289,11 @@ describe("Mailbox window", function()
   it("counts what the inbox holds per kind, and mail that expires soon", function()
     local env, _, w = setup({ mails = MAILS })
     env.openMailbox()
-    local body = w.detailBody:GetText()
-    assert.truthy(body:find("Sold: 1  (35s 15c)", 1, true))
-    assert.truthy(body:find("Expired: 1  (1 item)", 1, true))
-    assert.truthy(body:find("2 expire in under 3 days", 1, true))
+    local sold, expired = w.kindRows[1], w.kindRows[5]
+    assert.are.same({ "Sold", "1", "35s 15c" }, { sold.label:GetText(), sold.count:GetText(), sold.holds:GetText() })
+    assert.are.same({ "Expired", "1", "1 item" },
+      { expired.label:GetText(), expired.count:GetText(), expired.holds:GetText() })
+    assert.truthy(w.collectExpiring:GetText():find("2 expire in under 3 days", 1, true))
     assert.truthy(w.footerText:GetText():find("4 mails", 1, true))
     assert.truthy(w.statusText:GetText():find("Korvak", 1, true))
     assert.truthy(w.statusText:GetText():find("bags 9 free", 1, true))
@@ -279,7 +312,8 @@ describe("Mailbox window", function()
     local env, _, w = setup({ mails = {} })
     env.openMailbox()
     assert.are.equal("No mail.", w.emptyText:GetText())
-    assert.are.equal("No mail.", w.detailBody:GetText())
+    assert.are.equal("Nothing to collect", w.collectButton:GetText())
+    assert.is_false(w.collectButton:IsEnabled())
   end)
 
   it("scrolls a long inbox", function()
@@ -352,7 +386,8 @@ describe("Mailbox window: an open mail", function()
     local _, _, w = open()
     w.listRows[3].button:Click()
     assert.is_false(w.letter:IsShown())
-    assert.are.equal("In this inbox", w.detailTitle:GetText())
+    assert.is_true(w.collect:IsShown())
+    assert.are.equal("Collect", w.collectTitle:GetText())
   end)
 
   it("takes the money and every attachment with Take all, through the game's own call", function()
@@ -495,6 +530,211 @@ describe("Mailbox window: an open mail", function()
     env.CloseMail()
     env.openMailbox()
     assert.is_false(w.letter:IsShown())
+  end)
+end)
+
+describe("Mailbox window: Collect", function()
+  local AH = "Horde Auction House"
+  local INBOX = {
+    { invoice = "seller", sender = AH, subject = "Auction successful: Arcane Dust", money = 3515,
+      invoiceItem = "Arcane Dust", invoiceCount = 20 },
+    { sender = AH, subject = "Auction expired: Runecloth", items = 2,
+      attachments = { { "Runecloth", 20 }, { "Runecloth", 20 } } },
+    { sender = "Mirella", subject = "About the raid", body = "See you.", read = true, items = 1,
+      attachments = { { "Righteous Orb", 1 } } },
+    { sender = "Krugg", subject = "Black Lotus", cod = 40000, items = 1, attachments = { { "Black Lotus", 1 } } },
+    { sender = "Gorvash", subject = "Mats", money = 10000, items = 1, attachments = { { "Linen Cloth", 20 } } },
+  }
+
+  local function collect(opts)
+    opts = opts or {}
+    local env, ns, w = setup({ mails = opts.mails or INBOX, settings = opts.settings })
+    env.free = opts.free
+    env.openMailbox()
+    return env, ns, w
+  end
+
+  local function runAll(env, w)
+    for _ = 1, 40 do
+      if not w.collector:running() then return end
+      env.runTimers(1)
+    end
+  end
+
+  it("ticks the auction kinds and other player mail, leaves letters unticked and COD without a box", function()
+    local _, _, w = collect()
+    local byId = {}
+    for _, r in ipairs(w.kindRows) do byId[r.id] = r end
+    assert.is_true(byId.sold.box:GetChecked())
+    assert.is_true(byId.other.box:GetChecked())
+    assert.is_false(byId.letter.box:GetChecked())
+    assert.is_nil(byId.cod.box)
+    assert.truthy(byId.cod.holds:GetText():find("never", 1, true))
+    assert.are.equal("Collect 3 mails", w.collectButton:GetText())
+    assert.are.equal("Collect takes 1g 35s 15c and 3 items", w.collectTakes:GetText())
+  end)
+
+  it("greys the rows Collect skips", function()
+    local _, _, w = collect()
+    assert.are.same({ 1, 1, 1 }, w.listRows[1][1].textColor)
+    assert.are.same({ 0.55, 0.55, 0.55 }, w.listRows[3][1].textColor, "letter")
+    assert.are.same({ 0.55, 0.55, 0.55 }, w.listRows[4][1].textColor, "COD")
+  end)
+
+  it("remembers the ticks per account", function()
+    local _, ns, w = collect()
+    w.kindRows[1].box:Click()
+    assert.is_false(ns.mailSettings.collect.sold)
+    assert.are.equal("Collect 2 mails", w.collectButton:GetText())
+  end)
+
+  it("takes one thing at a time, money before items, the first inside the click", function()
+    local env, _, w = collect()
+    w.collectButton:Click()
+    assert.are.same({ { "money", 1 } }, env.mailCalls, "the first take runs in the click")
+    assert.are.equal("Stop collecting", w.collectButton:GetText())
+    runAll(env, w)
+    assert.are.same({ { "money", 1 }, { "item", 1, 2 }, { "item", 1, 1 }, { "money", 3 }, { "item", 3, 1 } },
+      env.mailCalls)
+    for i = 2, #env.takeTimes do
+      assert.is_true(env.takeTimes[i] - env.takeTimes[i - 1] >= 0.15)
+    end
+    assert.are.same({ true, false }, env.openingAll)
+  end)
+
+  it("waits while the game still has a mail command pending", function()
+    local env, _, w = collect()
+    w.collectButton:Click()
+    env.pending = true
+    env.runTimers(3)
+    assert.are.equal(1, #env.mailCalls)
+    env.pending = false
+    env.runTimers(1)
+    assert.are.equal(2, #env.mailCalls)
+  end)
+
+  it("never takes a COD or a letter, and sums the run up in the window and the chat", function()
+    local env, _, w = collect()
+    w.collectButton:Click()
+    runAll(env, w)
+    assert.are.equal("Mirella", env.mails[1].sender)
+    assert.are.equal(1, env.mails[1].items, "the letter keeps its item")
+    assert.are.equal("Krugg", env.mails[2].sender)
+    assert.are.equal(1, env.mails[2].items, "the COD isn't paid")
+    assert.are.equal(40000, env.mails[2].cod)
+    local line = "Collected 1g 35s: 1 sold, 1 expired back, 1 other mail."
+    assert.truthy(w.lastRunText:GetText():find(line, 1, true))
+    assert.truthy(env.chat[1]:find(line, 1, true))
+    assert.are.equal("Nothing to collect", w.collectButton:GetText())
+  end)
+
+  it("keeps taking gold once the bags are full, and says how many items stay in the mail", function()
+    local env, _, w = collect({ free = 0 })
+    w.collectButton:Click()
+    runAll(env, w)
+    assert.are.same({ { "money", 1 }, { "money", 4 } }, env.mailCalls)
+    assert.truthy(w.lastRunText:GetText():find("3 items stay in the mail", 1, true))
+  end)
+
+  it("skips an item the game refused, and carries on with the rest", function()
+    local env, _, w = collect()
+    env.TakeInboxItem = function(i, slot)
+      env.mailCalls[#env.mailCalls + 1] = { "refused", i, slot }
+      env.fire("MAIL_FAILED", 1)
+    end
+    w.collectButton:Click()
+    runAll(env, w)
+    assert.is_false(w.collector:running())
+    -- The fake gives every attachment item ID 1, so one refusal skips both Runecloth stacks.
+    assert.are.same({ { "money", 1 }, { "refused", 1, 2 }, { "money", 4 } }, env.mailCalls)
+  end)
+
+  it("stops on Stop, and when the mailbox closes", function()
+    local env, _, w = collect()
+    w.collectButton:Click()
+    w.collectButton:Click()
+    assert.is_false(w.collector:running())
+    env.runTimers(3)
+    assert.are.equal(1, #env.mailCalls)
+    w.collectButton:Click()
+    env.CloseMail()
+    assert.is_false(w.collector:running())
+    env.runTimers(3)
+    assert.are.equal(2, #env.mailCalls)
+  end)
+
+  it("leaves gold the game keeps (at the gold cap, say) and goes on with the rest", function()
+    local env, _, w = collect({ mails = { { sender = AH, subject = "Auction successful: A", money = 100,
+      invoice = "seller" }, { sender = AH, subject = "Auction expired: B", items = 1,
+      attachments = { { "B", 1 } } } } })
+    env.TakeInboxMoney = function(i) env.mailCalls[#env.mailCalls + 1] = { "kept", i } end
+    w.collectButton:Click()
+    runAll(env, w)
+    assert.are.same({ { "kept", 1 }, { "item", 2, 1 } }, env.mailCalls, "the kept gold isn't asked for again")
+    assert.is_false(w.collector:running())
+  end)
+
+  it("gives up when takes change nothing and the game doesn't answer", function()
+    local env, _, w = collect({ mails = { { sender = AH, subject = "Auction expired: B", items = 1,
+      attachments = { { "B", 1 } } } } })
+    env.TakeInboxItem = function(i, slot) env.mailCalls[#env.mailCalls + 1] = { "ignored", i, slot } end
+    w.collectButton:Click()
+    runAll(env, w)
+    assert.is_false(w.collector:running())
+    assert.are.equal(5, #env.mailCalls)
+    assert.truthy(w.lastRunText:GetText():find("Stopped", 1, true))
+  end)
+
+  it("reads refused items as full bags, and still takes the gold after them", function()
+    local mails = {}
+    for i = 1, 6 do
+      mails[i] = { sender = AH, subject = "Auction expired: Item " .. i, items = 1, attachments = { { "I" .. i, 1 } } }
+    end
+    mails[7] = { invoice = "seller", sender = AH, subject = "Auction successful: X", money = 5000 }
+    local env, _, w = collect({ mails = mails })
+    local id = 100
+    env.TakeInboxItem = function(i, slot)
+      env.mailCalls[#env.mailCalls + 1] = { "refused", i, slot }
+      id = id + 1
+      env.fire("MAIL_FAILED", id) -- a different item each time
+    end
+    w.collectButton:Click()
+    runAll(env, w)
+    assert.are.same({ "money", 7 }, env.mailCalls[#env.mailCalls])
+    assert.are.equal(4, #env.mailCalls, "three refusals, then gold only")
+    assert.truthy(w.lastRunText:GetText():find("Collected 50s 0c: 1 sold.", 1, true))
+    assert.truthy(w.lastRunText:GetText():find("6 items stay in the mail until you free up bag space", 1, true))
+  end)
+
+  it("waits for the last take's answer after Stop, so the summary counts it", function()
+    local env, _, w = collect()
+    w.collectButton:Click()
+    env.pending = true
+    w.collectButton:Click()
+    assert.is_nil(w.lastRun)
+    env.pending = false
+    env.runTimers(1)
+    assert.truthy(w.lastRunText:GetText():find("Collected 35s 15c: 1 sold.", 1, true))
+  end)
+
+  it("keeps its progress and Stop in view: rows don't open while it runs", function()
+    local env, _, w = collect()
+    w.collectButton:Click()
+    w.listRows[2].button:Click()
+    assert.is_false(w.letter:IsShown())
+    assert.is_true(w.collect:IsShown())
+    assert.are.equal("Stop collecting", w.collectButton:GetText())
+    runAll(env, w)
+  end)
+
+  it("waits at least Blizzard's 0.15 s between takes", function()
+    local _, ns = collect()
+    assert.is_true(ns.MailCollector.DELAY >= 0.15)
+  end)
+
+  it("greys a skipped row's coloured cells too", function()
+    local _, _, w = collect()
+    assert.is_nil(w.listRows[4][4]:GetText():find("|c", 1, true), "COD row")
   end)
 end)
 

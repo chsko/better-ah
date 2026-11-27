@@ -31,6 +31,13 @@ end
 function MailboxWindow.new(env, addon)
   local self = setmetatable({ env = env, addon = addon or {}, rows = {}, offset = 0, tab = "inbox" }, MailboxWindow)
   self.api = self.addon.mailAPI or ns.MailAPI.install(env, self.addon)
+  if ns.MailCollector then
+    self.collector = self.addon.mailCollector or ns.MailCollector.install(env, self.addon)
+    self.collector.hooks = {
+      onStep = function() self:render() end,
+      onDone = function(run) self:collected(run) end,
+    }
+  end
   return self
 end
 
@@ -129,6 +136,7 @@ function MailboxWindow:build()
   body:SetSpacing(3)
   self.detailPanel, self.detailTitle, self.detailBody = detail, title, body
   self:buildLetter(dtext)
+  self:buildCollect(dtext)
 
   if ns.WindowResize and ns.WindowScale then
     local db = self.addon.db
@@ -203,6 +211,167 @@ function MailboxWindow:buildLetter(parent)
   letter:Hide()
 end
 
+-- The side panel while no mail is open (#156): a tick box per kind, what Collect would take, and Collect.
+MailboxWindow.COLLECT_HINT = "Tick the kinds Collect takes. Remembered between visits."
+MailboxWindow.COLLECTING_HINT = "Taking one mail every 0.15 s. You can keep playing."
+MailboxWindow.KIND_LABELS = { other = "Other player mail", letter = "Letters with text" }
+MailboxWindow.BAGS_FULL = "Bags full. Gold keeps coming; %s stay in the mail until you free up bag space."
+MailboxWindow.ITEMS_LEFT = "%s stay in the mail; open it to take them."
+local KIND_ROW = 20
+
+function MailboxWindow:buildCollect(parent)
+  local env, inner = self.env, DETAIL - 24
+  local c = env.CreateFrame("Frame", nil, parent)
+  c:SetAllPoints(parent)
+  self.collect = c
+  local function text(font, y, x, w, justify)
+    local fs = c:CreateFontString(nil, "OVERLAY", font)
+    fs:SetPoint("TOPLEFT", c, "TOPLEFT", x or 12, y)
+    fs:SetWidth(w or inner)
+    fs:SetJustifyH(justify or "LEFT")
+    return fs
+  end
+  self.collectTitle = text("GameFontNormal", -12)
+  self.collectHint = text("GameFontDisableSmall", -30)
+  self.kindRows = {}
+  for i, k in ipairs(ns.Mailbox.KINDS) do
+    local y = -50 - (i - 1) * KIND_ROW
+    local row = { id = k.id }
+    if k.id ~= "cod" then
+      local box = env.CreateFrame("CheckButton", nil, c, "UICheckButtonTemplate")
+      box:SetSize(20, 20)
+      box:SetPoint("TOPLEFT", c, "TOPLEFT", 8, y + 3)
+      box:SetScript("OnClick", function(b) self:setTick(k.id, b:GetChecked()) end)
+      row.box = box
+    end
+    row.label = text("GameFontHighlightSmall", y, 32, 128)
+    row.label:SetText(MailboxWindow.KIND_LABELS[k.id] or k.label)
+    row.count = text("GameFontHighlightSmall", y, 160, 22, "RIGHT")
+    row.holds = text("GameFontHighlightSmall", y, 186, 70, "RIGHT")
+    self.kindRows[i] = row
+  end
+  self.collectExpiring = text("GameFontHighlightSmall", -50 - #ns.Mailbox.KINDS * KIND_ROW - 6)
+  self.collectTakes = text("GameFontHighlight", -50 - #ns.Mailbox.KINDS * KIND_ROW - 28)
+  self.collectProgress = text("GameFontHighlight", -50)
+  self.collectBags = text("GameFontHighlightSmall", -74)
+  if self.collectBags.SetSpacing then self.collectBags:SetSpacing(3) end
+  local b = env.CreateFrame("Button", nil, c, "UIPanelButtonTemplate")
+  b:SetSize(inner, 28)
+  b:SetPoint("BOTTOMLEFT", c, "BOTTOMLEFT", 12, 58)
+  b:SetScript("OnClick", function() self:clickCollect() end)
+  self.collectButton = b
+  local last = c:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  last:SetPoint("BOTTOMLEFT", c, "BOTTOMLEFT", 12, 12)
+  last:SetWidth(inner)
+  last:SetJustifyH("LEFT")
+  if last.SetSpacing then last:SetSpacing(2) end
+  self.lastRunText = last
+end
+
+-- The player's Collect ticks, saved per account in BetterAHDB.mail.collect.
+function MailboxWindow:ticks()
+  local settings = self.addon.mailSettings
+  if type(settings) ~= "table" then return {} end
+  if type(settings.collect) ~= "table" then settings.collect = {} end
+  return settings.collect
+end
+
+function MailboxWindow:setTick(kind, on)
+  self:ticks()[kind] = on and true or false
+  self:render()
+end
+
+function MailboxWindow:clickCollect()
+  local c = self.collector
+  if not c then return end
+  if c:running() then
+    c:stop("stopped")
+  else
+    self.selected = nil
+    c:start(self:ticks())
+  end
+  self:render()
+end
+
+-- A run ended: its line goes in the panel and the chat.
+function MailboxWindow:collected(run)
+  local line = run.summary
+  if run.reason == "stuck" then line = line .. " Stopped: the game stopped handing mail over." end
+  if run.reason == "cancelled" then line = line .. " Stopped: the game cancelled collecting." end
+  if run.itemsLeft and run.itemsLeft > 0 then
+    local left = MailboxWindow.items(run.itemsLeft)
+    if run.bagsFull then
+      line = line .. " " .. string.format(MailboxWindow.BAGS_FULL, left)
+    else
+      line = line .. " " .. string.format(MailboxWindow.ITEMS_LEFT, left)
+    end
+  end
+  self.lastRun = line
+  -- The list as the run left it, in case the game's inbox update is still on its way.
+  if self.api.open then self:setMails(self.api:readInbox()) end
+  local chat = self.env.DEFAULT_CHAT_FRAME
+  if chat and chat.AddMessage then chat:AddMessage("|cfff2c94cBetter AH|r " .. line) end
+  self:render()
+end
+
+function MailboxWindow.items(n)
+  return n == 1 and "1 item" or (n .. " items")
+end
+
+-- What a kind's row says it holds: its gold, else its items.
+function MailboxWindow.holds(kind, t)
+  if kind == "cod" then return "|cff9d9d9dnever|r" end
+  if t.gold > 0 then return money(t.gold) end
+  if t.items > 0 then return MailboxWindow.items(t.items) end
+  return ""
+end
+
+function MailboxWindow:renderCollect(totals)
+  local Collect, ticks = ns.MailCollect, self:ticks()
+  local collecting = self.collector and self.collector:running()
+  local run = self.collector and self.collector.run
+  self.collectTitle:SetText(collecting and "Collecting" or "Collect")
+  self.collectHint:SetText(collecting and MailboxWindow.COLLECTING_HINT or MailboxWindow.COLLECT_HINT)
+  for _, row in ipairs(self.kindRows) do
+    local t = totals[row.id]
+    row.label:SetShown(not collecting)
+    row.count:SetShown(not collecting)
+    row.holds:SetShown(not collecting)
+    row.count:SetText(t.mails > 0 and tostring(t.mails) or "")
+    row.holds:SetText(MailboxWindow.holds(row.id, t))
+    if row.box then
+      row.box:SetShown(not collecting)
+      row.box:SetChecked(Collect.ticked(ticks, row.id))
+    end
+  end
+  local preview = Collect.preview(self.rows, ticks)
+  self.collectExpiring:SetShown(not collecting)
+  self.collectExpiring:SetText(totals.expiring > 0 and string.format(
+    "|cffff9a3c%d expire in under %d days.|r Expired auction mail loses its items.", totals.expiring,
+    ns.Mailbox.EXPIRING_DAYS) or "")
+  self.collectTakes:SetShown(not collecting)
+  local takes = {}
+  if preview.gold > 0 then takes[#takes + 1] = money(preview.gold) end
+  if preview.items > 0 then takes[#takes + 1] = MailboxWindow.items(preview.items) end
+  self.collectTakes:SetText(#takes > 0 and ("Collect takes " .. table.concat(takes, " and ")) or "")
+  self.collectProgress:SetShown(collecting and true or false)
+  self.collectBags:SetShown(collecting and true or false)
+  if collecting then
+    local done = run.done == 1 and "1 mail done" or (run.done .. " mails done")
+    self.collectProgress:SetText(done .. (run.money > 0 and ("  ·  |cff8fd0ff+" .. money(run.money) .. "|r") or ""))
+    local left = run.bagsFull and Collect.itemsLeft(self.rows, ticks) or 0
+    self.collectBags:SetText(run.bagsFull and string.format(MailboxWindow.BAGS_FULL, MailboxWindow.items(left)) or "")
+    self.collectButton:SetText("Stop collecting")
+    self.collectButton:SetEnabled(true)
+  else
+    local n = preview.mails
+    self.collectButton:SetText(n == 0 and "Nothing to collect" or (n == 1 and "Collect 1 mail" or
+      ("Collect " .. n .. " mails")))
+    self.collectButton:SetEnabled(n > 0 and self.collector ~= nil)
+  end
+  self.lastRunText:SetText(self.lastRun and ("Last run: " .. self.lastRun) or "")
+end
+
 function MailboxWindow:selectTab(id)
   self.tab = id
   self:render()
@@ -211,7 +380,8 @@ end
 -- Opens the clicked mail in the side panel; clicking the open mail again goes back to the inbox summary.
 function MailboxWindow:clickRow(r)
   local row = self.rows[self.offset + r]
-  if not row then return end
+  -- While Collect runs the panel shows its progress and Stop, and the mail is the run's to take.
+  if not row or (self.collector and self.collector:running()) then return end
   if self.selected and self.selected.index == row.index then
     self.selected = nil
   else
@@ -344,31 +514,16 @@ function MailboxWindow:renderRows()
     if r.button.selectedTexture then
       r.button.selectedTexture:SetShown(row and self.selected and row.index == self.selected.index or false)
     end
-    for c = 1, #MailboxWindow.COLUMNS do r[c]:SetText(cells and cells[c] or "") end
-  end
-  ns.Window.syncScrollBar(self.listRows.scrollBar, self.offset, inbox and #self.rows or 0)
-end
-
--- The detail panel while no mail is open: what the inbox holds, per kind.
-function MailboxWindow.summaryText(totals)
-  local lines = {}
-  for _, k in ipairs(ns.Mailbox.KINDS) do
-    local t = totals[k.id]
-    if t.mails > 0 then
-      local holds = {}
-      if t.gold > 0 then holds[#holds + 1] = money(t.gold) end
-      if t.items > 0 then holds[#holds + 1] = t.items == 1 and "1 item" or (t.items .. " items") end
-      lines[#lines + 1] = string.format("%s: %d%s", k.label, t.mails,
-        #holds > 0 and ("  (" .. table.concat(holds, ", ") .. ")") or "")
+    -- Rows Collect skips are greyed.
+    local skipped = row and ns.MailCollect and not ns.MailCollect.collects(row, self:ticks())
+    for c = 1, #MailboxWindow.COLUMNS do
+      local cell = cells and cells[c] or ""
+      if skipped then cell = cell:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "") end
+      r[c]:SetText(cell)
+      if skipped then r[c]:SetTextColor(0.55, 0.55, 0.55) else r[c]:SetTextColor(1, 1, 1) end
     end
   end
-  if #lines == 0 then return MailboxWindow.EMPTY end
-  if totals.expiring > 0 then
-    lines[#lines + 1] = ""
-    lines[#lines + 1] = string.format("|cffff9a3c%d expire in under %d days.|r Expired auction mail loses its items.",
-      totals.expiring, ns.Mailbox.EXPIRING_DAYS)
-  end
-  return table.concat(lines, "\n")
+  ns.Window.syncScrollBar(self.listRows.scrollBar, self.offset, inbox and #self.rows or 0)
 end
 
 function MailboxWindow.footer(totals)
@@ -398,13 +553,13 @@ function MailboxWindow:render()
   self.statusText:SetText((name or "") .. (free and string.format("  ·  bags %d free", free) or ""))
   local open = inbox and self.selected
   self.letter:SetShown(open and true or false)
-  self.detailTitle:SetShown(not open)
-  self.detailBody:SetShown(not open)
+  self.collect:SetShown(inbox and not open)
+  self.detailTitle:SetShown(not inbox)
+  self.detailBody:SetShown(not inbox)
   if open then
     self:renderLetter()
   elseif inbox then
-    self.detailTitle:SetText("In this inbox")
-    self.detailBody:SetText(MailboxWindow.summaryText(totals))
+    self:renderCollect(totals)
   else
     self.detailTitle:SetText("Send")
     self.detailBody:SetText(MailboxWindow.SEND_EMPTY)
@@ -453,19 +608,25 @@ function MailboxWindow:renderLetter()
   self.letterNote:SetText(acts.note or "")
 end
 
-function MailboxWindow:onEvent(event)
+function MailboxWindow:onEvent(event, ...)
+  local c = self.collector
   self.api:onEvent(event, {
     onOpen = function(mails) self:open(mails) end,
     onInbox = function(mails) self:setMails(mails) end,
-    onClose = function() self:close() end,
-  })
+    onClose = function()
+      if c then c:stop("closed") end
+      self:close()
+    end,
+    onFailed = function(itemID) if c then c:failed(itemID) end end,
+    onCancelled = function() if c then c:stop("cancelled") end end,
+  }, ...)
 end
 
 function MailboxWindow.install(env, addon)
   local w = MailboxWindow.new(env, addon)
   local events = env.CreateFrame("Frame")
   for _, e in ipairs(ns.MailAPI.EVENTS) do events:RegisterEvent(e) end
-  events:SetScript("OnEvent", function(_, event) w:onEvent(event) end)
+  events:SetScript("OnEvent", function(_, event, ...) w:onEvent(event, ...) end)
   addon.mailboxWindow = w
   return w
 end

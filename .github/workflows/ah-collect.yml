@@ -1,0 +1,104 @@
+# Collects Blizzard's Forever auction house export into rolling 30-day sell-time stats
+# and publishes them on GitHub Pages (#217, spec #215). Replaces the #216 probe and
+# keeps logging Last-Modified, so the export cadence can still be measured.
+name: AH collect
+
+on:
+  schedule:
+    # Every 15 minutes; the timezone (GitHub, March 2026) only matters if this becomes a
+    # clock time. The export lands about 20 past the hour. GitHub runs a schedule as
+    # whoever last changed it, who needs write access to the repo.
+    - cron: "*/15 * * * *"
+      timezone: "Europe/Oslo"
+  workflow_dispatch:
+
+# Shared with anything else that calls the export, so runs never overlap.
+concurrency:
+  group: ah-export
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      changed: ${{ steps.collect.outputs.changed }}
+    steps:
+      - name: Check secrets
+        id: secrets
+        env:
+          CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+        run: |
+          if [ -z "$CLIENT_ID" ] && [ -z "$CLIENT_SECRET" ]; then
+            echo "::notice::BLIZZARD_CLIENT_ID / BLIZZARD_CLIENT_SECRET not set yet; skipping (see docs/setup/blizzard-api.md)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.secrets.outputs.skip != 'true'
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.secrets.outputs.skip != 'true'
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.secrets.outputs.skip != 'true'
+        with:
+          workspaces: companion
+
+      - name: Build
+        if: steps.secrets.outputs.skip != 'true'
+        working-directory: companion
+        run: cargo build --release --locked
+
+      # Stats and the previous snapshot live in the Actions cache; the newest entry wins.
+      - uses: actions/cache/restore@v4
+        if: steps.secrets.outputs.skip != 'true'
+        with:
+          path: ah-cache
+          key: ah-state-${{ github.run_id }}
+          restore-keys: ah-state-
+
+      - name: Collect
+        id: collect
+        if: steps.secrets.outputs.skip != 'true'
+        env:
+          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+          REGION: eu
+          RULESET: "2"
+          HOUSE: "114"
+        # github.event has no repository on schedule runs, so build the URL from GITHUB_REPOSITORY.
+        run: |
+          companion/target/release/better-ah-companion collect \
+            --out site --cache ah-cache \
+            --pages-url "https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}"
+
+      - uses: actions/cache/save@v4
+        if: steps.collect.outputs.changed == 'true'
+        with:
+          path: ah-cache
+          key: ah-state-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.collect.outputs.changed == 'true'
+        with:
+          path: site
+
+  deploy:
+    needs: collect
+    if: needs.collect.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

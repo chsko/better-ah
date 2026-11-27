@@ -282,6 +282,12 @@ function DisenchantView:buildValues(p, width)
   self.note = note
 end
 
+DisenchantView.TARGETS_HINT = "Greens to buy for disenchanting. A target's max price is what its band is "
+  .. "worth after the cut, minus your profit."
+-- While sniping runs, ticking a target or changing a ticked one changes what the sniper buys at once (#206).
+DisenchantView.TARGETS_LIVE_HINT = "|cffffd100Sniping is running.|r Ticking a target, or changing a ticked "
+  .. "one, takes effect right away."
+
 function DisenchantView:buildTargets(p, width)
   local env = self.env
   self.targetsPanel = p
@@ -298,8 +304,7 @@ function DisenchantView:buildTargets(p, width)
   hint:SetPoint("RIGHT", p, "RIGHT", 0, 0)
   hint:SetJustifyH("LEFT")
   if hint.SetMaxLines then hint:SetMaxLines(2) end
-  hint:SetText("Greens to buy for disenchanting. A target's max price is what its band is worth after the "
-    .. "cut, minus your profit.")
+  hint:SetText(DisenchantView.TARGETS_HINT)
   self.targetsHint = hint
 
   self.targetOffset = 0
@@ -313,7 +318,8 @@ function DisenchantView:buildTargets(p, width)
     box:SetSize(18, 18)
     box:SetPoint("LEFT", cells.button, "LEFT", 2, 0)
     box:SetScript("OnClick", function(b) self:setEnabled(r + self.targetOffset, b:GetChecked()) end)
-    ns.Window.tooltip(env, box, "Snipe this target", "Untick to keep the target without sniping it.")
+    ns.Window.tooltip(env, box, "Snipe this target", "Tick to snipe this target, untick to keep it without "
+      .. "sniping it. While sniping runs, this takes effect right away.")
     cells.check = box
   end
   local start = env.CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
@@ -780,6 +786,8 @@ function DisenchantView:render()
   end
   local base = DisenchantView.baseline(addon, key)
   self.list = DisenchantView.rows(priceOf, opts, dayOf, base and ns.ValueHistory.priceLookup(base))
+  -- A target deleted or edited while sniping takes its finds with it at once (#206).
+  if self.snipe and self.snipe.running then self.snipe:prune() end
   self.base = base
   self.newest = DisenchantView.latest(addon, key)
   self.now = now
@@ -893,6 +901,7 @@ function DisenchantView:renderTargets()
   end
   self.targetsEmpty:SetShown(#list == 0)
   local ticked = #self.snipe:runnable()
+  self.targetsHint:SetText(self.snipe.running and DisenchantView.TARGETS_LIVE_HINT or DisenchantView.TARGETS_HINT)
   if self.snipe.running then
     self.startButton:SetText("Sniping: show it")
   else

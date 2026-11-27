@@ -962,6 +962,7 @@ describe("Window", function()
       w:select("disenchant")
       assert.equal("Greens of item level 26-30", w.detailTitle:GetText(), "the selection stays")
       v.makeButton:Click()
+      v:setEnabled(#v:targets():list(), true) -- new targets start unticked (#206)
       assert.same({ onehand = true, twohand = true, ranged = true }, ns.disenchant.targets[1].types,
         "a target for the weapons shown")
     end)
@@ -1025,12 +1026,14 @@ describe("Window", function()
       v.tabButtons.targets:Click()
       v.newButton:Click()
       assert.same({ "", "Armor, req. 21-25", "Armor", "14s 20c", "10%", "12s 78c" }, target(w, 1))
-      assert.is_true(v.targetRows[1].check:GetChecked())
+      assert.is_false(v.targetRows[1].check:GetChecked(), "a new target starts unticked (#206)")
       assert.equal(1, #ns.disenchant.targets, "saved")
       assert.is_true(v.editor:IsShown())
       assert.equal("Armor, req. 21-25", w.detailTitle:GetText())
       assert.equal("12s 78c", v.maxText:GetText())
       assert.equal("Worth 14s 20c after the cut", v.worthText:GetText())
+      v.targetRows[1].check:Click()
+      assert.is_true(ns.disenchant.targets[1].enabled, "ticked: sniped")
       v.targetRows[1].check:Click()
       assert.is_false(ns.disenchant.targets[1].enabled, "kept but not sniped")
     end)
@@ -1040,6 +1043,7 @@ describe("Window", function()
       local v = w.disenchantView
       v.tabButtons.targets:Click()
       v.newButton:Click()
+      v:setEnabled(#v:targets():list(), true) -- new targets start unticked (#206)
       v.typeBoxes.plate:Click()
       v.typeBoxes.mail:Click()
       assert.equal("Cloth, Leather, req. 21-25", target(w, 1)[2])
@@ -1076,7 +1080,9 @@ describe("Window", function()
       local v = w.disenchantView
       v.tabButtons.targets:Click()
       v.newButton:Click()
+      v:setEnabled(#v:targets():list(), true) -- new targets start unticked (#206)
       v.newButton:Click()
+      v:setEnabled(#v:targets():list(), true) -- new targets start unticked (#206)
       v.selectTarget(v, 1)
       v.profitInput:SetFocus()
       v.profitInput:SetText("30")
@@ -1104,7 +1110,7 @@ describe("Window", function()
       v.targetRows[14].button:Click()
       assert.equal(16, v.target)
       v.targetRows[14].check:Click()
-      assert.is_false(ns.disenchant.targets[16].enabled)
+      assert.is_true(ns.disenchant.targets[16].enabled)
       v.deleteButton:Click()
       assert.equal(15, #ns.disenchant.targets)
     end)
@@ -1116,6 +1122,7 @@ describe("Window", function()
       v.rows[3].button:Click()
       assert.is_true(v.makeButton:IsShown())
       v.makeButton:Click()
+      v:setEnabled(#v:targets():list(), true) -- new targets start unticked (#206)
       assert.equal("targets", v.tab)
       assert.equal(21, ns.disenchant.targets[1].band)
       assert.equal("Armor, req. 16-20", w.detailTitle:GetText())
@@ -1225,6 +1232,7 @@ describe("Window", function()
         local v = w.disenchantView
         v.tabButtons.targets:Click()
         v.newButton:Click()
+        v:setEnabled(#v:targets():list(), true) -- new targets start unticked (#206)
         env.browseResults = {
           { itemKey = { itemID = 5001, itemLevel = 28 }, minPrice = 900, totalQuantity = 2 },
           { itemKey = { itemID = 5002, itemLevel = 28 }, minPrice = 5000, totalQuantity = 1 },
@@ -1413,6 +1421,7 @@ describe("Window", function()
         local v = w.disenchantView
         v.tabButtons.targets:Click()
         v.newButton:Click()
+        v:setEnabled(#v:targets():list(), true) -- new targets start unticked (#206)
         v.tabButtons.snipe:Click()
         env.GetTime = function() return 100 end
         env.browseResults[1].minPrice = 1300 -- over the max, so no find pauses the checks
@@ -1450,6 +1459,93 @@ describe("Window", function()
         assert.equal("Ridgeback Boots", s.nearRows[1][1]:GetText(), "nothing left of the bracers: their row goes")
       end)
 
+      it("says on Targets that ticking or changing a target acts at once while sniping (#206)", function()
+        local env, w, ns, s = snipeSetup()
+        local v = w.disenchantView
+        v.tabButtons.targets:Click()
+        assert.equal(ns.DisenchantView.TARGETS_HINT, v.targetsHint:GetText())
+        v.newButton:Click()
+        assert.is_false(v:targets():list()[2].enabled, "a new target starts unticked")
+        s.startButton:Click()
+        env.runTimers()
+        v.tabButtons.targets:Click()
+        assert.equal(ns.DisenchantView.TARGETS_LIVE_HINT, v.targetsHint:GetText())
+        assert.matches("takes effect right away", v.targetsHint:GetText())
+        s:stop()
+        v:render()
+        assert.equal(ns.DisenchantView.TARGETS_HINT, v.targetsHint:GetText())
+      end)
+
+      it("ignores lookup answers for a target deleted while they were out (#206)", function()
+        local env, w, ns, s = snipeSetup()
+        local v = w.disenchantView
+        local api, pending = ns.snipeAPI, {}
+        local auctions = api.auctions
+        api.auctions = function(a, key, done)
+          pending[#pending + 1] = function() auctions(a, key, done) end
+        end
+        local sounds = 0
+        local alert = api.alert
+        api.alert = function(a) sounds = sounds + 1; return alert(a) end
+        s.startButton:Click()
+        env.runTimers()
+        assert.is_true(#pending > 0, "a lookup is out")
+        v.tabButtons.targets:Click()
+        v:selectTarget(1)
+        v:deleteTarget()
+        for _, f in ipairs(pending) do f() end
+        env.runTimers()
+        assert.is_nil(s.session:next(), "no find from the deleted target")
+        assert.equal(0, sounds, "and no sound")
+      end)
+
+      it("keeps a find while its item's details aren't loaded (#206)", function()
+        local env, w, ns, s = snipeSetup()
+        s.startButton:Click()
+        env.runTimers()
+        local find = s.session:next()
+        assert.is_not_nil(find)
+        ns.auctionAPI.itemInfo = function() return nil end
+        ns.auctionAPI.itemType = function() return nil end
+        w.disenchantView:render()
+        assert.equal(find, s.session:next())
+      end)
+
+      it("drops the finds of a target deleted while sniping (#206)", function()
+        local env, w, _, s = snipeSetup()
+        local v = w.disenchantView
+        v:targets():list()[1].profit = { kind = "percent", amount = 50 } -- 9s bracers are over its max
+        v.tabButtons.targets:Click()
+        v.newButton:Click() -- a second target, 10% profit: it takes the bracers
+        v:setEnabled(#v:targets():list(), true) -- new targets start unticked (#206)
+        v.tabButtons.snipe:Click()
+        env.GetTime = function() return 100 end
+        s.startButton:Click()
+        env.runTimers(3)
+        assert.is_not_nil(s.session:next(), "the second target's find")
+        v.tabButtons.targets:Click()
+        v:selectTarget(2)
+        v:deleteTarget()
+        assert.is_nil(s.session:next(), "its finds go with it")
+        v.tabButtons.snipe:Click()
+        assert.equal("Nothing under your max prices yet", s.cardName:GetText())
+        s.buyButton:Click()
+        assert.equal(0, #env.bids)
+      end)
+
+      it("drops finds over a target's max once its profit goes up (#206)", function()
+        local env, w, _, s = snipeSetup()
+        local v = w.disenchantView
+        s.startButton:Click()
+        env.runTimers()
+        assert.equal("Buy for 9s 0c", s.buyButton:GetText())
+        local t = v:targets():list()[1]
+        t.profit = { kind = "percent", amount = 99 }
+        v:render()
+        assert.is_nil(s.session:next(), "9s is now over the max")
+        assert.equal(0, #env.bids)
+      end)
+
       it("passes, logs a missed buy and stops at the spend cap", function()
         local env, w, ns, s = snipeSetup()
         s.startButton:Click()
@@ -1476,7 +1572,9 @@ describe("Window", function()
         assert.equal(1000, ns.disenchant.snipe.cap)
         assert.equal("Spent this session: 0c of 10s 0c", s.spentText:GetText())
         ns.disenchant.session.spent = 500
-        s.session:add({ auctionID = 90, name = "[Pricey]", price = 600, worth = 1420, max = 1278, target = "Armor" })
+        local entry = s:runnable()[1]
+        s.session:add({ auctionID = 90, itemID = 5001, name = "[Pricey]", price = 600, worth = 1420, max = 1278,
+          target = "Armor", source = entry.target, band = entry.row.band.min })
         w.disenchantView:render()
         s.buyButton:Click()
         assert.equal(1, #env.bids, "no bid over the cap")

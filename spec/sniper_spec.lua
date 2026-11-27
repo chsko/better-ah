@@ -135,6 +135,32 @@ describe("Sniper", function()
       assert.equal("passed", s.saved.log[1].kind)
     end)
 
+    it("drops finds whose target is gone or now asks for more profit (#206)", function()
+      local s = Sniper.Session.new(nil, 100)
+      local kept, blank = { band = 31 }, { band = 26 }
+      local keyA, keyB = { itemID = 5 }, { itemID = 6 }
+      s:add({ auctionID = 1, name = "A", price = 900, worth = 1420, itemKey = keyA, source = kept })
+      s:add({ auctionID = 2, name = "B", price = 950, worth = 1000, itemKey = keyB, source = blank })
+      s:add({ auctionID = 3, name = "C", price = 1200, worth = 1420, itemKey = keyA, source = kept })
+      s:lookedUp(keyB, 950, 100)
+      local maxes = { [kept] = 1000 } -- the blank target was deleted; kept now pays at most 1000
+      assert.equal(2, s:keep(function(f) return maxes[f.source] end))
+      assert.equal(1, #s.finds)
+      assert.equal(1, s:next().auctionID)
+      assert.equal(1000, s:next().max, "the max is the target's current one")
+      assert.is_false(s:fresh(keyB, 950, 101), "its item is looked up again")
+      assert.is_true(s:add({ auctionID = 2, name = "B", price = 950, worth = 1000, itemKey = keyB, source = kept }),
+        "not written off: another target may still want it")
+    end)
+
+    it("leaves the find a buy waits on alone", function()
+      local s = Sniper.Session.new(nil, 100)
+      local f = { auctionID = 1, name = "A", price = 900, worth = 1420 }
+      s:add(f)
+      assert.equal(0, s:keep(function() return nil end, f))
+      assert.equal(f, s:next())
+    end)
+
     it("counts what it bought and logs what it missed", function()
       local saved = {}
       local s = Sniper.Session.new(saved, 100)

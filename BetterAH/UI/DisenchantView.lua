@@ -285,8 +285,12 @@ end
 DisenchantView.TARGETS_HINT = "Greens to buy for disenchanting. A target's max price is what its band is "
   .. "worth after the cut, minus your profit."
 -- While sniping runs, ticking a target or changing a ticked one changes what the sniper buys at once (#206).
+-- Shown on its own line under New target (#212).
 DisenchantView.TARGETS_LIVE_HINT = "|cffffd100Sniping is running.|r Ticking a target, or changing a ticked "
   .. "one, takes effect right away."
+
+DisenchantView.LIVE_ROOM = 16 -- how far the target list moves down for the "Sniping is running" line
+DisenchantView.TARGET_ROWS = 13 -- one row fewer than other lists, so the moved list clears Start sniping
 
 function DisenchantView:buildTargets(p, width)
   local env = self.env
@@ -306,11 +310,23 @@ function DisenchantView:buildTargets(p, width)
   if hint.SetMaxLines then hint:SetMaxLines(2) end
   hint:SetText(DisenchantView.TARGETS_HINT)
   self.targetsHint = hint
+  local live = p:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  live:SetPoint("TOPLEFT", new, "BOTTOMLEFT", 2, -5)
+  live:SetPoint("RIGHT", p, "RIGHT", 0, 0)
+  live:SetJustifyH("LEFT")
+  if live.SetMaxLines then live:SetMaxLines(1) end
+  live:SetText(DisenchantView.TARGETS_LIVE_HINT)
+  live:Hide()
+  self.targetsLive = live
 
+  -- The list sits a line lower than on the other tabs, to leave room for the line above (#212).
+  local list = env.CreateFrame("Frame", nil, p)
+  list:SetPoint("TOPLEFT", p, "TOPLEFT", 0, -DisenchantView.LIVE_ROOM)
+  list:SetPoint("BOTTOMRIGHT", p, "BOTTOMRIGHT", 0, 0)
   self.targetOffset = 0
-  self.targetRows = self.window:buildRows(p, DisenchantView.TARGET_COLUMNS,
+  self.targetRows = self.window:buildRows(list, DisenchantView.TARGET_COLUMNS,
     function(index) self:selectTarget(index + self.targetOffset) end,
-    function(offset) self.targetOffset = offset; self:render() end)
+    function(offset) self.targetOffset = offset; self:render() end, nil, DisenchantView.TARGET_ROWS)
   p:EnableMouseWheel(true)
   p:SetScript("OnMouseWheel", function(_, delta) self.targetOffset = self.targetOffset - delta * 3; self:render() end)
   for r, cells in ipairs(self.targetRows) do
@@ -331,7 +347,7 @@ function DisenchantView:buildTargets(p, width)
   end)
   self.startButton = start
   self.targetsEmpty = p:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  self.targetsEmpty:SetPoint("TOPLEFT", p, "TOPLEFT", 4, -56)
+  self.targetsEmpty:SetPoint("TOPLEFT", p, "TOPLEFT", 4, -56 - DisenchantView.LIVE_ROOM)
   self.targetsEmpty:SetWidth(width - 8)
   self.targetsEmpty:SetJustifyH("LEFT")
   self.targetsEmpty:SetText("No targets yet. Press New target, or pick a band on Values and make one from it.")
@@ -901,7 +917,7 @@ function DisenchantView:renderTargets()
   end
   self.targetsEmpty:SetShown(#list == 0)
   local ticked = #self.snipe:runnable()
-  self.targetsHint:SetText(self.snipe.running and DisenchantView.TARGETS_LIVE_HINT or DisenchantView.TARGETS_HINT)
+  self.targetsLive:SetShown(self.snipe.running and true or false)
   if self.snipe.running then
     self.startButton:SetText("Sniping: show it")
   else

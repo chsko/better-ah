@@ -720,6 +720,7 @@ function Window:scanMaterials()
   local addon = self.addon
   local api, key = addon.postingAPI, self:market()
   if self.materialScan then return end
+  self.materialQuiet = nil
   -- Not beside a full scan: both would share the auction house's one query pipe, and the full scan
   -- reads these materials anyway. The full scan waits for a materials scan the same way.
   if addon.auctionAPI and addon.auctionAPI.pending then
@@ -772,6 +773,8 @@ function Window:scanMaterials()
         self.statusText = string.format("Scanning materials: %d of %d.", scan.done, scan.total)
       else
         self.materialScan = nil
+        -- A clean result needn't stay on the Values line (#197).
+        self.materialQuiet = scan.failed == 0 and scan.found > 0
         -- The values' changes (#106) are measured from one finished scan to the next.
         if scan.found > 0 then
           ns.DisenchantView.snapshot(addon, key, addon.auctionAPI and addon.auctionAPI:now() or 0, "materials")

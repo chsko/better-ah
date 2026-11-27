@@ -32,26 +32,24 @@ describe("ValueHistory", function()
     end)
   end)
 
-  describe("sourceText (#143)", function()
+  describe("sourceText (#143, #197)", function()
     it("names the scan the prices come from and the one the changes compare with", function()
       local store = {}
       VH.record(store, "m", 1000, function() return 5 end, D.MATERIALS, "full")
       assert.equal("full", VH.latest(store, "m").kind)
-      assert.equal("Prices from the full scan 3 min ago.", VH.sourceText(VH.latest(store, "m"), nil, 1180))
+      assert.equal("Full scan 3 min ago.", VH.sourceText(VH.latest(store, "m"), nil, 1180))
       VH.record(store, "m", 9000, function() return 6 end, D.MATERIALS, "materials")
       local latest, base = VH.latest(store, "m"), VH.baseline(store, "m")
       assert.equal(9000, latest.time)
-      assert.equal("Prices from the materials scan 3 min ago. Green and red: change from the full scan 2 h ago.",
+      assert.equal("Materials scan 3 min ago. Changes since 2 h ago.",
         VH.sourceText(latest, base, 9180))
-      assert.equal("Green and red: change from the full scan 2 h ago.",
+      assert.equal("Changes since 2 h ago.",
         VH.sourceText(latest, base, 9180, { skipSource = true }))
     end)
 
-    it("says just 'the scan' for snapshots saved before scans were named, and nothing without one", function()
-      assert.equal("Prices from the scan just now.", VH.sourceText({ time = 10, prices = {} }, nil, 20))
+    it("says 'Last scan' for snapshots saved before scans were named, and nothing without one", function()
+      assert.equal("Last scan just now.", VH.sourceText({ time = 10, prices = {} }, nil, 20))
       assert.equal("", VH.sourceText(nil, nil, 20))
-      assert.equal("Prices for Normal, Horde from the scan just now.",
-        VH.sourceText({ time = 10, prices = {} }, nil, 20, { market = "Normal, Horde" }))
       assert.is_nil(VH.latest({}, "m"))
     end)
   end)

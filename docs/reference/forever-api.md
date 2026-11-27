@@ -188,6 +188,18 @@ Globals (all in the dump): `CheckInbox`, `GetInboxNumItems`, `GetInboxHeaderInfo
   Open All does not use them: it calls the plain globals above. `C_SecureTransfer` is not in the dump's runtime
   globals.
 
+Sending (`Blizzard_MailFrame/MailFrame.lua`, `Blizzard_UIPanels_Game/Mainline/ContainerFrame.lua`, read for #158):
+
+- Attach: `C_Container.PickupContainerItem(bag, slot)` then `ClickSendMailItemButton()` (first free slot) or
+  `ClickSendMailItemButton(i)`; `ClickSendMailItemButton(i, true)` clears slot `i`. `MAIL_SEND_INFO_UPDATE` follows;
+  `GetSendMailItem(i)` returns name, itemID, texture, count, quality for `i` = 1..12. `ClearCursor()` drops a refused item.
+- Bag buttons hand every modified click to the global `HandleModifiedItemClick(link, itemLocation)`; a plain Alt-click
+  does nothing else, so a `hooksecurefunc` on it (with `IsAltKeyDown()`, `CursorHasItem()`) is how alt-click attaches.
+- Send: `SetSendMailCOD(0)`, `SetSendMailMoney(0)`, then one of them, then `SendMail(to, subject, body, replyMailID)`.
+  Postage `GetSendMailPrice()` is display only. COD needs an item, `C_Mail.IsCODEnabled()`, at most 10,000g.
+- Failures: `UI_ERROR_MESSAGE(type, message)` then `MAIL_FAILED`; success: `MAIL_SEND_SUCCESS`. Some sends first
+  show Blizzard's secure confirmation (`SECURE_TRANSFER_CONFIRM_SEND_MAIL`).
+
 How Blizzard's Open All works (`Blizzard_MailFrame/MailFrame.lua`, `OpenAllMailMixin`), the model for #149:
 
 - Taking mail needs **no hardware event**: only the first take runs inside the button click; every later take runs

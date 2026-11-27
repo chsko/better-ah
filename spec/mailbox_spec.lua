@@ -178,8 +178,10 @@ describe("Mailbox.actions", function()
     assert.is_false(Mailbox.actions({ items = 1, canReply = true, wasReturned = true }).ret)
   end)
 
-  it("keeps Reply off until the Send tab can write a mail", function()
-    assert.is_false(Mailbox.actions({ canReply = true }).reply)
+  it("lets the player reply to player mail, not to the auction house or a Game Master", function()
+    assert.is_true(Mailbox.actions({ canReply = true }).reply)
+    assert.is_false(Mailbox.actions({ canReply = false }).reply)
+    assert.is_false(Mailbox.actions({ canReply = true, isGM = true }).reply)
   end)
 end)
 

@@ -17,10 +17,10 @@ MailboxWindow.COLUMNS = {
   { "Kind", 4, 58, "LEFT" }, { "Item or sender", 66, 186, "LEFT" }, { "Qty", 254, 30 }, { "Gold", 288, 80 },
   { "Left", 372, 44 },
 }
-MailboxWindow.SEND_EMPTY = "Send rules, Send all and new mail come here."
+MailboxWindow.SEND_EMPTY = "Send rules and Send all come here."
 MailboxWindow.EMPTY = "No mail."
 MailboxWindow.HINT = "click a row to open it"
-MailboxWindow.REPLY_SOON = "Reply opens the Send tab addressed to the sender, once the Send tab can write mail."
+MailboxWindow.REPLY_TIP = "Opens a new mail to the sender, with Re: and the subject."
 MailboxWindow.COD_POPUP = "BETTERAH_MAIL_COD"
 local ICON, ICON_STEP, ICONS_PER_ROW = 28, 32, 8
 
@@ -137,6 +137,13 @@ function MailboxWindow:build()
   self.detailPanel, self.detailTitle, self.detailBody = detail, title, body
   self:buildLetter(dtext)
   self:buildCollect(dtext)
+  if ns.MailSendPanel and ns.MailSend then
+    self.sendPanel = ns.MailSendPanel.new(self)
+    self.sendPanel:build(dtext, DETAIL - 24)
+    self.api:hookBagClicks(function(bag, slot)
+      if self.tab == "send" then self.sendPanel:attachFromBag(bag, slot) end
+    end)
+  end
 
   if ns.WindowResize and ns.WindowScale then
     local db = self.addon.db
@@ -199,8 +206,8 @@ function MailboxWindow:buildLetter(parent)
   end
   self.takeButton = button("Take all", inner, 28, 12, 70, function() self:takeOpen() end)
   local small = math.floor((inner - 10) / 3)
-  self.replyButton = button("Reply", small, 22, 12, 42, function() end)
-  ns.Window.tooltip(env, self.replyButton, "Reply", MailboxWindow.REPLY_SOON)
+  self.replyButton = button("Reply", small, 22, 12, 42, function() self:replyOpen() end)
+  ns.Window.tooltip(env, self.replyButton, "Reply", MailboxWindow.REPLY_TIP)
   self.returnButton = button("Return", small, 22, 12 + small + 5, 42, function() self:returnOpen() end)
   self.deleteButton = button("Delete", small, 22, 12 + 2 * (small + 5), 42, function() self:deleteOpen() end)
   local note = letter:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -466,6 +473,13 @@ function MailboxWindow:hideCOD()
   if self.env.StaticPopup_Hide then self.env.StaticPopup_Hide(MailboxWindow.COD_POPUP) end
 end
 
+function MailboxWindow:replyOpen()
+  local mail = self.selected
+  if not (mail and self.sendPanel and ns.Mailbox.actions(mail).reply) then return end
+  self.sendPanel:reply(mail)
+  self:selectTab("send")
+end
+
 function MailboxWindow:returnOpen()
   if self.selected then self.api:returnMail(self.selected) end
 end
@@ -511,12 +525,14 @@ function MailboxWindow:open(mails)
   self.offset = 0
   self.tab = "inbox"
   self.selected, self.mailCount = nil, nil
+  if self.sendPanel then self.sendPanel:reset() end
   self:setMails(mails)
   self.frame:Show()
 end
 
 function MailboxWindow:close()
   if not self.frame then return end
+  if self.sendPanel then self.sendPanel:reset() end
   self.closing = true
   self.frame:Hide()
   self.closing = nil
@@ -584,15 +600,16 @@ function MailboxWindow:render()
   local open = inbox and self.selected
   self.letter:SetShown(open and true or false)
   self.collect:SetShown(inbox and not open)
-  self.detailTitle:SetShown(not inbox)
-  self.detailBody:SetShown(not inbox)
+  local send = self.sendPanel
+  if send then send.frame:SetShown(not inbox) end
+  self.detailTitle:SetShown(not inbox and not send)
+  self.detailBody:SetShown(not inbox and not send)
   if open then
     self:renderLetter()
   elseif inbox then
     self:renderCollect(totals)
   else
-    self.detailTitle:SetText("Send")
-    self.detailBody:SetText(MailboxWindow.SEND_EMPTY)
+    if send then send:render() end
   end
   self:renderRows()
 end
@@ -650,7 +667,13 @@ function MailboxWindow:onEvent(event, ...)
       if c then c:stop("closed") end
       self:close()
     end,
-    onFailed = function(itemID) if c then c:failed(itemID) end end,
+    onFailed = function(itemID)
+      if self.sendPanel and self.sendPanel:onFailed() then return end
+      if c then c:failed(itemID) end
+    end,
+    onSendInfo = function() if self.sendPanel then self.sendPanel:render() end end,
+    onSent = function() if self.sendPanel then self.sendPanel:onSent() end end,
+    onError = function(message) if self.sendPanel then self.sendPanel:onError(message) end end,
     onCancelled = function() if c then c:stop("cancelled") end end,
   }, ...)
 end

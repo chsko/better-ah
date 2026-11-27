@@ -18,7 +18,8 @@
 --
 -- A sale counts once its gold is in the bags: the mail is the one record of a sale the game keeps. A deposit
 -- counts when it is paid; the one that comes back with a sale is taken off the deposits again, so "deposits
--- kept" is what cancelled and expired auctions cost.
+-- kept" is the deposit of auctions still up or sold with their gold still in the mail (it comes back) and
+-- of cancelled and expired ones (it is lost).
 local _, ns = ...
 ns = ns or {}
 
@@ -36,13 +37,46 @@ Ledger.KINDS = { sale = true, buy = true, deposit = true }
 local function int(v) return math.floor((tonumber(v) or 0) + 0.5) end
 local function str(v) return type(v) == "string" and v ~= "" and v or nil end
 
+-- An item's plain name: the name in an item link ("|cff...|Hitem:...|h[Name]|h|r"), or the text itself.
+-- Better AH's views hand in links; mail invoices give plain names, and the two must match (#150).
+function Ledger.bareName(v)
+  v = str(v)
+  if not v then return nil end
+  return str(v:match("|h%[(.-)%]|h")) or v
+end
+local name = Ledger.bareName
+
 -- store is the saved-variables table (BetterAHDB.ledger in the client). A broken one starts over.
 function Ledger.new(store)
   store = type(store) == "table" and store or {}
   if type(store.entries) ~= "table" then store.entries = {} end
   if type(store.own) ~= "table" then store.own = {} end
   if type(store.mail) ~= "table" then store.mail = {} end
-  return setmetatable({ store = store }, Ledger)
+  local ledger = setmetatable({ store = store }, Ledger)
+  ledger:migrate()
+  return ledger
+end
+
+Ledger.VERSION = 2
+
+-- Brings an older store up to date. Version 1 (#137) never matched a Better AH buy to its invoice (links
+-- against plain names) and could book one mail more than once (#150): every buy it took from the mail
+-- ("Bought · other") is dropped, and the item links it kept become plain names.
+function Ledger:migrate()
+  local store = self.store
+  if (tonumber(store.v) or 1) >= Ledger.VERSION then return end
+  local kept = {}
+  for _, e in ipairs(store.entries) do
+    if type(e) == "table" and not (e.k == "buy" and e.src == "mail") then
+      e.name = name(e.name) or e.name
+      kept[#kept + 1] = e
+    end
+  end
+  store.entries = kept
+  for _, o in ipairs(store.own) do
+    if type(o) == "table" then o.name = name(o.name) or o.name end
+  end
+  store.v = Ledger.VERSION
 end
 
 local function push(self, e)
@@ -58,7 +92,7 @@ end
 function Ledger:sale(s)
   local money, cut, dep = int(s.money), math.max(0, int(s.cut)), math.max(0, int(s.deposit))
   if money <= 0 then return nil end
-  return push(self, { t = int(s.t), k = "sale", char = str(s.char), name = str(s.name) or "?", item = tonumber(s.item),
+  return push(self, { t = int(s.t), k = "sale", char = str(s.char), name = name(s.name) or "?", item = tonumber(s.item),
     n = math.max(1, int(s.n)), c = money + cut - dep, cut = cut, dep = dep })
 end
 
@@ -67,7 +101,7 @@ end
 function Ledger:buy(b, own)
   local c, n = int(b.c), math.max(1, int(b.n))
   if c <= 0 then return nil end
-  local e = push(self, { t = int(b.t), k = "buy", char = str(b.char), name = str(b.name) or "?",
+  local e = push(self, { t = int(b.t), k = "buy", char = str(b.char), name = name(b.name) or "?",
     item = tonumber(b.item), n = n, c = c, src = str(b.src) })
   if own then
     self.store.own[#self.store.own + 1] = { t = e.t, char = e.char, name = e.name, c = c, n = n }
@@ -82,14 +116,14 @@ end
 -- parts. Otherwise it is a buy made somewhere else (the game's
 -- own auction house, another addon, a won bid) and is recorded with src "mail".
 function Ledger:buyerInvoice(i)
-  local c, name, char, t = int(i.c), str(i.name), str(i.char), int(i.t)
+  local c, item, char, t = int(i.c), name(i.name), str(i.char), int(i.t)
   if c <= 0 then return nil end
   local own, n = self.store.own, math.max(1, int(i.n))
   local function fits(o, exact)
     if o.char ~= char or t - o.t > Ledger.OWN_DAYS * Ledger.DAY or t < o.t - 300 then return false end
     -- A buy whose name wasn't known yet matches only an invoice of exactly its price and count.
     if o.name == "?" then return o.c == c and o.n == n end
-    if o.name ~= name then return false end
+    if o.name ~= item then return false end
     if exact then return o.c == c and o.n == n end
     return o.c >= c and o.n >= n
   end
@@ -104,14 +138,14 @@ function Ledger:buyerInvoice(i)
       end
     end
   end
-  return self:buy({ t = t, char = char, name = name, n = i.n, c = c, src = "mail" })
+  return self:buy({ t = t, char = char, name = item, n = i.n, c = c, src = "mail" })
 end
 
 -- A deposit paid for a post: d = { t, char, name, item, n, c }.
 function Ledger:deposit(d)
   local c = int(d.c)
   if c <= 0 then return nil end
-  return push(self, { t = int(d.t), k = "deposit", char = str(d.char), name = str(d.name) or "?",
+  return push(self, { t = int(d.t), k = "deposit", char = str(d.char), name = name(d.name) or "?",
     item = tonumber(d.item), n = math.max(1, int(d.n)), c = c })
 end
 

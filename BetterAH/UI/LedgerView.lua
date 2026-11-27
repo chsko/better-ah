@@ -97,7 +97,9 @@ function LedgerView.totalsText(t, mail, mails, hint)
   kv(string.format("Purchases (%d %s)", t.bought, t.bought == 1 and "item" or "items"),
     color(c.moneyOut, money(t.purchases)))
   kv("AH cut", color(c.moneyOut, money(t.cut)))
-  kv("Deposits kept by the AH", t.kept >= 0 and color(c.moneyOut, money(t.kept)) or LedgerView.signed(-t.kept))
+  -- Paid and not back yet: it comes back when the auction sells and its gold is taken, and is lost only on
+  -- a cancelled or expired auction.
+  kv("Deposits not back yet", t.kept >= 0 and color(c.moneyOut, money(t.kept)) or LedgerView.signed(-t.kept))
   kv("Total out", color(c.moneyOut, money(t.moneyOut)))
   add("")
   add(color(c.head, "Net profit"))
@@ -542,8 +544,9 @@ function LedgerView:renderItems(entries)
     cells.button.selectedTexture:SetShown(row ~= nil and row.id == self.selected)
   end
   for _, row in ipairs(list) do if row.id == self.selected then selected = row end end
-  self.footer:SetText(string.format("%d %s · profit = sold after the cut - bought - deposits kept · prices per unit",
-    #items, #items == 1 and "item" or "items"))
+  self.footer:SetText(string.format(
+    "%d %s · profit = sold after the cut - bought - deposits not back · prices per unit", #items,
+    #items == 1 and "item" or "items"))
   return selected
 end
 

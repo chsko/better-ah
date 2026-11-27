@@ -391,7 +391,9 @@ function BrowseView:search(keepMenu)
       self.message = "The search failed: " .. tostring(truncated) .. "."
     else
       job.raw, job.truncated, job.at, job.values = results, truncated, self:now(), {}
-      self:remember(job)
+      -- A search replaced before it finished (a category picked or left while it ran, whatever started
+      -- it) isn't kept: the player moved on from it, often just looking through the menu (#185).
+      if not self.searchAfter then self:remember(job) end
       self.results, self.message = job, nil
       self.selected, self.offset = nil, 0
       self:rebuild()

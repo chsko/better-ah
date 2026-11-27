@@ -1203,10 +1203,10 @@ function Window:viewObject(view)
 end
 
 -- Columns laid out for the default list width, laid out for listWidth the way buildRows places them:
--- the first column takes the change (DetailPane.columns), and with a scroll bar (scrolls) columns too
+-- the first column (or column flex) takes the change (DetailPane.columns), and with a scroll bar (scrolls) columns too
 -- wide for the narrower rows are scaled to fit.
-function Window.fitColumns(columns, listWidth, scrolls)
-  if ns.DetailPane then columns = ns.DetailPane.columns(columns, listWidth) end
+function Window.fitColumns(columns, listWidth, scrolls, flex)
+  if ns.DetailPane then columns = ns.DetailPane.columns(columns, listWidth, flex) end
   local width = scrolls and (listWidth - SCROLL_ROOM) or listWidth
   local last = columns[#columns]
   local scale = (last[2] + last[3] > width) and width / listWidth or 1

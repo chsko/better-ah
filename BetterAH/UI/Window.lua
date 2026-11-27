@@ -340,11 +340,13 @@ function Window:buildPrices(f)
 end
 
 -- A header row and ROWS selectable item rows under it, starting 32px below the panel's top, across
--- listWidth (LIST_WIDTH when nil).
+-- listWidth (LIST_WIDTH when nil). count: fewer rows than ROWS, for a list moved down to make room
+-- above it (Disenchant targets, #212).
 -- Returns the item rows; each is an array of cells (font strings) plus .button. With onScroll, the rows
 -- also get a scroll bar (rows.scrollBar, see buildScrollBar).
-function Window:buildRows(panel, columns, onClick, onScroll, listWidth)
+function Window:buildRows(panel, columns, onClick, onScroll, listWidth, count)
   local env, rows = self.env, {}
+  count = count or ROWS
   listWidth = listWidth or LIST_WIDTH -- wider for a view without the detail panel (Browse)
   -- With a scroll bar the rows give up room for it. Columns laid out for the full width are narrowed
   -- to fit; a list can instead lay its columns out to fit the narrower rows and keep their widths.
@@ -352,7 +354,7 @@ function Window:buildRows(panel, columns, onClick, onScroll, listWidth)
   local last = columns[#columns]
   local scale = (last[2] + last[3] > width) and width / listWidth or 1
   rows.width = width
-  for r = 0, ROWS do
+  for r = 0, count do
     -- Item rows are buttons, so they can be selected; the header is plain text on the panel.
     local parent = panel
     if r > 0 then
@@ -390,7 +392,7 @@ function Window:buildRows(panel, columns, onClick, onScroll, listWidth)
     end
     if r > 0 then rows[r] = row else rows.header = row end
   end
-  if onScroll then rows.scrollBar = self:buildScrollBar(panel, onScroll, width + SCROLL_GAP) end
+  if onScroll then rows.scrollBar = self:buildScrollBar(panel, onScroll, width + SCROLL_GAP, count) end
   return rows
 end
 
@@ -423,7 +425,7 @@ function Window.layoutRows(rows, panel, columns, listWidth)
     local x = width + SCROLL_GAP
     bar:ClearAllPoints()
     bar:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -32 - ROW_HEIGHT + 3)
-    bar:SetPoint("BOTTOMLEFT", panel, "TOPLEFT", x, -32 - (ROWS + 1) * ROW_HEIGHT + 3)
+    bar:SetPoint("BOTTOMLEFT", panel, "TOPLEFT", x, -32 - ((bar.rows or ROWS) + 1) * ROW_HEIGHT + 3)
     bar.x = x
   end
 end
@@ -432,17 +434,19 @@ end
 -- 25px, too wide for this layout). It hides itself while every item fits. Dragging it, clicking its
 -- track or arrows, or wheeling over it calls onScroll(offset) with the first item to show (0-based);
 -- Window.syncScrollBar keeps it in step with a list scrolled any other way.
-function Window:buildScrollBar(panel, onScroll, x)
+function Window:buildScrollBar(panel, onScroll, x, count)
+  count = count or ROWS
   local bar = self.env.CreateFrame("EventFrame", nil, panel, "MinimalScrollBar")
   bar:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -32 - ROW_HEIGHT + 3)
-  bar:SetPoint("BOTTOMLEFT", panel, "TOPLEFT", x, -32 - (ROWS + 1) * ROW_HEIGHT + 3)
+  bar:SetPoint("BOTTOMLEFT", panel, "TOPLEFT", x, -32 - (count + 1) * ROW_HEIGHT + 3)
   bar.x = x
+  bar.rows = count -- how many items show at once
   bar:SetHideIfUnscrollable(true)
   bar.wheelPanScalar = 3 -- 3 rows per wheel notch, as over the list
   bar.total = 0
   bar:RegisterCallback("OnScroll", function(_, percentage)
     if bar.syncing then return end
-    local max = bar.total - ROWS
+    local max = bar.total - bar.rows
     if max <= 0 then return end
     bar.moving = true
     local ok, err = pcall(onScroll, math.floor(percentage * max + 0.5))
@@ -457,13 +461,14 @@ end
 function Window.syncScrollBar(bar, offset, total)
   if not bar then return end
   bar.total = total
-  local max = total - ROWS
+  local rows = bar.rows or ROWS
+  local max = total - rows
   local held = bar.moving or (bar.IsThumbMouseDown and bar:IsThumbMouseDown())
   bar.syncing = true
   local ok, err = pcall(function()
     if max > 0 then
       bar:SetPanExtentPercentage(1 / max) -- one row per step
-      bar:SetVisibleExtentPercentage(ROWS / total)
+      bar:SetVisibleExtentPercentage(rows / total)
       if not held then bar:SetScrollPercentage(offset / max, true) end
     else
       bar:SetVisibleExtentPercentage(1) -- everything fits: the bar hides itself

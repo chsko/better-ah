@@ -67,7 +67,7 @@ describe("TooltipPrices", function()
     TooltipPrices.set(saved, "paid", false)
     assert.same({ paid = false }, saved)
     assert.same({ show = true, disenchant = true, paid = false, shift = true, lowest = true,
-      sales = true }, TooltipPrices.options(saved))
+      sales = true, sellTime = true }, TooltipPrices.options(saved))
     TooltipPrices.set(saved, "paid", true)
     assert.same({}, saved)
   end)
@@ -107,6 +107,25 @@ describe("TooltipPrices, min buyout (#194)", function()
     assert.same({ label = "Min buyout (just now)", money = 9950 }, TooltipPrices.lines(item, on).rows[2],
       "for all 5 in the bags (#210)")
     assert.equal(1, #TooltipPrices.lines(item, TooltipPrices.options({ lowest = false })).rows)
+  end)
+end)
+
+describe("TooltipPrices, best time to sell (#221)", function()
+  local TooltipPrices = helper.load("BetterAH/Core/TooltipPrices.lua").TooltipPrices
+  local hint = { rating = 2, word = "Average", window = "Sun 20:00-23:00", better = "40% better", advice = "post 8h" }
+
+  it("adds how good now is, the best window and the advice (mockup A)", function()
+    local out = TooltipPrices.lines({ value = 10500, bags = 1, sellTime = hint }, TooltipPrices.options({}))
+    local r = out.rows
+    assert.same({ label = "Sell now", text = "Average", rating = 2 }, r[2])
+    assert.same({ label = "Best time", text = "Sun 20:00-23:00" }, r[3])
+    assert.same({ label = "", text = "40% better · post 8h", dim = true }, r[4])
+  end)
+
+  it("adds nothing with too little data or with the setting off", function()
+    assert.equal(1, #TooltipPrices.lines({ value = 1, bags = 1, sellTime = { none = true } }).rows)
+    assert.equal(1, #TooltipPrices.lines({ value = 1, bags = 1, sellTime = hint },
+      TooltipPrices.options({ sellTime = false })).rows)
   end)
 end)
 

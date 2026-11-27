@@ -17,6 +17,8 @@ TooltipHook.DIM_COLOR = { 0.62, 0.62, 0.62 }
 TooltipHook.DIM = "|cff9d9d9d"
 TooltipHook.GAIN = { 0.24, 0.88, 0.29 }
 TooltipHook.LOSS = { 1, 0.35, 0.29 }
+-- Sell time ratings (#221): best and good green, average yellow, slow orange, as in the mockup.
+TooltipHook.RATING = { [0] = { 0.24, 0.88, 0.29 }, { 0.24, 0.88, 0.29 }, { 1, 0.82, 0 }, { 1, 0.54, 0.23 } }
 -- C_Item.GetItemInfo's bindType: 1 binds on pickup, 4 is a quest item. Neither can be on the auction house.
 TooltipHook.UNSELLABLE = { [1] = true, [4] = true }
 
@@ -55,6 +57,19 @@ function TooltipHook:bagCount(itemID)
   return tonumber(count) or 0
 end
 
+-- Local time minus UTC, in seconds, from the client's date(); 0 (UTC) without it.
+function TooltipHook.localOffset(env, now)
+  if type(env.date) ~= "function" then return 0 end
+  return ns.SellTimes.offset(try(env.date, "*t", now), try(env.date, "!*t", now))
+end
+
+-- The sell time hint (#221) for an item ID on the current market, or nil.
+function TooltipHook.sellTime(env, addon, id, key, now)
+  if not (ns.SellTimes and id) then return nil end
+  return ns.SellTimes.hint(addon.SellTimesData or ns.SellTimesData, id, key, now,
+    function(t) return TooltipHook.localOffset(env, t) end)
+end
+
 -- What the pure module needs about the item behind link, or nil when the link isn't an item or the
 -- item can never be on the auction house and has no price.
 function TooltipHook:gather(link, opts, main)
@@ -69,6 +84,7 @@ function TooltipHook:gather(link, opts, main)
   end
   local item = { value = priceOf(id), bags = self:bagCount(id), now = now }
   if opts.lowest and key and prices and prices.current then item.current = prices:current(key, "i:" .. id) end
+  if opts.sellTime and key then item.sellTime = TooltipHook.sellTime(env, addon, id, key, now) end
   if opts.sales and addon.ledger and addon.ledger.soldAndPosted then
     local sold, posted = addon.ledger:soldAndPosted(id, link, now - TooltipHook.SALES_DAYS * 86400)
     item.sales = { sold = sold, posted = posted }
@@ -102,6 +118,8 @@ function TooltipHook:draw(tooltip, out)
     local text, c = row.text or self:moneyText(row.money), { 1, 1, 1 }
     if row.dim then
       c = TooltipHook.DIM_COLOR
+    elseif row.rating then
+      c = TooltipHook.RATING[row.rating] or c
     elseif row.sign then
       text = (row.money < 0 and "-" or "+") .. text
       c = row.money < 0 and TooltipHook.LOSS or TooltipHook.GAIN
@@ -125,7 +143,7 @@ function TooltipHook:linesFor(link, opts, main)
     tostring(try(env.IsShiftKeyDown) and true or false), tostring(self:bagCount(link)),
     tostring(prices and prices.version and prices:version(ns.AuctionAPI and ns.AuctionAPI.currentMarket(env))),
     tostring(opts.show), tostring(opts.disenchant), tostring(opts.paid), tostring(opts.shift),
-    tostring(opts.lowest), tostring(opts.sales) }, "\31")
+    tostring(opts.lowest), tostring(opts.sales), tostring(opts.sellTime) }, "\31")
   local cache = self.cache
   if cache and cache.stamp == stamp then return cache.out end
   local item = self:gather(link, opts, main)

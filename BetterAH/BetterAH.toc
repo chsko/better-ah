@@ -11,6 +11,7 @@ SellTimes.lua
 Core/DebugLog.lua
 Core/Money.lua
 Core/Time.lua
+Core/SellTimes.lua
 Core/MarketKey.lua
 Core/MarketValue.lua
 Core/Disenchant.lua

@@ -294,12 +294,65 @@ function PostView:buildEditor()
   ns.Window.tooltip(env, self.floorButton, "Set floor",
     "The lowest price per item you'll sell for on this market, like 20s or 1g 5s. Leave it empty to use "
     .. "80% of market value, or for a disenchant material the floor rule for all mats.")
+  self:buildSellTime(box)
   self:buildRuleEditor()
   self.editorStatus = box:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   self.editorStatus:SetPoint("TOPLEFT", box, "TOPLEFT", 0, -136)
   self.editorStatus:SetWidth(196)
   self.editorStatus:SetJustifyH("LEFT")
   box:Hide()
+end
+
+-- Best time to sell (#221): one line above the posting profile, explained on hover (mockup B and C).
+function PostView:buildSellTime(box)
+  local env = self.env
+  local line = env.CreateFrame("Frame", nil, box)
+  line:SetSize(276, 40)
+  line:SetPoint("BOTTOMLEFT", box, "TOPLEFT", 0, 6)
+  local text = line:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  text:SetAllPoints(line)
+  text:SetJustifyH("LEFT")
+  if text.SetJustifyV then text:SetJustifyV("BOTTOM") end
+  if text.SetWordWrap then text:SetWordWrap(true) end
+  line.text = text
+  if line.EnableMouse then line:EnableMouse(true) end
+  line:SetScript("OnEnter", function(f)
+    local tip, hint = env.GameTooltip, self.sellTimeHint
+    if not (tip and hint) then return end
+    tip:SetOwner(f, "ANCHOR_RIGHT")
+    tip:SetText("Best time to sell", 1, 1, 1)
+    for _, l in ipairs(ns.SellTimes.details(hint, ns.Money.format)) do tip:AddLine(l, nil, nil, nil, true) end
+    tip:Show()
+  end)
+  line:SetScript("OnLeave", function() if env.GameTooltip then env.GameTooltip:Hide() end end)
+  line:Hide()
+  self.sellTimeLine = line
+end
+
+-- The colour codes for the rating word, like the tooltip's.
+PostView.RATING_COLORS = { [0] = "|cff3ce04a", "|cff3ce04a", "|cffffd100", "|cffff8a3a" }
+
+-- The Post screen's sell time sentence for a hint: the rating word coloured, or grey with too little data.
+function PostView.sellTimeText(hint)
+  if not hint then return nil end
+  if hint.none then return "|cff9d9d9d" .. ns.SellTimes.NOT_ENOUGH .. "|r" end
+  local color = PostView.RATING_COLORS[hint.rating] or ""
+  local word = hint.rating == 0 and "Best time now." or (hint.word .. " now.")
+  return color .. word .. "|r" .. hint.line:sub(#word + 1)
+end
+
+function PostView:renderSellTime(row)
+  local line = self.sellTimeLine
+  if not line then return end
+  local opts = ns.TooltipPrices and ns.TooltipPrices.options(self.addon.tooltipSettings) or {}
+  local id = row and row.entry and row.entry.itemID
+  -- Follows the tooltip block's switch too, like the Settings check box it sits under.
+  local hint = opts.show and opts.sellTime and id and ns.TooltipHook
+    and ns.TooltipHook.sellTime(self.env, self.addon, id, self.key or self:market(), self:now()) or nil
+  self.sellTimeHint = hint
+  local text = PostView.sellTimeText(hint)
+  line.text:SetText(text or "")
+  line:SetShown(text ~= nil)
 end
 
 -- The floor rule for all disenchant materials (#71), on the detail panel when Floor rule is pressed.
@@ -835,6 +888,7 @@ function PostView:renderEditor(row)
   local editable = row and row.state ~= "checking" and row.state ~= "failed" and self.addon.posting
   self.editor:SetShown(editable and true or false)
   if not editable then return end
+  self:renderSellTime(row)
   self.durationDrop.refresh()
 end
 

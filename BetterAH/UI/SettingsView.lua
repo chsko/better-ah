@@ -100,7 +100,7 @@ end
 -- Tooltips (#119): what Better AH adds to item tooltips, each part on unless turned off.
 SettingsView.TOOLTIPS_TOP = -192
 SettingsView.CHECK_STEP = 22 -- one check box below the other
-SettingsView.SUB_COLUMNS = { 28, 270 } -- the parts sit in two columns under the main box, to fit above Mail
+SettingsView.SUB_COLUMNS = { 28, 196, 364 } -- the parts sit in three columns under the main box, to fit above Mail
 
 function SettingsView:buildTooltips(panel)
   local env = self.env
@@ -131,7 +131,7 @@ function SettingsView:buildTooltips(panel)
     end
     label:SetText(s.label)
     -- Clickable over its label, short of the next column.
-    if b.SetHitRectInsets then b:SetHitRectInsets(0, s.sub and -210 or -300, 0, 0) end
+    if b.SetHitRectInsets then b:SetHitRectInsets(0, s.sub and -140 or -300, 0, 0) end
     b.settingKey, b.label = s.key, label
     self.tooltipChecks[i] = b
   end

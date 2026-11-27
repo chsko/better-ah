@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
+use bah_core::export::{lua_data, page_files};
 use bah_core::{Applied, Snapshot, Stats};
 use base64::Engine;
 use flate2::read::GzDecoder;
@@ -41,7 +42,7 @@ const USAGE: &str =
     "usage: better-ah-companion collect --out <dir> --cache <dir> [--pages-url <url>]
 
 Environment: BLIZZARD_CLIENT_ID, BLIZZARD_CLIENT_SECRET (required),
-REGION (eu), RULESET (2), HOUSE (114).";
+REGION (eu), RULESET (2), HOUSE (114), MARKET (/Normal/Horde).";
 
 struct Collect {
     out: PathBuf,
@@ -50,6 +51,7 @@ struct Collect {
     region: String,
     ruleset: String,
     house: String,
+    market: String,
 }
 
 impl Collect {
@@ -74,10 +76,14 @@ impl Collect {
             region: env_or("REGION", "eu"),
             ruleset: env_or("RULESET", "2"),
             house: env_or("HOUSE", "114"),
+            // Better AH's market key for this house (ADR 0005).
+            market: env_or("MARKET", "/Normal/Horde"),
         })
     }
 
     fn run(&self) -> Res<()> {
+        // One clock reading for the whole run, so pruning and ranking agree on the hour.
+        let now = system_to_unix(SystemTime::now());
         let api = Api::connect(&self.region)?;
         let base = format!("/data/wow/ruleset/{}/auctions/{}", self.ruleset, self.house);
         let house = api.dynamic(&base)?;
@@ -101,7 +107,7 @@ impl Collect {
         let applied = stats.apply(prev.as_ref(), &next);
         println!("applied {applied:?}");
         // Even without a new export, nothing older than 30 days may stay published.
-        let expired = stats.prune_at(system_to_unix(SystemTime::now()));
+        let expired = stats.prune_at(now);
         if applied == Applied::Repeated && !expired {
             set_output("changed", "false");
             return Ok(());
@@ -118,6 +124,22 @@ impl Collect {
         }
         fs::copy(&state_path, self.out.join("state.json.gz"))
             .map_err(|e| format!("copy state: {e}"))?;
+        let files = page_files(&stats, now, &self.market);
+        fs::create_dir_all(self.out.join("items")).map_err(|e| format!("items dir: {e}"))?;
+        let mut page_bytes = 0;
+        for (path, value) in &files {
+            let text = value.to_string();
+            page_bytes += text.len();
+            fs::write(self.out.join(path), text).map_err(|e| format!("{path}: {e}"))?;
+        }
+        let lua = lua_data(&stats, now, &self.market);
+        fs::write(self.out.join("SellTimes.lua"), &lua)
+            .map_err(|e| format!("SellTimes.lua: {e}"))?;
+        println!(
+            "page items={} bytes={page_bytes} addon file bytes={}",
+            files.len() - 1,
+            lua.len()
+        );
         fs::write(self.out.join("index.html"), index_html(&stats))
             .map_err(|e| format!("index: {e}"))?;
         fs::write(self.out.join(".nojekyll"), "").map_err(|e| format!(".nojekyll: {e}"))?;

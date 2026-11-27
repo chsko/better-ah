@@ -20,7 +20,7 @@ LedgerView.ITEM_COLUMNS = {
   { "Item", 4, 170, "LEFT" }, { "Bought", 178, 46 }, { "Avg paid", 228, 70 }, { "Sold", 302, 40 },
   { "Avg sold", 346, 70 }, { "Profit", 420, 96 },
 }
-LedgerView.TOP_ROWS = 48 -- the tab and period buttons above the list
+LedgerView.TOP_ROWS = 30 -- the tab and drop-down rows above the list; its headings sit 32 below this
 LedgerView.ROWS = 14
 LedgerView.CHART_HEIGHT = 240
 LedgerView.MAX_BARS = 60 -- the most days the chart draws; older ones are left off
@@ -241,7 +241,7 @@ function LedgerView:build(f, x, y, width, height)
   self.empty = empty
 
   local footer = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  footer:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 0, 4)
+  footer:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 0, 6) -- clear of the last row and the frame edge
   footer:SetWidth(width - 24)
   footer:SetJustifyH("LEFT")
   self.footer = footer
@@ -261,7 +261,7 @@ end
 function LedgerView:buildChart(panel, width)
   local env = self.env
   local chart = env.CreateFrame("Frame", nil, panel)
-  chart:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -LedgerView.TOP_ROWS - 8)
+  chart:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -LedgerView.TOP_ROWS - 26) -- 12 below the drop-downs
   chart:SetSize(width - 24, LedgerView.CHART_HEIGHT)
   local bg = chart:CreateTexture(nil, "BACKGROUND")
   bg:SetAllPoints(chart)

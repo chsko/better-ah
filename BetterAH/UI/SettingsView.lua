@@ -109,7 +109,8 @@ function SettingsView:buildDebug(panel)
 end
 
 -- Tooltips (#119): what Better AH adds to item tooltips, each part on unless turned off.
-SettingsView.TOOLTIPS_TOP = -196
+SettingsView.TOOLTIPS_TOP = -192
+SettingsView.CHECK_STEP = 22 -- one check box below the other
 
 function SettingsView:buildTooltips(panel)
   local env = self.env
@@ -122,7 +123,8 @@ function SettingsView:buildTooltips(panel)
   for i, s in ipairs(ns.TooltipPrices.SETTINGS) do
     local b = env.CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
     b:SetSize(24, 24)
-    b:SetPoint("TOPLEFT", panel, "TOPLEFT", s.sub and 28 or 4, SettingsView.TOOLTIPS_TOP - 20 - (i - 1) * 24)
+    local top = SettingsView.TOOLTIPS_TOP - 20 - (i - 1) * SettingsView.CHECK_STEP
+    b:SetPoint("TOPLEFT", panel, "TOPLEFT", s.sub and 28 or 4, top)
     b:SetScript("OnClick", function(c) self:setTooltip(s.key, c:GetChecked() and true or false) end)
     ns.Window.tooltip(env, b, s.label, s.tip)
     local label = b.Text
@@ -138,7 +140,7 @@ function SettingsView:buildTooltips(panel)
 end
 
 -- Mail (#154): the Mailbox window replaces Blizzard's mail frame unless this is off.
-SettingsView.MAIL_TOP = -320
+SettingsView.MAIL_TOP = -308 -- its check box ends 12 above the panel bottom
 SettingsView.MAIL = { label = "Replace Blizzard's mail frame with the Better AH Mailbox",
   tip = "Off: mailboxes open Blizzard's own mail frame again. Takes effect the next time you open a mailbox." }
 

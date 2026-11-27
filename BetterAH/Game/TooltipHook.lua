@@ -10,6 +10,7 @@ ns = ns or {}
 
 local TooltipHook = {}
 
+TooltipHook.SALES_DAYS = 7
 TooltipHook.TITLE_COLOR = { 0.38, 0.77, 1 }
 TooltipHook.LABEL_COLOR = { 0.91, 0.91, 0.91 }
 TooltipHook.DIM_COLOR = { 0.62, 0.62, 0.62 }
@@ -68,6 +69,10 @@ function TooltipHook:gather(link, opts, main)
   end
   local item = { value = priceOf(id), bags = self:bagCount(id), now = now }
   if opts.lowest and key and prices and prices.current then item.current = prices:current(key, "i:" .. id) end
+  if opts.sales and addon.ledger and addon.ledger.soldAndPosted then
+    local sold, posted = addon.ledger:soldAndPosted(id, link, now - TooltipHook.SALES_DAYS * 86400)
+    item.sales = { sold = sold, posted = posted }
+  end
   -- Shift totals and their hint only on the main tooltip: Shift redraws only that one.
   item.shift = main and opts.shift and try(env.IsShiftKeyDown) and true or false
   if not main then item.bags = math.min(item.bags, 1) end
@@ -95,7 +100,7 @@ function TooltipHook:draw(tooltip, out)
   if out.message then tooltip:AddLine(out.message, d[1], d[2], d[3], true) end
   for _, row in ipairs(out.rows) do
     local text, c = row.text or self:moneyText(row.money), { 1, 1, 1 }
-    if row.text then
+    if row.dim then
       c = TooltipHook.DIM_COLOR
     elseif row.sign then
       text = (row.money < 0 and "-" or "+") .. text
@@ -120,7 +125,7 @@ function TooltipHook:linesFor(link, opts, main)
     tostring(try(env.IsShiftKeyDown) and true or false), tostring(self:bagCount(link)),
     tostring(prices and prices.version and prices:version(ns.AuctionAPI and ns.AuctionAPI.currentMarket(env))),
     tostring(opts.show), tostring(opts.disenchant), tostring(opts.paid), tostring(opts.shift),
-    tostring(opts.lowest) }, "\31")
+    tostring(opts.lowest), tostring(opts.sales) }, "\31")
   local cache = self.cache
   if cache and cache.stamp == stamp then return cache.out end
   local item = self:gather(link, opts, main)

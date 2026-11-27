@@ -66,7 +66,8 @@ describe("TooltipPrices", function()
     local saved = {}
     TooltipPrices.set(saved, "paid", false)
     assert.same({ paid = false }, saved)
-    assert.same({ show = true, disenchant = true, paid = false, shift = true, lowest = true }, TooltipPrices.options(saved))
+    assert.same({ show = true, disenchant = true, paid = false, shift = true, lowest = true,
+      sales = true }, TooltipPrices.options(saved))
     TooltipPrices.set(saved, "paid", true)
     assert.same({}, saved)
   end)
@@ -92,7 +93,12 @@ describe("TooltipPrices, min buyout (#194)", function()
   it("says none listed when the latest scan didn't list it", function()
     local out = TooltipPrices.lines({ value = 2140, bags = 1, now = 600,
       current = { listed = false, seen = 0 } }, on)
-    assert.same({ label = "Min buyout (10 min ago)", text = "none listed" }, out.rows[2])
+    assert.same({ label = "Min buyout (10 min ago)", text = "none listed", dim = true }, out.rows[2])
+  end)
+
+  it("leaves the min buyout out when the item has no market value", function()
+    local out = TooltipPrices.lines({ bags = 1, now = 0, current = { lowest = 1990, listed = true, seen = 0 } }, on)
+    assert.same({}, out.rows)
   end)
 
   it("says each beside the bag totals, and goes with its setting", function()
@@ -100,5 +106,23 @@ describe("TooltipPrices, min buyout (#194)", function()
       current = { lowest = 1990, listed = true, seen = 0 } }
     assert.equal("Min buyout, each (just now)", TooltipPrices.lines(item, on).rows[2].label)
     assert.equal(1, #TooltipPrices.lines(item, TooltipPrices.options({ lowest = false })).rows)
+  end)
+end)
+
+describe("TooltipPrices, your sales (#194)", function()
+  local TooltipPrices = helper.load("BetterAH/Core/TooltipPrices.lua").TooltipPrices
+  local on = TooltipPrices.options({})
+
+  local function salesRow(sales)
+    for _, r in ipairs(TooltipPrices.lines({ value = 100, bags = 1, sales = sales }, on).rows) do
+      if r.label == "Sold, past 7 days" then return r.text end
+    end
+  end
+
+  it("shows how many sold of how many posted, and nothing when there were neither", function()
+    assert.equal("12 sold, 20 posted", salesRow({ sold = 12, posted = 20 }))
+    assert.equal("3 sold, 0 posted", salesRow({ sold = 3, posted = 0 }))
+    assert.is_nil(salesRow({ sold = 0, posted = 0 }))
+    assert.is_nil(salesRow(nil))
   end)
 end)

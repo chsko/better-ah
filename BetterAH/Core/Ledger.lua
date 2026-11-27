@@ -209,6 +209,26 @@ function Ledger:entries(from, char)
   return out
 end
 
+-- How many of an item were sold and posted from time `from` (#194, the tooltip's sale rate), on every
+-- character. An entry is the item's when its name matches (sales come from mail invoices, which only name
+-- the item, and the name keeps a green's suffix apart); with no name, when its itemID does. Sold counts
+-- units whose gold was taken from the mail; posted counts units posted with a deposit. Returns sold, posted.
+function Ledger:soldAndPosted(itemID, itemName, from)
+  local id, wanted = tonumber(itemID), name(itemName)
+  local sold, posted = 0, 0
+  local list = self.store.entries
+  for i = #list, 1, -1 do
+    local e = list[i]
+    -- Not a break at the first older one: a sale is booked when its gold is taken, so entries aren't in
+    -- time order.
+    if e.t >= from and (e.k == "sale" or e.k == "deposit")
+      and ((wanted and e.name == wanted) or (not wanted and id and tonumber(e.item) == id)) then
+      if e.k == "sale" then sold = sold + int(e.n) else posted = posted + int(e.n) end
+    end
+  end
+  return sold, posted
+end
+
 -- What an entry did to the player's gold: + for gold in, - for gold out. A sale gives what came in the mail
 -- less its deposit, which is counted against the deposits: sold for - cut.
 function Ledger.amount(e)

@@ -127,6 +127,15 @@ function Buying.affordable(rows, money)
   return n
 end
 
+-- How many a click on a ladder row asks for: everything up to and including it, or with single (Shift-click,
+-- #191) only that row's count. The game still fills a commodity buy cheapest first, so a single pick buys
+-- that many of the cheapest units, never that row's own auctions. nil for no row.
+function Buying.clickQuantity(row, single)
+  if not row then return nil end
+  if single then return row.count end
+  return row.running
+end
+
 -- How a commodity quote compares to the price shown before it: "same" (or cheaper), "up", or
 -- "unavailable" when the client has no quote.
 function Buying.quote(shownTotal, quotedTotal)

@@ -91,6 +91,14 @@ describe("Buying", function()
       assert.equal(6, Buying.affordable(rows, 6 * 98 + 101))
       assert.equal(7, Buying.affordable(rows, 6 * 98 + 102))
     end)
+
+    it("a row click takes up to the row, a single pick only its count (#191)", function()
+      local rows = Buying.ladder(listings, 0).rows
+      local last = rows[#rows]
+      assert.equal(last.running, Buying.clickQuantity(last, false))
+      assert.equal(last.count, Buying.clickQuantity(last, true))
+      assert.is_nil(Buying.clickQuantity(nil, true))
+    end)
   end)
 
   it("compares a quote with the shown price", function()

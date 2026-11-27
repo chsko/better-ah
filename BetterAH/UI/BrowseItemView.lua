@@ -307,11 +307,13 @@ function ItemView:maxQuantity()
   self:quantityChanged()
 end
 
--- Clicking a ladder row sets the quantity to everything up to and including it.
+-- Clicking a ladder row sets the quantity to everything up to and including it; Shift-click to only that
+-- row's count (#191), which the game still fills cheapest first.
 function ItemView:takeTo(r)
   local row = self.ladder and self.ladder.rows[r + self.offset]
   if not row then return end
-  self.commodityControls.quantity:SetText(tostring(row.running))
+  local shift = self.env.IsShiftKeyDown and self.env.IsShiftKeyDown() and true or false
+  self.commodityControls.quantity:SetText(tostring(ns.Buying.clickQuantity(row, shift)))
   self:quantityChanged()
 end
 
@@ -469,7 +471,7 @@ function ItemView:statusText()
   if self.list.commodity then
     local n = self.ladder and self.ladder.available or 0
     if n == 0 then return "None for sale by others." .. partial end
-    return string.format("%d for sale by others, cheapest first. Click a row to buy up to it.%s", n, partial)
+    return string.format("%d for sale by others. Click: buy up to a row. Shift-click: that row's amount, cheapest first.%s", n, partial)
   end
   local n = #(self.rows or {})
   if n == 0 then return "No auctions of it right now." .. partial end

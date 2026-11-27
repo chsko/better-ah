@@ -22,6 +22,7 @@ local function setup(opts)
   helper.load("BetterAH/UI/Dropdown.lua", ns)
   helper.load("BetterAH/UI/PostView.lua", ns)
   helper.load("BetterAH/UI/SnipeView.lua", ns)
+  helper.load("BetterAH/UI/ResultsView.lua", ns)
   helper.load("BetterAH/UI/ValueChart.lua", ns)
   helper.load("BetterAH/UI/DisenchantView.lua", ns)
   helper.load("BetterAH/UI/SettingsView.lua", ns)
@@ -63,6 +64,7 @@ local function setup(opts)
     helper.load("BetterAH/Game/CharacterTracker.lua", ns)
     ns.CharacterTracker.install(env, ns)
   end
+  if opts and opts.watch then ns.disenchantWatch = {} end -- a stand-in DisenchantWatch, for its onChange
   local w = ns.Window.install(env, ns)
   if opts and opts.debug then
     helper.load("BetterAH/Core/DebugLog.lua", ns)
@@ -888,6 +890,69 @@ describe("Window", function()
       w:select("disenchant")
       return env, w, ns
     end
+
+    it("shows each target's real profit on Results (#258)", function()
+      local env, w, ns = deSetup()
+      local armor = { name = "Armor", min = 26, max = 30, profit = "2s", worth = 4000 }
+      ns.snipeProfit:bought(5001, nil, 3000, env.now - 100, armor)
+      ns.snipeProfit:bought(5002, nil, 2000, env.now - 50, armor)
+      ns.snipeProfit:disenchanted(5001, nil, "A", env.now - 90, { [11083] = 4 })
+      ns.ledger:sale({ t = env.now - 10, name = "Soul Dust", n = 2, money = 1900, cut = 100 })
+      local v = w.disenchantView
+      v.tabButtons.results:Click()
+      assert.is_true(v.resultsPanel:IsShown())
+      assert.is_false(v.targetsPanel:IsShown())
+      local rows = v.results.rows
+      local function cells(r)
+        local out = {}
+        for c = 1, 7 do out[c] = rows[r][c]:GetText() end
+        return out
+      end
+      -- Soul Dust held: 2 at 446c market value, 424c after the cut.
+      assert.same({ "Armor 26-30", "2", "50s 0c", "19s 0c", "8s 48c", "1", "-22s 52c" }, cells(1))
+      assert.same("Total", cells(2)[1])
+      assert.equal("1 disenchant recorded. Last 1 min ago.", v.results.status:GetText())
+      assert.is_false(v.results.detail:IsShown())
+      rows[1].button:Click()
+      assert.is_true(v.results.detail:IsShown())
+      assert.equal("Armor 26-30", w.detailTitle:GetText())
+      assert.equal("2 greens, 25s 0c each", v.results.facts[1]:GetText())
+      assert.equal("1, worth about 40s 0c", v.results.facts[3]:GetText())
+      assert.same({ "Soul Dust", "4", "2", "2", "19s 0c" }, { v.results.matRows[1][1]:GetText(),
+        v.results.matRows[1][2]:GetText(), v.results.matRows[1][3]:GetText(), v.results.matRows[1][4]:GetText(),
+        v.results.matRows[1][5]:GetText() })
+      rows[2].button:Click()
+      assert.equal("All greens", w.detailTitle:GetText())
+      rows[2].button:Click()
+      assert.is_false(v.results.detail:IsShown(), "clicking the picked row again lets it go")
+      rows[1].button:Click()
+      v.results:setPeriod("today")
+      assert.is_false(v.results.detail:IsShown(), "a new period drops the pick")
+      assert.equal("Armor 26-30", rows[1][1]:GetText(), "bought today, so still shown")
+      v.tabButtons.values:Click()
+      assert.is_false(v.results.detail:IsShown(), "the detail goes with the tab")
+    end)
+
+    it("redraws Results when a disenchant is recorded", function()
+      local env, w, ns = setup({ watch = true })
+      env.openAuctionHouse()
+      w:select("disenchant")
+      local v = w.disenchantView
+      v.tabButtons.results:Click()
+      assert.is_false(v.results.rows[1].button:IsShown())
+      ns.snipeProfit:disenchanted(5001, nil, "A", env.now, { [11083] = 2 })
+      ns.disenchantWatch.onChange()
+      assert.equal("Not sniped", v.results.rows[1][1]:GetText())
+    end)
+
+    it("says so on Results when nothing was bought yet", function()
+      local _, w = deSetup()
+      local v = w.disenchantView
+      v.tabButtons.results:Click()
+      assert.is_true(v.results.empty:IsShown())
+      assert.equal("No disenchants recorded yet.", v.results.status:GetText())
+      assert.is_false(v.results.rows[1].button:IsShown())
+    end)
 
     it("lists every green band with what one is worth after the auction house cut", function()
       local env, w, ns = deSetup()

@@ -273,7 +273,18 @@ function Window.entryButton(env, parent, width)
   text:SetPoint("LEFT", b, "LEFT", 8, 0)
   text:SetJustifyH("LEFT")
   b:SetFontString(text)
+  b.entryArt = { normal = normal, selected = selected, highlight = highlight }
   return b
+end
+
+-- Makes an entryButton width wide, its art too (a filter row narrowed with its list, #240).
+function Window.resizeEntryButton(b, width)
+  b:SetWidth(width)
+  local art = b.entryArt
+  if not art then return end
+  art.normal:SetWidth(width + 4)
+  art.selected:SetWidth(width)
+  art.highlight:SetWidth(width)
 end
 
 -- Selected entries get Blizzard's selected art and white text; the rest keep gold text.

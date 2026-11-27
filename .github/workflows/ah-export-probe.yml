@@ -1,0 +1,77 @@
+# Probe for Blizzard's Forever auction house export (#216, spec #215).
+# Fetches Horde Normal (house 114) and its commodities every 15 minutes and
+# logs status, Last-Modified, size and counts, so we can measure how often
+# Forever refreshes the export. Keeps nothing.
+name: AH export probe
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ah-export
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGION: eu
+  NAMESPACE: dynamic-forever-eu
+  RULESET: "2"   # any valid ruleset returns the same houses
+  HOUSE: "114"   # Horde Normal
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Fetch and log
+        env:
+          CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+        run: |
+          if [ -z "$CLIENT_ID" ] && [ -z "$CLIENT_SECRET" ]; then
+            echo "::notice::BLIZZARD_CLIENT_ID / BLIZZARD_CLIENT_SECRET not set yet; skipping (see #216)."
+            exit 0
+          fi
+          if [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ]; then
+            echo "::error::Only one of BLIZZARD_CLIENT_ID / BLIZZARD_CLIENT_SECRET is set."
+            exit 1
+          fi
+          # Secret goes to curl on stdin, not the command line.
+          token=$(printf 'user = "%s:%s"\n' "$CLIENT_ID" "$CLIENT_SECRET" \
+            | curl -sS --fail --connect-timeout 10 --max-time 30 -K - \
+                -d grant_type=client_credentials https://oauth.battle.net/token \
+            | jq -r '.access_token // empty') || token=""
+          if [ -z "$token" ]; then
+            echo "::error::No access token returned"
+            exit 1
+          fi
+          echo "::add-mask::$token"
+
+          base="https://$REGION.api.blizzard.com/data/wow/ruleset/$RULESET/auctions/$HOUSE"
+          {
+            echo "| endpoint | probed at (UTC) | status | Last-Modified | bytes | listings |"
+            echo "|---|---|---|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for kind in auctions commodities; do
+            url="$base"
+            [ "$kind" = commodities ] && url="$base/commodities"
+            body="$kind.json"; headers="$kind.headers"
+            rm -f "$body" "$headers"
+            at=$(date -u +%FT%TZ)
+            # Network errors and HTTP errors are logged, not fatal: the probe only measures.
+            status=$(curl -sS --connect-timeout 10 --max-time 120 -o "$body" -D "$headers" -w '%{http_code}' \
+              -H "Authorization: Bearer $token" -H "Battlenet-Namespace: $NAMESPACE" "$url") || true
+            [ -n "$status" ] || status=000
+            modified=$(grep -i '^last-modified:' "$headers" 2>/dev/null | cut -d' ' -f2- | tr -d '\r' || true)
+            bytes=$({ wc -c < "$body"; } 2>/dev/null || echo 0)
+            count="?"
+            if [ "$status" = 200 ]; then
+              count=$(jq '(.auctions // []) | length' "$body" 2>/dev/null || echo "?")
+            fi
+            echo "probe kind=$kind at=$at status=$status last_modified=\"${modified:-none}\" bytes=$bytes listings=$count"
+            echo "| $kind | $at | $status | ${modified:-none} | $bytes | $count |" >> "$GITHUB_STEP_SUMMARY"
+          done

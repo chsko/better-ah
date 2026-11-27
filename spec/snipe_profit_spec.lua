@@ -103,3 +103,143 @@ describe("SnipeProfit", function()
     assert.same({}, SnipeProfit.new(nil).store.greens)
   end)
 end)
+
+describe("SnipeProfit:results (#257)", function()
+  local ns = helper.load("BetterAH/Core/Purchases.lua")
+  helper.load("BetterAH/Core/Disenchant.lua", ns)
+  local SnipeProfit = helper.load("BetterAH/Core/SnipeProfit.lua", ns).SnipeProfit
+  local DUST, ESSENCE = 10940, 10998
+  local armor = { name = "Armor", min = 21, max = 25, profit = "2g", worth = 12000 }
+  local weapons = { name = "Weapons", min = 21, max = 25, profit = "1g", worth = 15000 }
+  local function sale(t, item, n, c, cut, nameOnly)
+    return { k = "sale", t = t, item = not nameOnly and item or nil,
+      name = nameOnly and ns.Disenchant.BY_ID[item].name or "x", n = n, c = c, cut = cut or 0 }
+  end
+  local function none() return nil end
+  local function rowOf(r, name)
+    for _, row in ipairs(r.rows) do if row.name == name then return row end end
+  end
+
+  it("credits a mat sale to the disenchant that gave the mats", function()
+    local sp = SnipeProfit.new({})
+    sp:bought(1, nil, 5000, 10, armor)
+    sp:disenchanted(1, nil, "A", 20, { [DUST] = 4 })
+    local r = sp:results(0, { sale(30, DUST, 4, 8000, 400) }, none)
+    local row = r.rows[1]
+    assert.same({ "Armor", 21, 25, "2g" }, { row.name, row.min, row.max, row.targetProfit })
+    assert.same({ 1, 1, 5000, 7600, 0, 2600 }, { row.greens, row.disenchanted, row.spent, row.earned,
+      row.unsold, row.profit })
+    assert.same({ got = 4, sold = 4, held = 0, earned = 7600, unsold = 0 }, row.mats[DUST])
+  end)
+
+  it("splits one sale over several disenchants, oldest first", function()
+    local sp = SnipeProfit.new({})
+    sp:bought(1, nil, 5000, 10, armor)
+    sp:bought(2, nil, 6000, 11, weapons)
+    sp:disenchanted(2, nil, "A", 20, { [DUST] = 3 })
+    sp:disenchanted(1, nil, "A", 21, { [DUST] = 3 })
+    local r = sp:results(0, { sale(30, DUST, 4, 4000) }, none)
+    assert.equal(3000, rowOf(r, "Weapons").earned, "disenchanted first, sold first")
+    assert.equal(1000, rowOf(r, "Armor").earned)
+    assert.same({ got = 3, sold = 1, held = 2, earned = 1000, unsold = 0 }, rowOf(r, "Armor").mats[DUST])
+  end)
+
+  it("values mats not sold yet at what the caller says a unit brings", function()
+    local sp = SnipeProfit.new({})
+    sp:bought(1, nil, 5000, 10, armor)
+    sp:disenchanted(1, nil, "A", 20, { [DUST] = 5, [ESSENCE] = 1 })
+    local r = sp:results(0, { sale(30, DUST, 2, 2000) }, function(id) return id == DUST and 900 or nil end)
+    local row = r.rows[1]
+    assert.equal(2000, row.earned)
+    assert.equal(2700, row.unsold, "3 dust at 9s; the essence has no value known")
+    assert.equal(-300, row.profit)
+  end)
+
+  it("ignores sales made before the disenchant and units sold beyond what was disenchanted", function()
+    local sp = SnipeProfit.new({})
+    sp:bought(1, nil, 5000, 10, armor)
+    sp:disenchanted(1, nil, "A", 20, { [DUST] = 2 })
+    local r = sp:results(0, { sale(15, DUST, 10, 10000), sale(30, DUST, 5, 5000) }, none)
+    assert.equal(2000, r.rows[1].earned, "2 of the 5 later units, at 10s each")
+  end)
+
+  it("matches a sale known only by its mail name", function()
+    local sp = SnipeProfit.new({})
+    sp:bought(1, nil, 5000, 10, armor)
+    sp:disenchanted(1, nil, "A", 20, { [DUST] = 2 })
+    local r = sp:results(0, { sale(30, DUST, 2, 3000, 150, true), { k = "buy", t = 31, item = DUST, n = 2, c = 99 } },
+      none)
+    assert.equal(2850, r.rows[1].earned)
+  end)
+
+  it("counts greens not disenchanted yet as spent and waiting, at the worth the sniper saw", function()
+    local sp = SnipeProfit.new({})
+    sp:bought(1, nil, 5000, 10, armor)
+    sp:bought(1, nil, 6000, 11, armor)
+    sp:disenchanted(1, nil, "A", 20, { [DUST] = 2 })
+    local row = sp:results(0, {}, none).rows[1]
+    assert.same({ 2, 1, 11000 }, { row.greens, row.disenchanted, row.spent })
+    assert.same({ n = 1, worth = 12000 }, row.waiting)
+    assert.equal(-11000, row.profit, "the waiting worth is a guess and stays out of the profit")
+  end)
+
+  it("counts only greens bought since from, but matches sales over every green", function()
+    local sp = SnipeProfit.new({})
+    sp:bought(1, nil, 5000, 10, armor)
+    sp:bought(1, nil, 6000, 100, armor)
+    sp:disenchanted(1, nil, "A", 20, { [DUST] = 2 })
+    sp:disenchanted(1, nil, "A", 110, { [DUST] = 2 })
+    local r = sp:results(50, { sale(120, DUST, 3, 3000) }, none)
+    local row = r.rows[1]
+    assert.same({ 1, 6000, 1000 }, { row.greens, row.spent, row.earned },
+      "the older green's dust sold first, and it is outside the period")
+  end)
+
+  it("keeps a row per target and band, Not sniped last, and a total", function()
+    local sp = SnipeProfit.new({})
+    sp:bought(1, nil, 5000, 10, { name = "Armor", min = 26, max = 30 })
+    sp:bought(2, nil, 4000, 11, armor)
+    sp:bought(3, nil, 3000, 12, weapons)
+    sp:disenchanted(9, nil, "A", 20, { [DUST] = 1 }, 2500)
+    local r = sp:results(0, { sale(30, DUST, 1, 1000) }, none)
+    local names = {}
+    for _, row in ipairs(r.rows) do names[#names + 1] = row.name .. " " .. tostring(row.min) end
+    assert.same({ "Armor 21", "Armor 26", "Weapons 21", "Not sniped nil" }, names)
+    local other = r.rows[4]
+    assert.is_true(other.other)
+    assert.same({ 1, 2500, 1000, -1500 }, { other.greens, other.spent, other.earned, other.profit })
+    assert.same({ 4, 3, 14500, 1000, -13500 }, { r.total.greens, r.total.waiting.n, r.total.spent,
+      r.total.earned, r.total.profit })
+  end)
+
+  it("makes the total add up to the rows it shows", function()
+    local sp = SnipeProfit.new({})
+    for i = 1, 3 do
+      sp:bought(i, nil, 10, i, { name = "T" .. i, min = 21, max = 25 })
+      sp:disenchanted(i, nil, "A", 10 + i, { [DUST] = 1 })
+    end
+    local r = sp:results(0, { sale(30, DUST, 3, 100) }, none)
+    assert.same({ 33, 33, 33 }, { r.rows[1].earned, r.rows[2].earned, r.rows[3].earned })
+    assert.equal(99, r.total.earned)
+  end)
+
+  it("stays quick with a long history", function()
+    local sp = SnipeProfit.new({})
+    for i = 1, 5000 do
+      sp:bought(1, nil, 100, i, armor)
+      sp:disenchanted(1, nil, "A", i, { [DUST] = 1 })
+    end
+    local sales = {}
+    for i = 1, 20000 do sales[i] = sale(5000 + i, DUST, 1, 10) end
+    local start = os.clock()
+    local r = sp:results(0, sales, none)
+    assert.equal(50000, r.total.earned)
+    assert.is_true(os.clock() - start < 0.5, "took " .. (os.clock() - start) .. " s")
+  end)
+
+  it("gives no rows when nothing was bought", function()
+    local r = SnipeProfit.new({}):results(0, nil, none)
+    assert.same({}, r.rows)
+    assert.equal(0, r.total.profit)
+  end)
+end)

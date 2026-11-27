@@ -1795,7 +1795,9 @@ describe("Window", function()
       env.openAuctionHouse()
       sidebarButton(w, "settings"):Click()
       local checks = w.settingsView.tooltipChecks
-      assert.equal(4, #checks)
+      assert.equal(5, #checks)
+      assert.equal("Current min buyout", checks[5].label:GetText())
+      assert.is_true(checks[5].points.TOPLEFT.y > -308 + 24, "every part fits above the Mail group")
       assert.equal("Show Better AH prices on item tooltips", checks[1].label:GetText())
       for _, b in ipairs(checks) do assert.is_true(b:GetChecked()) end
       checks[3]:Click()

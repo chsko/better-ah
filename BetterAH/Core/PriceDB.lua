@@ -213,6 +213,18 @@ function PriceDB:marketValue(key, item, now)
   return value, info
 end
 
+-- What the latest scan saw of an item (#194): { lowest = cheapest buyout per unit, quantity, seen = time
+-- of the scan that saw it, listed = false when a full scan since then didn't list it }, or nil when no
+-- scan ever saw it.
+function PriceDB:current(key, item)
+  local data = marketData(self, key)
+  local e = data and data.items[item]
+  if not (e and e.seen) then return nil end
+  local listed = not (data.lastScan and data.lastScan > e.seen)
+  return { lowest = listed and e.lowest or nil, quantity = listed and e.quantity or 0, seen = listed and e.seen
+    or data.lastScan, listed = listed }
+end
+
 -- Time of the last scan of a market, or nil.
 function PriceDB:lastScan(key)
   local data = marketData(self, key)

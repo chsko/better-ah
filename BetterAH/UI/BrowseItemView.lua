@@ -471,7 +471,8 @@ function ItemView:statusText()
   if self.list.commodity then
     local n = self.ladder and self.ladder.available or 0
     if n == 0 then return "None for sale by others." .. partial end
-    return string.format("%d for sale by others. Click: buy up to a row. Shift-click: that row's amount, cheapest first.%s", n, partial)
+    return string.format("%d for sale by others. Click: buy up to a row. "
+      .. "Shift-click: that row's amount, cheapest first.%s", n, partial)
   end
   local n = #(self.rows or {})
   if n == 0 then return "No auctions of it right now." .. partial end

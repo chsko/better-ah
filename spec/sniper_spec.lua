@@ -258,6 +258,51 @@ describe("Sniper", function()
       assert.is_false(ok)
       assert.equal("not enough gold", why)
     end)
+
+    it("counts a buy with no answer toward the spend cap until it settles (#163)", function()
+      local s = Sniper.Session.new({ spent = 0 }, 0)
+      local a = { auctionID = 1, name = "A", price = 3000, itemKey = { itemID = 9 } }
+      s:add(a)
+      s:missed(10, a, "no answer from the auction house", "unknown")
+      local ok, why = s:canBuy(3000, 100000, 5000, 0, 20)
+      assert.is_false(ok, "both could go through and pass the cap")
+      assert.equal("over your spend cap for this session if buys still waiting for an answer went through", why)
+      assert.is_true(s:canBuy(2000, 100000, 5000, 0, 20), "room for both")
+      assert.is_true(s:canBuy(3000, 100000, 0, 0, 20), "no cap")
+      s:bought(30, a) -- the late confirmation
+      assert.equal(3000, s.saved.spent)
+      assert.equal(0, s:heldSpend(30), "counted once, as spent")
+      assert.is_false(s:canBuy(3000, 100000, 5000, 0, 30))
+
+      local b = { auctionID = 2, name = "B", price = 1000, itemKey = { itemID = 9 } }
+      s:add(b)
+      s:missed(40, b, "the auction house closed", "closed")
+      assert.equal(1000, s:heldSpend(41))
+      s:lookedUp({ itemID = 9 }, 1000, 50)
+      s:sawListings({ itemID = 9 }, { { auctionID = 2, unit = 1000, count = 1 } })
+      assert.equal(0, s:heldSpend(51), "still listed: it wasn't bought")
+
+      local c = { auctionID = 3, name = "C", price = 1500, itemKey = { itemID = 9 } }
+      s:add(c)
+      s:missed(60, c, "no answer from the auction house", "unknown")
+      assert.equal(1500, s:heldSpend(60 + Sniper.HOLD - 1))
+      assert.equal(0, s:heldSpend(60 + Sniper.HOLD), "let go after a while")
+    end)
+
+    it("keeps holding a buy from an auction of several items that a lookup shows with fewer (#163)", function()
+      local s = Sniper.Session.new({ spent = 0 }, 0)
+      local key = { itemID = 9 }
+      s:lookedUp(key, 1000, 0)
+      s:sawListings(key, { { auctionID = 5, unit = 1000, count = 3 } })
+      local a = { auctionID = 5, name = "A", price = 1000, itemKey = key }
+      s:add(a)
+      s:missed(10, a, "no answer from the auction house", "unknown")
+      s:lookedUp(key, 1000, 20)
+      s:sawListings(key, { { auctionID = 5, unit = 1000, count = 2 } })
+      assert.equal(1000, s:heldSpend(21), "one item fewer: it may be ours")
+      s:sawListings(key, { { auctionID = 5, unit = 1000, count = 3 } })
+      assert.equal(0, s:heldSpend(22))
+    end)
   end)
 end)
 

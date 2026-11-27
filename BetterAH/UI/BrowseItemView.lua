@@ -228,7 +228,7 @@ end
 function ItemView:open(row)
   if self.api and self:api() then self:api():cancelCommodity() end
   self.row, self.list, self.rows, self.ladder, self.selected = row, nil, nil, nil, nil
-  self.quoted, self.message, self.offset, self.busy = nil, nil, 0, nil
+  self.quoted, self.message, self.offset, self.busy, self.sending = nil, nil, 0, nil, nil
   -- A commodity starts at 1 (#125): a row click fills up to that row, Max what you can afford.
   self.commodityControls.quantity:SetText("1")
   for _, b in ipairs(self.itemControls.boxes) do b:SetText("") end
@@ -239,7 +239,7 @@ end
 function ItemView:close()
   local api = self:api()
   if api then api:cancelCommodity() end
-  self.row, self.loadJob, self.quoted, self.busy, self.quoting = nil, nil, nil, nil, nil
+  self.row, self.loadJob, self.quoted, self.busy, self.quoting, self.sending = nil, nil, nil, nil, nil, nil
   if self.panel then self.panel:Hide() end
   self:hideControls()
 end
@@ -349,19 +349,27 @@ function ItemView:sendThenDraw(text, send)
   self:render()
 end
 
+-- Books a buy for item, the page's row when the buy was sent (#162): its answer can come after the player
+-- has gone back to the results or opened another item, so it never reads self.row.
+function ItemView:book(item, link, count, copper)
+  local purchases = self.addon and self.addon.purchases
+  if purchases then purchases:bought(item.itemID, link, count, copper, self:now()) end
+  local ledger = self.addon and self.addon.ledgerAPI
+  if ledger then ledger:bought(item.itemID, item.name, count, copper, "Browse") end
+end
+
 function ItemView:buyout()
   local api, row = self:api(), self.selected
   local ok, why = ns.Buying.canBuyout(row, api and api:money())
   if not ok then return self:say(why) end
-  local name, price = self.row.name or "the item", row.buyout
-  self.busy = true
+  local item, price = self.row, row.buyout
+  local name, token = item.name or "the item", {}
+  self.busy, self.sending = true, token
   self:sendThenDraw("Buying...", function() api:buyout(row.auctionID, price, function(bought, reason, kind)
+    if bought then self:book(item, row.link, 1, price) end
+    if self.sending ~= token then return end -- the page moved on, or a later buy is waiting: only book it
     self.busy = nil
     if bought then
-      local ledger = self.addon and self.addon.purchases
-      if ledger then ledger:bought(self.row.itemID, row.link, 1, price, self:now()) end -- one auction
-      local book = self.addon and self.addon.ledgerAPI
-      if book then book:bought(self.row.itemID, self.row.name, 1, price, "Browse") end
       self:say(string.format("Bought %s for %s.", name, money(price)))
       self.selected = nil
     elseif kind == "unknown" then
@@ -378,8 +386,10 @@ function ItemView:placeBid()
   local amount = self:bidAmount()
   local ok, why = ns.Buying.canBid(row, amount, api and api:money())
   if not ok then return self:say(why) end
-  self.busy = true
+  local token = {}
+  self.busy, self.sending = true, token
   self:sendThenDraw("Bidding...", function() api:bid(row.auctionID, amount, function(placed, reason)
+    if self.sending ~= token then return end -- the page moved on, or a later send is waiting
     self.busy = nil
     if placed then
       self:say(string.format("Bid %s sent. If someone outbids you, your gold comes back by mail.", money(amount)))
@@ -397,7 +407,7 @@ function ItemView:quote()
   if have and ladder.total > have then return self:say("You don't have enough gold for that many.") end
   local shown, qty = ladder.total, ladder.quantity
   local token = {}
-  self.busy, self.quoting = true, token
+  self.busy, self.quoting, self.sending = true, token, nil -- a late answer to an older buy only books it
   -- The auction house can send the quote again (a new price): each one replaces the last.
   self:sendThenDraw("Asking for the price...", function() api:quoteCommodity(self.row.itemID, qty, function(unit, total)
     if self.quoting ~= token then return end
@@ -416,15 +426,14 @@ end
 function ItemView:confirm()
   local api, q = self:api(), self.quoted
   if not q or q.quantity ~= self:quantity() then return self:cancelQuote() end
-  local name = self.row.name or "the item"
-  self.busy, self.quoted, self.quoting = true, nil, nil
+  local item = self.row
+  local name, token = item.name or "the item", {}
+  self.busy, self.quoted, self.quoting, self.sending = true, nil, nil, token
   self:sendThenDraw("Buying...", function() api:confirmCommodity(function(bought, reason)
+    if bought then self:book(item, nil, q.quantity, q.total) end
+    if self.sending ~= token then return end -- the page moved on, or a later buy is waiting: only book it
     self.busy = nil
     if bought then
-      local ledger = self.addon and self.addon.purchases
-      if ledger then ledger:bought(self.row.itemID, nil, q.quantity, q.total, self:now()) end
-      local book = self.addon and self.addon.ledgerAPI
-      if book then book:bought(self.row.itemID, self.row.name, q.quantity, q.total, "Browse") end
       self:say(string.format("Bought %d %s for %s.", q.quantity, name, money(q.total)))
       self.commodityControls.quantity:SetText("1")
       self:relayer()

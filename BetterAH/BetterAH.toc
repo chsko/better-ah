@@ -33,6 +33,7 @@ Core/Browse.lua
 Core/SearchHistory.lua
 Core/Buying.lua
 Core/WindowScale.lua
+Core/DetailPane.lua
 Core/AutoScan.lua
 Core/Purchases.lua
 Core/Ledger.lua
@@ -69,6 +70,7 @@ UI/BrowseView.lua
 UI/MyAuctionsView.lua
 UI/MyBidsView.lua
 UI/LedgerView.lua
+UI/Divider.lua
 UI/WindowResize.lua
 UI/Window.lua
 UI/MailSendPanel.lua

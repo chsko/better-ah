@@ -129,6 +129,7 @@ function Frame:GetMinMaxValues() return self.min, self.max end
 function Frame:SetValue(v) self.value = v end
 function Frame:GetValue() return self.value end
 function Frame:SetAtlas(atlas) self.atlas = atlas end
+function Frame:SetTexture(path) self.texture = path end
 function Frame:SetAllPoints() end
 function Frame:SetTexCoord(...) self.texCoord = { ... } end
 function Frame:SetTextColor(...) self.textColor = { ... } end

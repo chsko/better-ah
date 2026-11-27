@@ -136,6 +136,13 @@ impl Collect {
         let mut stats = self.load_stats(&state_path)?;
         let prev: Option<Snapshot> = read_gz_json(&prev_path)?;
 
+        if let Some((auctions, commodities)) = prev
+            .as_ref()
+            .and_then(|p| bah_core::infer::breakdown(p, &next))
+        {
+            println!("auctions {auctions:?}");
+            println!("commodities {commodities:?}");
+        }
         let applied = stats.apply(prev.as_ref(), &next);
         println!("applied {applied:?}");
         // Even without a new export, nothing older than 30 days may stay published.

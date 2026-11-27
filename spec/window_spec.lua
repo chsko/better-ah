@@ -3762,9 +3762,9 @@ describe("Browse search history", function()
 
   describe("divider", function()
     it("starts at the saved width, and lays the results out for the room left", function()
-      local _, _, ns, view = browse({ historyWidth = 300 })
-      assert.equal(300, view.historyWidth)
-      assert.equal(ns.BrowseView.WIDTH - ns.BrowseView.DIVIDER - 300, view.panel:GetWidth())
+      local _, _, ns, view = browse({ historyWidth = 270 })
+      assert.equal(270, view.historyWidth)
+      assert.equal(ns.BrowseView.WIDTH - ns.BrowseView.DIVIDER - 270, view.panel:GetWidth())
       local name = view.rows[1][1]
       assert.equal(view.columns[1][3], name.width)
       assert.equal(view.listWidth - 22 - 4, view.columns[6][2] + view.columns[6][3])
@@ -3778,9 +3778,9 @@ describe("Browse search history", function()
       local d = view.divider
       env.cursorX, env.mouseDown = 600, true
       d.scripts.OnMouseDown(d, "LeftButton")
-      env.cursorX = 600 - 36 -- 36 screen px = 48 UI units = 40 px of the scaled window
+      env.cursorX = 600 - 9 -- 9 screen px = 12 UI units = 10 px of the scaled window
       d.scripts.OnUpdate(d, 0.01)
-      assert.equal(start + 40, view.historyWidth)
+      assert.equal(start + 10, view.historyWidth)
       env.mouseDown = false
       d.scripts.OnUpdate(d, 0.01) -- released where the divider didn't hear it
       assert.is_nil(view.dragging)
@@ -3807,18 +3807,21 @@ describe("Browse search history", function()
       w.frame:SetScale(1)
       env.cursorX, env.mouseDown = 500, true
       d.scripts.OnMouseDown(d, "LeftButton")
-      env.cursorX = 440 -- 60 px left: the history gets wider
+      env.cursorX = 485 -- 15 px left: the history gets wider
       d.scripts.OnUpdate(d, 0.01)
-      assert.equal(start + 60, view.historyWidth)
+      assert.equal(start + 15, view.historyWidth)
+      env.cursorX = 0
+      d.scripts.OnUpdate(d, 0.01)
+      assert.equal(ns.Browse.HISTORY_MAX, view.historyWidth, "no wider than the filter row allows (#213)")
       assert.is_nil(settings.historyWidth, "saved only when the drag ends")
       env.cursorX = 2000
       d.scripts.OnUpdate(d, 0.01)
       assert.equal(ns.Browse.HISTORY_MIN, view.historyWidth)
-      env.cursorX = 440
+      env.cursorX = 485
       d.scripts.OnUpdate(d, 0.01)
       env.mouseDown = false
       d.scripts.OnMouseUp(d, "LeftButton")
-      assert.equal(start + 60, settings.historyWidth)
+      assert.equal(start + 15, settings.historyWidth)
       d.scripts.OnDoubleClick(d)
       assert.equal(ns.Browse.HISTORY_WIDTH, view.historyWidth)
       assert.is_nil(settings.historyWidth)
@@ -4371,5 +4374,57 @@ describe("My bids view (#95)", function()
     assert.is_nil(v.bids)
     assert.is_false(v.controls.buy:IsShown())
     assert.equal("My bids", sidebarButton(w, "bids"):GetText())
+  end)
+end)
+
+describe("Browse layout, tidied (#213)", function()
+  local function browse()
+    local env, w, ns = setup()
+    env.openAuctionHouse()
+    w:select("browse")
+    env.itemNames = { [1] = "Ridgeback Bracers" }
+    env.browseResults = { { itemKey = { itemID = 1, itemLevel = 28 }, totalQuantity = 3, minPrice = 890 } }
+    return env, w, ns, w.browseView, w.browseView.filterBar
+  end
+
+  it("puts Search beside the box and the level range on the filter row, after Rarity", function()
+    local _, _, _, view, bar = browse()
+    assert.same({ "TOPRIGHT", view.panel, "TOPRIGHT", -4, -1 }, { unpack(view.searchButton.point, 1, 5) })
+    assert.equal("Item name, or shift-click an item", view.searchHint:GetText())
+    assert.equal(bar.rarityButton, view.levelLabel.point[2], "Level follows Rarity")
+    assert.equal(bar.categoryButton, bar.rarityButton.point[2])
+    assert.equal(view.maxLevel, bar.usableCheck.point[2], "the check boxes follow the level range")
+    assert.equal(view.listWidth - 98, view.searchBox.width, "the box takes the row, less Search")
+  end)
+
+  it("shows Clear filters beside Search only once a filter is set, and gives it room", function()
+    local _, _, _, view, bar = browse()
+    local full = view.searchBox.width
+    assert.is_false(bar.clearButton:IsShown())
+    bar.usableCheck:Click()
+    assert.is_true(bar.clearButton:IsShown())
+    assert.equal(view.searchButton, bar.clearButton.point[2])
+    assert.equal(full - 84 - 6, view.searchBox.width)
+    bar.clearButton:Click()
+    assert.is_false(bar.clearButton:IsShown())
+    assert.equal(full, view.searchBox.width)
+  end)
+
+  it("says what to do in the middle of the empty list, until the first search", function()
+    local env, _, _, view = browse()
+    assert.is_true(view.emptyTitle:IsShown())
+    assert.equal("Search the auction house", view.emptyTitle:GetText())
+    assert.matches("press Enter", view.emptyHint:GetText())
+    assert.equal("", view.status:GetText(), "the hint isn't repeated at the bottom")
+    view.searchButton:Click()
+    assert.is_false(view.emptyTitle:IsShown())
+    env.runTimers()
+    assert.is_false(view.emptyHint:IsShown())
+    assert.matches("Ridgeback Bracers", view.rows[1][1]:GetText())
+  end)
+
+  it("draws the divider as a thin line", function()
+    local _, _, _, view = browse()
+    assert.same({ 0.24, 0.19, 0.13, 1 }, view.divider.line.color, "dark, not the old gold grip")
   end)
 end)

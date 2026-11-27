@@ -68,8 +68,8 @@ end
 
 -- The search history panel beside the results (#129): how wide it starts, and how far the divider
 -- between the two can be dragged. The results get the rest of Browse's width.
--- (At most 320, so the search row, with the Category button, keeps room for its search box.)
-Browse.HISTORY_WIDTH, Browse.HISTORY_MIN, Browse.HISTORY_MAX = 260, 160, 320
+-- (At most 280, so the filter row, Category to Exact name, keeps room on the results side: #213.)
+Browse.HISTORY_WIDTH, Browse.HISTORY_MIN, Browse.HISTORY_MAX = 260, 160, 280
 
 -- A history panel width to use: a saved or dragged width rounded and kept in range, else the default.
 function Browse.historyWidth(width)

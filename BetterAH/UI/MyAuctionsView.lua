@@ -228,7 +228,7 @@ end
 -- Called whenever the view is shown: the first showing of each auction house visit asks for the list.
 function MyAuctionsView:show()
   if not self.visit then
-    self.visit = { checks = {}, sent = {}, recorded = {} }
+    self.visit = { checks = {}, sent = {}, slow = {}, recorded = {} }
     self.selected, self.offset, self.message = nil, 0, nil
     local api = self.addon.myAuctionsAPI
     if api then api:query() end
@@ -272,8 +272,19 @@ function MyAuctionsView:read()
     for _, a in ipairs(self.auctions) do
       if not a.sold then up[a.id] = true end -- a sold part keeps the id of an auction that is gone
     end
-    for id, state in pairs(self.visit.sent) do
-      if state == "done" and not up[id] then self.visit.sent[id] = nil end
+    local visit, updates = self.visit, myApi and myApi.updates or 0
+    for id, state in pairs(visit.sent) do
+      if state == "done" and not up[id] then visit.sent[id] = nil end
+      -- A cancel with no answer: settled by the first full list that no longer has the auction (it went), or
+      -- by a list the server sent after the timeout that still has it (it didn't).
+      local slow = state == "unconfirmed" and self.complete and visit.slow[id]
+      if slow and not up[id] then
+        visit.sent[id], visit.slow[id] = nil, nil
+        self.message = slow.cancelled
+      elseif slow and updates > slow.updates then
+        visit.sent[id], visit.slow[id] = nil, nil
+        self.message = "The auction house didn't cancel " .. slow.name .. ". You can try again."
+      end
     end
   end
 end
@@ -373,12 +384,20 @@ function MyAuctionsView:cancel(row)
   if not (api and visit and row) or row.kind == "sold" or visit.sent[row.auction.id] then return end
   local a = row.auction
   local name = a.name or a.item
-  local sent, why = api:cancel(a.id, function(ok, reason)
+  local cancelled = string.format("Cancelled %s%s. It comes back by mail, then shows up in Post.",
+    (a.quantity or 1) > 1 and (a.quantity .. " ") or "", name)
+  local sent, why = api:cancel(a.id, function(ok, reason, unconfirmed)
     if self.visit ~= visit then return end
-    if ok then
+    visit.slow[a.id] = nil
+    if unconfirmed then
+      -- It may still go through: never send it again until the auctions list says.
+      visit.sent[a.id] = "unconfirmed"
+      visit.slow[a.id] = { name = name, cancelled = cancelled, updates = api.updates or 0 }
+      self.message = "No answer yet about cancelling " .. name .. ". Waiting for your auctions list to show "
+        .. "whether it went."
+    elseif ok then
       visit.sent[a.id] = "done"
-      self.message = string.format("Cancelled %s%s. It comes back by mail, then shows up in Post.",
-        (a.quantity or 1) > 1 and (a.quantity .. " ") or "", name)
+      self.message = cancelled
     else
       visit.sent[a.id] = nil
       self.message = string.format("Couldn't cancel %s: %s.", name, tostring(reason))

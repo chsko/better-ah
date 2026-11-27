@@ -188,4 +188,103 @@ describe("PostQueue", function()
       assert.equal(500, row.own)
     end)
   end)
+
+  describe("with essences (#234)", function()
+    local ens = helper.load("BetterAH/Core/Disenchant.lua")
+    helper.load("BetterAH/Core/MatFloors.lua", ens)
+    helper.load("BetterAH/Core/EssenceSwap.lua", ens)
+    helper.load("BetterAH/Core/Posting.lua", ens)
+    helper.load("BetterAH/Core/PostQueue.lua", ens)
+    local LESSER, GREATER = "i:11174", "i:11175"
+    local mv = { [LESSER] = 3885, [GREATER] = 11960 }
+
+    local function essenceQueue(entries, floors)
+      local asked = {}
+      local q = ens.PostQueue.new({ settings = ens.Posting.Settings.new({}), key = "/Normal/Horde",
+        marketValue = function(item) return mv[item] end,
+        matFloor = function(item) return floors and floors[item] and { floor = floors[item] } or nil end,
+        ownAuctions = function(e) asked[#asked + 1] = e.item return nil end })
+      q:setEntries(entries or { { item = LESSER, name = "Lesser Nether Essence", have = 20, commodity = true } })
+      return q, asked
+    end
+
+    it("asks for the other form of each essence it shows, once found or being found", function()
+      local q = essenceQueue({ { item = LESSER, name = "Lesser Nether Essence", have = 20, commodity = true },
+        { item = "i:10940", name = "Strange Dust", have = 5, commodity = true } })
+      assert.same({ GREATER }, q:counterparts())
+      q:setListings(GREATER, { { unit = 11960, count = 50 } })
+      assert.same({}, q:counterparts())
+      q:setListings(GREATER, nil, "no answer")
+      assert.same({ GREATER }, q:counterparts(), "a failed lookup is tried again")
+    end)
+
+    it("doesn't ask for the other form with too few to combine", function()
+      local q = essenceQueue({ { item = LESSER, name = "Lesser Nether Essence", have = 2, commodity = true } })
+      assert.same({}, q:counterparts())
+    end)
+
+    it("says why the other form wouldn't post", function()
+      local q = essenceQueue()
+      mv[GREATER] = nil
+      q:setListings(LESSER, { { unit = 3884, count = 100 } })
+      q:setListings(GREATER, {})
+      local s = q:rows()[1].swap
+      mv[GREATER] = 11960
+      assert.is_nil(s, "no price for the greater at all")
+      q:setListings(GREATER, { { unit = 11960, count = 1 } })
+      mv[GREATER] = nil
+      s = q:rows()[1].swap
+      mv[GREATER] = 11960
+      assert.is_false(s.otherPosts)
+      assert.equal("no-floor", s.otherReason)
+    end)
+
+    it("doesn't ask for the other form when it is in the bags too", function()
+      local q = essenceQueue({ { item = LESSER, name = "Lesser Nether Essence", have = 20, commodity = true },
+        { item = GREATER, name = "Greater Nether Essence", have = 4, commodity = true } })
+      assert.same({}, q:counterparts())
+    end)
+
+    it("compares posting as is with combining, at the price the other form would post at", function()
+      local q, asked = essenceQueue()
+      q:setListings(LESSER, { { unit = 3884, count = 100 } })
+      assert.is_nil(q:rows()[1].swap, "nothing to compare until the greater is looked up")
+      q:setListings(GREATER, { { unit = 11960, count = 50 } })
+      local row = q:rows()[1]
+      assert.equal(3883, row.plan.price)
+      local s = row.swap
+      assert.equal("combine", s.direction)
+      assert.equal(11959, s.otherPrice)
+      assert.equal(6, s.units)
+      assert.equal(math.floor((6 * 11959 + 2 * 3883) * 0.95) - math.floor(20 * 3883 * 0.95), s.gain)
+      assert.is_true(s.better)
+      assert.truthy(table.concat(asked, ","):find(GREATER, 1, true), "the greater's own auctions count")
+    end)
+
+    it("doesn't advise converting when the other form would go below its floor", function()
+      local q = essenceQueue(nil, { [GREATER] = 12500 })
+      q:setListings(LESSER, { { unit = 3884, count = 100 } })
+      q:setListings(GREATER, { { unit = 11960, count = 50 } })
+      local s = q:rows()[1].swap
+      assert.is_true(s.gain > 0)
+      assert.is_false(s.better)
+    end)
+
+    it("uses the other form's bag entry and listings when it is in the bags", function()
+      local q = essenceQueue({ { item = LESSER, name = "Lesser Nether Essence", have = 20, commodity = true },
+        { item = GREATER, name = "Greater Nether Essence", have = 4, commodity = true } })
+      q:setListings(LESSER, { { unit = 3884, count = 100 } })
+      q:setListings(GREATER, { { unit = 11960, count = 50 } })
+      local rows = q:rows()
+      assert.is_true(rows[1].swap.better)
+      assert.equal("split", rows[2].swap.direction)
+      assert.is_false(rows[2].swap.better)
+    end)
+
+    it("leaves other items without a comparison", function()
+      local q = essenceQueue({ { item = "i:10940", name = "Strange Dust", have = 5, commodity = true } })
+      q:setListings("i:10940", { { unit = 900, count = 20 } })
+      assert.is_nil(q:rows()[1].swap)
+    end)
+  end)
 end)

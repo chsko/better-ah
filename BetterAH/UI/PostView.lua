@@ -26,10 +26,31 @@ function PostView.durationLabel(env, index)
 end
 
 -- The Status column for a row.
+-- A gain where room is tight: whole gold from 10g, gold and silver, only silver, or copper under a silver.
+function PostView.gainText(copper)
+  local g, s, c = ns.Money.split(copper)
+  if g >= 10 then return string.format("%dg", g) end
+  if g > 0 then return string.format("%dg %ds", g, s) end
+  if s > 0 then return string.format("%ds", s) end
+  return string.format("%dc", c)
+end
+
+local SWAP_VERB = { combine = "Combine", split = "Split" }
+
+-- Whether the row shows the essence swap advice (#234): converting earns more, and the item would
+-- otherwise post or stay in the bags below its floor.
+local function advised(row)
+  local swap, plan = row.swap, row.plan or {}
+  return swap and swap.better and not row.skipped and (row.state == "ready" or plan.reason == "below-floor")
+end
+
 function PostView.statusText(row)
   local plan = row.plan
   if row.state == "checking" then return "Checking..." end
   if row.state == "failed" then return "Not checked" end
+  if advised(row) then
+    return string.format("|cffffd100%s +%s|r", SWAP_VERB[row.swap.direction], PostView.gainText(row.swap.gain))
+  end
   if row.state == "ready" then
     if plan.posts == 1 then return string.format("Ready: %d", plan.quantity) end
     return string.format("Ready: %d x %d", plan.posts, plan.quantity)
@@ -75,6 +96,39 @@ local function floorSource(ownFloor, marketValue, matFloor)
   return string.format("%d%% of the %s market value", ns.Posting.FLOOR_SHARE * 100, money(marketValue))
 end
 
+-- The essence swap comparison for the detail panel (#234): both totals and which earns more.
+function PostView.swapLines(row)
+  local swap = row.swap
+  local plan = row.plan or {}
+  if not swap or row.skipped or not (row.state == "ready" or plan.reason == "below-floor") then return nil end
+  local verb = SWAP_VERB[swap.direction]
+  local into = swap.direction == "combine" and string.format("%s into %d %s%s", verb, swap.units, swap.otherName,
+    swap.left > 0 and string.format(", %d left", swap.left) or "")
+    or string.format("%s into %d %s", verb, swap.units, swap.otherName)
+  local lines = {
+    "|cffffd100" .. verb .. " or post as is|r",
+    string.format("Post %d as is: %s", row.have, ns.Money.short(swap.asIs)),
+    string.format("%s: %s", into, ns.Money.short(swap.convert)),
+  }
+  local verbing = swap.direction == "combine" and "Combining" or "Splitting"
+  if swap.better then
+    lines[#lines + 1] = string.format("%s earns %s more, after the 5%% cut.", verbing, ns.Money.format(swap.gain))
+  elseif swap.gain > 0 and swap.otherReason == "no-floor" then
+    lines[#lines + 1] = string.format("%s earns %s more, but %s has no market value to set its floor from.",
+      verbing, ns.Money.format(swap.gain), swap.otherName)
+  elseif swap.gain > 0 and swap.otherPosts == false then
+    lines[#lines + 1] = string.format("%s earns %s more, but %s would go below its floor.", verbing,
+      ns.Money.format(swap.gain), swap.otherName)
+  elseif swap.gain > 0 then
+    lines[#lines + 1] = string.format("%s earns only %s more, after the 5%% cut.", verbing,
+      ns.Money.format(swap.gain))
+  else
+    lines[#lines + 1] = string.format("Posting as is earns %s more, after the 5%% cut.",
+      ns.Money.format(-swap.gain))
+  end
+  return lines
+end
+
 -- The detail panel text for a row. ownFloor and marketValue explain where the floor came from; step is
 -- the client's price step (100 when prices go in whole silver).
 function PostView.detailText(row, ownFloor, marketValue, step)
@@ -101,7 +155,7 @@ function PostView.detailText(row, ownFloor, marketValue, step)
       .. "so it stays in your bags.", money(plan.price), money(plan.floor),
       floorSource(ownFloor, marketValue, row.matFloor)))
     local c = not ownFloor and row.matFloor and row.matFloor.convert
-    if c and c.ratio < 1 and (row.have or 0) >= 3 then
+    if c and c.ratio < 1 and (row.have or 0) >= 3 and not row.swap then
       add("")
       add(string.format("Combine them in threes into %s instead.", matName(c.id)))
     end
@@ -135,6 +189,11 @@ function PostView.detailText(row, ownFloor, marketValue, step)
           total < plan.limit and ", minus what you posted this visit" or ""))
       end
     end
+  end
+  local swap = PostView.swapLines(row)
+  if swap then
+    add("")
+    for _, l in ipairs(swap) do add(l) end
   end
   return table.concat(lines, "\n")
 end
@@ -647,38 +706,46 @@ function PostView:refresh()
   self.unavailable = not entries and why or nil
   local need = self.queue:setEntries(entries or {})
   if api then
-    self.tries = self.tries or {}
-    for _, e in ipairs(need) do
-      if not self.searching[e.item] and (self.tries[e.item] or 0) <= PostView.RETRIES then
-        self.searching[e.item] = true
-        local queue = self.queue
-        api:search(e, function(listings, reason)
-          if queue ~= self.queue then return end -- from an earlier visit
-          self.searching[e.item] = nil
-          -- What the search saw counts toward the item's market value (reason is true for full results).
-          local prices = self.addon.prices
-          -- Once per item per visit, so re-checks between posts don't outweigh the day's other points.
-          -- Not for gear with a random suffix: its search sees one variant, but prices are per item ID.
-          local variant = ns.PostingAPI.variant(e)
-          if listings and reason == true and prices and self.key and not variant and not self.recorded[e.item] then
-            -- Only once it counted, so a later check that sees more listings can still count.
-            self.recorded[e.item] = prices:recordSearch(self.key, self:now(), e.item, listings, e.name) or nil
-          end
-          if listings then
-            queue:setListings(e.item, listings)
-          else
-            queue:setListings(e.item, nil, reason)
-            -- Look it up again by itself a little later (#82), not only when the bags change; a few
-            -- times per visit, as each try that gets no answer holds the search queue for a while.
-            self.tries[e.item] = (self.tries[e.item] or 0) + 1
-            if self.tries[e.item] <= PostView.RETRIES then self:later(PostView.RETRY, "retry") end
-          end
-          self:render()
-        end)
-      end
+    for _, e in ipairs(need) do self:lookup(api, e) end
+    -- The other form of each essence too, so Post can say whether converting earns more (#234).
+    for _, other in ipairs(self.queue:counterparts()) do
+      local id = tonumber(other:match("%d+"))
+      local mat = ns.Disenchant and ns.Disenchant.BY_ID[id]
+      self:lookup(api, ns.PostingAPI.commodityEntry(self.env, id, mat and mat.name))
     end
   end
   self:render()
+end
+
+-- Looks up an item's listings (once at a time, and a few tries per visit) and hands them to the queue.
+function PostView:lookup(api, e)
+  self.tries = self.tries or {}
+  if self.searching[e.item] or (self.tries[e.item] or 0) > PostView.RETRIES then return end
+  self.searching[e.item] = true
+  local queue = self.queue
+  api:search(e, function(listings, reason)
+    if queue ~= self.queue then return end -- from an earlier visit
+    self.searching[e.item] = nil
+    -- What the search saw counts toward the item's market value (reason is true for full results).
+    local prices = self.addon.prices
+    -- Once per item per visit, so re-checks between posts don't outweigh the day's other points.
+    -- Not for gear with a random suffix: its search sees one variant, but prices are per item ID.
+    local variant = ns.PostingAPI.variant(e)
+    if listings and reason == true and prices and self.key and not variant and not self.recorded[e.item] then
+      -- Only once it counted, so a later check that sees more listings can still count.
+      self.recorded[e.item] = prices:recordSearch(self.key, self:now(), e.item, listings, e.name) or nil
+    end
+    if listings then
+      queue:setListings(e.item, listings)
+    else
+      queue:setListings(e.item, nil, reason)
+      -- Look it up again by itself a little later (#82), not only when the bags change; a few
+      -- times per visit, as each try that gets no answer holds the search queue for a while.
+      self.tries[e.item] = (self.tries[e.item] or 0) + 1
+      if self.tries[e.item] <= PostView.RETRIES then self:later(PostView.RETRY, "retry") end
+    end
+    self:render()
+  end)
 end
 
 PostView.RETRY = 15 -- seconds before failed price checks are tried again

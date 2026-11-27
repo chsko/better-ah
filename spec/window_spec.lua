@@ -9,8 +9,8 @@ local function setup(opts)
   helper.load("BetterAH/Core/SearchHistory.lua", ns)
   helper.load("BetterAH/Core/Buying.lua", ns)
   local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "ValueHistory", "Targets", "Sniper",
-    "PriceDB", "CharacterRecords", "MatFloors", "Posting", "PostQueue", "SelfTest", "Probes", "Purchases",
-    "TooltipPrices", "MyAuctions", "MyBids", "Ledger" }
+    "PriceDB", "CharacterRecords", "MatFloors", "EssenceSwap", "Posting", "PostQueue", "SelfTest", "Probes",
+    "Purchases", "TooltipPrices", "MyAuctions", "MyBids", "Ledger" }
   for _, file in ipairs(core) do
     helper.load("BetterAH/Core/" .. file .. ".lua", ns)
   end
@@ -2193,12 +2193,49 @@ describe("Window", function()
       assert.equal("Post next: Linen Cloth, 40 for 9s 49c each", w.postView.postButton:GetText())
     end)
 
+    it("says when combining essences earns more, from a search of the greater one (#234)", function()
+      local env, w, ns = postSetup()
+      env.containers[0] = { { itemID = 11174, count = 20, name = "Lesser Nether Essence" } }
+      env.listings[11174] = { { unitPrice = 3884, quantity = 100 } }
+      env.listings[11175] = { { unitPrice = 11960, quantity = 50 } }
+      ns.prices:importPrices("/1/Horde", env.now, { ["i:11174"] = { value = 3885 }, ["i:11175"] = { value = 11575 } })
+      env.openAuctionHouse()
+      env.runTimers()
+      local searched = {}
+      for _, s in ipairs(env.searches) do searched[#searched + 1] = s.itemKey.itemID end
+      assert.same({ 11174, 11175 }, searched, "the greater is looked up after the bags' items")
+      local row = cells(w, 1)
+      assert.equal("Lesser Nether Essence", row[1])
+      assert.equal("38s 83c", row[3])
+      assert.equal("|cffffd100Combine +17s|r", row[5])
+      assert.equal("Post next: Lesser Nether Essence, 20 for 38s 83c each", w.postView.postButton:GetText(),
+        "advice only: it still posts as is")
+      w.postView.rows[1].button:Click()
+      local text = w.detailBody:GetText()
+      assert.matches("Post 20 as is: 7g 37s", text, 1, true)
+      assert.matches("Combine into 6 Greater Nether Essence, 2 left: 7g 55s", text, 1, true)
+      assert.matches("Combining earns 17s 67c more, after the 5% cut.", text, 1, true)
+      assert.equal(1, #w.postView.queue:rows(), "the greater isn't a row: it isn't in the bags")
+      w.postView.skipButton:Click()
+      assert.equal("Skipped", cells(w, 1)[5], "a skipped essence says so, not the advice")
+    end)
+
+    it("fits a big gain in the Status column", function()
+      local _, _, ns = postSetup()
+      assert.equal("12g", ns.PostView.gainText(123456))
+      assert.equal("4g 12s", ns.PostView.gainText(41234))
+      assert.equal("17s", ns.PostView.gainText(1767))
+      assert.equal("45c", ns.PostView.gainText(45))
+    end)
+
     it("shows only disenchant materials with their floors from the rule (#71)", function()
       local env, w, ns = postSetup()
       env.containers[1] = { { itemID = 10938, count = 9, name = "Lesser Magic Essence" },
         { itemID = 10940, count = 40, name = "Strange Dust" } }
       env.listings[10938] = { { unitPrice = 699, quantity = 20 } }
       env.listings[10940] = { { unitPrice = 1800, quantity = 60 } }
+      -- Greater Magic Essence under its own floor, so combining isn't advised (#234).
+      env.listings[10939] = { { unitPrice = 2000, quantity = 20 } }
       ns.prices:importPrices("/1/Horde", env.now, { ["i:10938"] = { value = 900 }, ["i:10939"] = { value = 2800 },
         ["i:10940"] = { value = 2000 } })
       ns.disenchant = { targets = { { enabled = true, band = 21, types = { cloth = true },
@@ -2218,7 +2255,7 @@ describe("Window", function()
       assert.equal("Post next: Strange Dust, 20 for 17s 99c each", pv.postButton:GetText())
       pv.rows[1].button:Click()
       assert.matches("a third of Greater Magic Essence's floor of 21s 0c", w.detailBody:GetText(), 1, true)
-      assert.matches("Combine them in threes into Greater Magic Essence instead.", w.detailBody:GetText(), 1, true)
+      assert.matches("Posting as is earns 2s 70c more, after the 5% cut.", w.detailBody:GetText(), 1, true)
       pv.rows[2].button:Click()
       assert.matches("75% of the 20s 0c market value: break-even for your snipes at a 25% profit",
         w.detailBody:GetText(), 1, true)

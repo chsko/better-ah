@@ -21,6 +21,8 @@ TooltipPrices.SETTINGS = {
     tip = "Only for items bought through Better AH (Snipe or Browse). Profit is after the 5% auction house cut." },
   { key = "shift", label = "Hold Shift for bag totals", sub = true,
     tip = "With Shift held, show the value of every one of the item in your bags." },
+  { key = "lowest", label = "Current min buyout", sub = true,
+    tip = "The cheapest buyout in your latest scan, and how old that scan is." },
 }
 
 function TooltipPrices.options(saved)
@@ -53,11 +55,14 @@ end
 --   stackable  true when the item stacks (prices then say "each")
 --   bags       how many are in the player's bags (0 for an item that isn't theirs)
 --   shift      true while Shift is held
+--   current    { lowest, listed, seen } from PriceDB:current, or nil (never in a scan)
+--   now        the time, for how old the scan is
 -- }
 -- opts: TooltipPrices.options(...).
 -- Returns nil when nothing should be added, else { title, note, message, rows, hint }: note is dim text
 -- after the title, message a dim line under it when the item has no market value, each row
--- { label, money (copper, rounded), sign = true for a profit (shown with + or -) }, and hint a dim line
+-- { label, money (copper, rounded), sign = true for a profit (shown with + or -) } or { label, text }, and
+-- hint a dim line
 -- at the end. note, message and hint may be nil.
 function TooltipPrices.lines(item, opts)
   opts = opts or TooltipPrices.options()
@@ -74,9 +79,21 @@ function TooltipPrices.lines(item, opts)
     rows[#rows + 1] = { label = label, money = TooltipPrices.round(copper), sign = sign }
   end
 
+  local function lowest(each)
+    local c = opts.lowest and item.current
+    if not c then return end
+    local age = ns.Time and (" (" .. ns.Time.ago(c.seen, item.now) .. ")") or ""
+    if c.listed and c.lowest and c.lowest > 0 then
+      money("Min buyout" .. (each and ", each" or "") .. age, c.lowest)
+    else
+      rows[#rows + 1] = { label = "Min buyout" .. age, text = "none listed" }
+    end
+  end
+
   if total then
     out.note = "(" .. bags .. " in bags)"
     if value then money("Market value", value * bags) end
+    lowest(true)
     if de then money("Disenchant value", de * bags) end
     if paid then
       local k = math.min(paid.units, bags)
@@ -91,6 +108,7 @@ function TooltipPrices.lines(item, opts)
   else
     if item.stackable then out.note = "(each)" end
     if value then money("Market value", value) end
+    lowest(false)
     if de then money("Disenchant value", de) end
     if paid then
       money(paid.units > 1 and "You paid, average" or "You paid", paid.unit)

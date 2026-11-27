@@ -238,3 +238,17 @@ describe("PriceDB", function()
     end)
   end)
 end)
+
+describe("PriceDB:current (#194)", function()
+  local ns = helper.load("BetterAH/Core/MarketValue.lua")
+  local PriceDB = helper.load("BetterAH/Core/PriceDB.lua", ns).PriceDB
+
+  it("gives the latest scan's lowest buyout, and none once a later full scan misses the item", function()
+    local db = PriceDB.new({})
+    assert.is_nil(db:current("/N/H", "i:1"))
+    db:recordScan("/N/H", 100, { { item = "i:1", count = 2, buyout = 500 }, { item = "i:1", count = 1, buyout = 300 } })
+    assert.same({ lowest = 250, quantity = 3, seen = 100, listed = true }, db:current("/N/H", "i:1"))
+    db:recordScan("/N/H", 200, { { item = "i:2", count = 1, buyout = 100 } })
+    assert.same({ quantity = 0, seen = 200, listed = false }, db:current("/N/H", "i:1"))
+  end)
+end)

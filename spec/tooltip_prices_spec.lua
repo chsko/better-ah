@@ -66,7 +66,7 @@ describe("TooltipPrices", function()
     local saved = {}
     TooltipPrices.set(saved, "paid", false)
     assert.same({ paid = false }, saved)
-    assert.same({ show = true, disenchant = true, paid = false, shift = true }, TooltipPrices.options(saved))
+    assert.same({ show = true, disenchant = true, paid = false, shift = true, lowest = true }, TooltipPrices.options(saved))
     TooltipPrices.set(saved, "paid", true)
     assert.same({}, saved)
   end)
@@ -75,5 +75,30 @@ describe("TooltipPrices", function()
     assert.equal(253, TooltipPrices.round(253))
     assert.equal(72700, TooltipPrices.round(72760))
     assert.equal(-15500, TooltipPrices.round(-15575))
+  end)
+end)
+
+describe("TooltipPrices, min buyout (#194)", function()
+  local ns = helper.load("BetterAH/Core/Time.lua")
+  local TooltipPrices = helper.load("BetterAH/Core/TooltipPrices.lua", ns).TooltipPrices
+  local on = TooltipPrices.options({})
+
+  it("shows the cheapest buyout from the latest scan and how old it is", function()
+    local out = TooltipPrices.lines({ value = 2140, stackable = true, bags = 1, now = 7200,
+      current = { lowest = 1990, listed = true, seen = 0 } }, on)
+    assert.same({ label = "Min buyout (2 h ago)", money = 1990 }, out.rows[2])
+  end)
+
+  it("says none listed when the latest scan didn't list it", function()
+    local out = TooltipPrices.lines({ value = 2140, bags = 1, now = 600,
+      current = { listed = false, seen = 0 } }, on)
+    assert.same({ label = "Min buyout (10 min ago)", text = "none listed" }, out.rows[2])
+  end)
+
+  it("says each beside the bag totals, and goes with its setting", function()
+    local item = { value = 2140, stackable = true, bags = 5, shift = true, now = 0,
+      current = { lowest = 1990, listed = true, seen = 0 } }
+    assert.equal("Min buyout, each (just now)", TooltipPrices.lines(item, on).rows[2].label)
+    assert.equal(1, #TooltipPrices.lines(item, TooltipPrices.options({ lowest = false })).rows)
   end)
 end)

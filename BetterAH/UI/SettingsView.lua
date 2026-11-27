@@ -111,6 +111,7 @@ end
 -- Tooltips (#119): what Better AH adds to item tooltips, each part on unless turned off.
 SettingsView.TOOLTIPS_TOP = -192
 SettingsView.CHECK_STEP = 22 -- one check box below the other
+SettingsView.SUB_COLUMNS = { 28, 270 } -- the parts sit in two columns under the main box, to fit above Mail
 
 function SettingsView:buildTooltips(panel)
   local env = self.env
@@ -120,11 +121,18 @@ function SettingsView:buildTooltips(panel)
   self.tooltipGroupLabel = group
 
   self.tooltipChecks = {}
+  local subs = 0
   for i, s in ipairs(ns.TooltipPrices.SETTINGS) do
     local b = env.CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
     b:SetSize(24, 24)
-    local top = SettingsView.TOOLTIPS_TOP - 20 - (i - 1) * SettingsView.CHECK_STEP
-    b:SetPoint("TOPLEFT", panel, "TOPLEFT", s.sub and 28 or 4, top)
+    local x, row = 4, 0
+    if s.sub then
+      local cols = SettingsView.SUB_COLUMNS
+      x, row = cols[subs % #cols + 1], 1 + math.floor(subs / #cols)
+      subs = subs + 1
+    end
+    local top = SettingsView.TOOLTIPS_TOP - 20 - row * SettingsView.CHECK_STEP
+    b:SetPoint("TOPLEFT", panel, "TOPLEFT", x, top)
     b:SetScript("OnClick", function(c) self:setTooltip(s.key, c:GetChecked() and true or false) end)
     ns.Window.tooltip(env, b, s.label, s.tip)
     local label = b.Text
@@ -133,7 +141,8 @@ function SettingsView:buildTooltips(panel)
       label:SetPoint("LEFT", b, "RIGHT", 2, 0)
     end
     label:SetText(s.label)
-    if b.SetHitRectInsets then b:SetHitRectInsets(0, -260, 0, 0) end
+    -- Clickable over its label, short of the next column.
+    if b.SetHitRectInsets then b:SetHitRectInsets(0, s.sub and -210 or -300, 0, 0) end
     b.settingKey, b.label = s.key, label
     self.tooltipChecks[i] = b
   end

@@ -225,6 +225,23 @@ How Blizzard's Open All works (`Blizzard_MailFrame/MailFrame.lua`, `OpenAllMailM
   asking for it this session.
 - Auction keys have their own cache: `GetItemKeyInfo` can be nil until `ITEM_KEY_ITEM_INFO_RECEIVED(itemID)`.
 
+## Loot and spells (unverified, #256)
+
+Not checked against the API dump yet. `Game/DisenchantWatch.lua` looks each one up before use, and
+`/bah selftest` lists the ones this client lacks ("Disenchant watch"). Update this section once a game session
+has confirmed them.
+
+- Disenchant is spell 13262. `UNIT_SPELLCAST_START(unit, castGUID, spellID)` says it started,
+  `UNIT_SPELLCAST_SUCCEEDED`, `UNIT_SPELLCAST_FAILED` and `UNIT_SPELLCAST_INTERRUPTED` (same arguments) how it ended.
+  A second press during the cast fails with another castGUID.
+- The item: the target should be locked in the bags during the cast (`GetContainerItemInfo(bag, slot).isLocked`).
+  A click on a bag slot goes through `C_Container.UseContainerItem` (right click) or `C_Container.PickupContainerItem`
+  (left click); a `hooksecurefunc` hook runs after the call, when targeting (`SpellIsTargeting`) has already ended.
+  The loot's source, `GetLootSourceInfo(1)`, should be the item's GUID (`Item-...`), and
+  `C_Item.GetItemLinkByGUID(guid)` its link.
+- The mats: `LOOT_READY` then `LOOT_OPENED`; `GetNumLootItems()`, `GetLootSlotLink(slot)`, and
+  `GetLootSlotInfo(slot)` whose 3rd return is the count.
+
 ## UI and other client notes (guide)
 
 - Frames that need a backdrop inherit `BackdropTemplate`. Timers are `C_Timer.After` / `C_Timer.NewTimer`.

@@ -37,6 +37,7 @@ Core/DetailPane.lua
 Core/AutoScan.lua
 Core/Purchases.lua
 Core/SnipeProfit.lua
+Core/DisenchantTracker.lua
 Core/Ledger.lua
 Core/Mailbox.lua
 Core/MailCollect.lua
@@ -54,6 +55,7 @@ Game/TooltipHook.lua
 Game/MyAuctionsAPI.lua
 Game/MyBidsAPI.lua
 Game/LedgerAPI.lua
+Game/DisenchantWatch.lua
 Game/MailAPI.lua
 Game/MailCollector.lua
 Game/MailSender.lua

@@ -1,0 +1,15 @@
+[package]
+name = "better-ah-companion"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+description = "Better AH companion app: collects Forever auction house exports and syncs stats to the addon."
+
+[dependencies]
+bah-core = { path = "../core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", features = ["json"] }
+flate2 = "1"
+httpdate = "1"
+base64 = "0.22"

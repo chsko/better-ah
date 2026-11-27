@@ -289,6 +289,22 @@ function PostView:build(f, x, y, width, height)
   return panel
 end
 
+-- Lays the view out for a list listWidth wide beside a detail panel detailWidth wide, as the divider
+-- between them is dragged (#236, #239). The item column takes the change.
+function PostView:layoutPanes(listWidth, detailWidth)
+  self.panel:SetWidth(listWidth)
+  self.list:SetWidth(listWidth)
+  self.status:SetWidth(listWidth)
+  -- With a spinner or bar showing, the status line starts right of it: Loading places it.
+  if self.loading and self.loading.at then
+    self.loading.at[6] = listWidth
+    self.loading:reflow()
+  end
+  ns.Window.layoutRows(self.rows, self.list, ns.Window.fitColumns(PostView.COLUMNS, listWidth, true), listWidth)
+  self.postButton:SetWidth(listWidth - 96)
+  if self.sellTimeLine then self.sellTimeLine:SetWidth(detailWidth - 24) end
+end
+
 -- Posting profile and floor price fields, under the detail text.
 function PostView:buildEditor()
   local env, w = self.env, self.window

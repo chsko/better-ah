@@ -4504,8 +4504,8 @@ describe("Resizable detail panel (#236)", function()
   end)
 
   it("hides the divider on a view not laid out for other widths yet", function()
-    local _, w = open({ post = 400, disenchant = 400 })
-    sidebarButton(w, "post"):Click()
+    local _, w = open({ auctions = 400, disenchant = 400 })
+    sidebarButton(w, "auctions"):Click()
     assert.is_false(w.paneDivider:IsShown())
     assert.equal(300, w.detailPanel:GetWidth(), "a saved width doesn't apply to it")
     sidebarButton(w, "disenchant"):Click()
@@ -4598,6 +4598,42 @@ describe("Resizable detail panel (#236)", function()
     -- Built for 540 with a scroll bar: scaled by 518/540, as buildRows placed them.
     assert.equal(math.floor(196 * 518 / 540 + 0.5), w.rows[1][2].points.LEFT.x)
     assert.equal(math.floor(190 * 518 / 540), w.rows[1][1].width)
+  end)
+
+  it("lays Post out for the width: list, rows, Post button and the sell time line (#239)", function()
+    local env, w, ns = open()
+    sidebarButton(w, "post"):Click()
+    assert.is_true(w.paneDivider:IsShown())
+    local v = w.postView
+    drag(env, w.paneDivider, 500, 2000) -- as narrow as it goes
+    assert.equal(240, w.detailPanel:GetWidth())
+    assert.equal(600, v.panel:GetWidth())
+    assert.equal(600, v.list:GetWidth())
+    assert.equal(504, v.postButton.width)
+    assert.equal(216, v.sellTimeLine:GetWidth())
+    env.cursorX = 0
+    w.paneDivider.scripts.OnUpdate(w.paneDivider, 0.01)
+    assert.equal(420, w.detailPanel:GetWidth())
+    assert.equal(420, v.panel:GetWidth())
+    local last = v.rows[1][#ns.PostView.COLUMNS]
+    assert.is_true(last.points.LEFT.x + last.width <= 420 - 22, "the last column stays clear of the scroll bar")
+    assert.equal(396, v.sellTimeLine:GetWidth())
+    v.loading:show(1, 4) -- "Checking prices: 1 of 4" beside its bar
+    env.cursorX = 440
+    w.paneDivider.scripts.OnUpdate(w.paneDivider, 0.01)
+    assert.equal(360, w.detailPanel:GetWidth())
+    assert.equal(480 - ns.Loading.BAR_WIDTH - 6, v.status.width, "the status line ends at the list's edge")
+    env.mouseDown = false
+    w.paneDivider.scripts.OnMouseUp(w.paneDivider, "LeftButton")
+    assert.equal(360, ns.paneSettings.post)
+  end)
+
+  it("opens Post at its saved width", function()
+    local _, w = open({ post = 260 })
+    sidebarButton(w, "prices"):Click()
+    sidebarButton(w, "post"):Click()
+    assert.equal(260, w.detailPanel:GetWidth())
+    assert.equal(580, w.postView.panel:GetWidth())
   end)
 
   it("follows Browse's results and item page: hidden while the results fill both panels", function()

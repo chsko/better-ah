@@ -94,6 +94,18 @@ function Loading:place(frame, width)
   end
 end
 
+-- Places the text again for a changed at[6] (its parent was laid out for another width, #236), beside
+-- whichever of the bar and spinner is showing.
+function Loading:reflow()
+  if self.barFrame:IsShown() then
+    self:place(self.barFrame, Loading.BAR_WIDTH)
+  elseif self.spinnerFrame:IsShown() then
+    self:place(self.spinnerFrame, Loading.SPINNER)
+  else
+    self:place(nil)
+  end
+end
+
 function Loading:sweep(bar, elapsed)
   if not self.sweeping then return end
   self.t = ((self.t or 0) + (elapsed or 0)) % Loading.SWEEP

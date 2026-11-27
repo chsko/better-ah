@@ -16,6 +16,7 @@ BrowseAPI.EVENTS = {
 }
 -- How long to wait for the auction house to answer a bid or a commodity quote or purchase, in seconds.
 BrowseAPI.TIMEOUT = 10
+BrowseAPI.BID_PLACED = 0 -- Enum.AuctionHouseNotification.BidPlaced
 -- After the game reports a block while the quote is asked for, how long a price may still come, in seconds:
 -- in game (#112) the block may not be the quote's own call, so the quote isn't given up at once.
 BrowseAPI.BLOCK_GRACE = 3
@@ -227,7 +228,14 @@ end
 -- Buys the quoted commodity. Must run inside a click. done(ok, why).
 function BrowseAPI:confirmCommodity(done)
   local job, ah = self.commodity, self.env.C_AuctionHouse
-  if not (job and job.step == "quoted") then return done(false, "the price quote ran out. Ask again") end
+  if not (job and job.step == "quoted") then return done(false, "the price quote ran out. Click Buy to ask again") end
+  -- The server's quote lasts a short while: once it has run out, Confirm would get no answer.
+  -- Trusted only when it gave a time with the quote, so a client where it always says 0 can still buy.
+  local left = job.quoteLeft and ah and tonumber((try(ah.GetQuoteDurationRemaining)))
+  if left and left <= 0 then
+    self:cancelCommodity()
+    return done(false, "the price quote ran out. Click Buy to ask again")
+  end
   job.step, job.buy, job.call = "buying", done, "ConfirmCommoditiesPurchase"
   local posting = self:posting()
   if posting then posting.buying = true end
@@ -307,14 +315,21 @@ function BrowseAPI:onEvent(event, a, b)
   elseif event == "AUCTION_HOUSE_SHOW_ERROR" then
     if self.bidding then self:finishBid(self.bidding, false, "the auction house refused the bid") end
   elseif event == "AUCTION_HOUSE_SHOW_NOTIFICATION" then
-    if self.bidding then self:finishBid(self.bidding, true) end
+    -- Only "bid placed" answers a bid; an outbid, sold or won notice can come at any time.
+    local enum = self.env.Enum and self.env.Enum.AuctionHouseNotification
+    local placed = enum and enum.BidPlaced or BrowseAPI.BID_PLACED
+    if self.bidding and (a == nil or a == placed) then self:finishBid(self.bidding, true) end
   elseif event == "COMMODITY_PRICE_UPDATED" then
     local job = self.commodity
     if job and job.step == "quote" then
       job.step = "quoted"
+      local left = tonumber((try(self.env.C_AuctionHouse.GetQuoteDurationRemaining)))
+      job.quoteLeft = left and left > 0 and left or nil
       self:endCommodity(job, a, b)
     elseif job and job.step == "quoted" then
       -- A new price for the same quote: the view shows it before Confirm.
+      local left = tonumber((try(self.env.C_AuctionHouse.GetQuoteDurationRemaining)))
+      job.quoteLeft = left and left > 0 and left or nil
       local fine, err = pcall(job.quote, a, b)
       if not fine and self.env.geterrorhandler then try(self.env.geterrorhandler(), err) end
     end

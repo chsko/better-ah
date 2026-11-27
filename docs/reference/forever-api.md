@@ -145,7 +145,10 @@ PlaceBid got it blocked, so send first and redraw after (#120, #130); after each
   timeLeft, bidAmount, buyoutAmount, bidder }; status Active 0 / Sold 1; buyoutAmount is per unit while active, the whole sale once sold,
   game #131), `CanCancelAuction`, `GetCancelCost`, `CancelAuction` → `AUCTION_CANCELED`.
 - **Bids**: `QueryBids`, `GetBids`, `GetBidInfo` (tables { auctionID, itemKey, itemLink, timeLeft, minBid, bidAmount,
-  buyoutAmount, bidder }); `AUCTION_HOUSE_NEW_BID_RECEIVED`, `BIDS_UPDATED`.
+  buyoutAmount, bidder }); `AUCTION_HOUSE_NEW_BID_RECEIVED`, `BIDS_UPDATED`. `QueryBids(sorts, auctionIDs)`
+  lists the auctions you are the high bidder on plus the ids you name; an outbid auction only shows when named
+  (Blizzard's window names the ids it saw this session), with someone else's GUID as bidder. minBid is the
+  lowest new bid the server takes. Once outbid, nothing says what you bid: My bids (#95) keeps that itself.
 - **Item keys**: `MakeItemKey(itemID, itemLevel, itemSuffix, battlePetSpeciesID)`, `GetItemKeyInfo(key, restrictQualityToFilter)`
   (returns one table { itemID, itemName, quality, iconFileID, isCommodity, isEquipment, isPet, ... }; may be nil until `ITEM_KEY_ITEM_INFO_RECEIVED`), `GetItemKeyFromItem(location)`,
   `GetItemKeyRequiredLevel`, `GetItemKeySampleLink`.

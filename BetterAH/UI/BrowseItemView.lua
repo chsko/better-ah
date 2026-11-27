@@ -389,6 +389,9 @@ function ItemView:placeBid()
   local token = {}
   self.busy, self.sending = true, token
   self:sendThenDraw("Bidding...", function() api:bid(row.auctionID, amount, function(placed, reason)
+    -- Remembered for My bids (#95), so it still lists the auction once someone outbids this bid.
+    local bids = self.addon and self.addon.myBidsAPI
+    if placed and bids then bids:placed(row.auctionID, amount) end
     if self.sending ~= token then return end -- the page moved on, or a later send is waiting
     self.busy = nil
     if placed then

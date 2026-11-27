@@ -10,6 +10,7 @@ local SECTIONS = {
   } },
   { title = "Buy", entries = {
     { id = "browse", label = "Browse" },
+    { id = "bids", label = "My bids" },
     { id = "disenchant", label = "Disenchant snipe" },
     { id = "deals", label = "Deals below market" },
     { id = "shopping", label = "Shopping lists" },

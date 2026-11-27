@@ -10,7 +10,7 @@ local function setup(opts)
   helper.load("BetterAH/Core/Buying.lua", ns)
   local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "ValueHistory", "Targets", "Sniper",
     "PriceDB", "CharacterRecords", "MatFloors", "Posting", "PostQueue", "SelfTest", "Probes", "Purchases",
-    "TooltipPrices", "MyAuctions", "Ledger" }
+    "TooltipPrices", "MyAuctions", "MyBids", "Ledger" }
   for _, file in ipairs(core) do
     helper.load("BetterAH/Core/" .. file .. ".lua", ns)
   end
@@ -32,6 +32,8 @@ local function setup(opts)
   helper.load("BetterAH/UI/BrowseView.lua", ns)
   helper.load("BetterAH/Game/MyAuctionsAPI.lua", ns)
   helper.load("BetterAH/UI/MyAuctionsView.lua", ns)
+  helper.load("BetterAH/Game/MyBidsAPI.lua", ns)
+  helper.load("BetterAH/UI/MyBidsView.lua", ns)
   helper.load("BetterAH/Game/LedgerAPI.lua", ns)
   helper.load("BetterAH/UI/LedgerView.lua", ns)
   helper.load("BetterAH/UI/Window.lua", ns)
@@ -43,12 +45,14 @@ local function setup(opts)
   ns.purchases = ns.Purchases.new({})
   ns.searchHistory = ns.SearchHistory.new({})
   ns.browseSettings = {}
+  ns.bidSettings = {}
   ns.tooltipSettings = {}
   ns.AuctionAPI.install(env, ns)
   ns.PostingAPI.install(env, ns)
   ns.SnipeAPI.install(env, ns)
   ns.BrowseAPI.install(env, ns)
   ns.MyAuctionsAPI.install(env, ns)
+  ns.MyBidsAPI.install(env, ns)
   ns.ledger = ns.Ledger.new({})
   ns.LedgerAPI.install(env, ns)
   if opts and opts.tracker then
@@ -277,7 +281,7 @@ describe("Window", function()
     local last = results[#results]
     assert.equal("Better AH window", last.name)
     assert.equal("pass", last.status)
-    assert.equal("window created with 11 sidebar entries; close button CloseButton; auction house art found",
+    assert.equal("window created with 12 sidebar entries; close button CloseButton; auction house art found",
       last.detail)
   end)
 
@@ -286,7 +290,7 @@ describe("Window", function()
     local last = ns.Probes.suite():run(env, { db = {} })
     last = last[#last]
     assert.equal("pass", last.status)
-    assert.equal("window created with 11 sidebar entries; close button BetterAHFrameCloseButton; "
+    assert.equal("window created with 12 sidebar entries; close button BetterAHFrameCloseButton; "
       .. "auction house art found", last.detail)
   end)
 
@@ -304,7 +308,7 @@ describe("Window", function()
     local last = ns.Probes.suite():run(env, { db = {} })
     last = last[#last]
     assert.equal("pass", last.status)
-    assert.equal("window created with 11 sidebar entries; close button CloseButton; "
+    assert.equal("window created with 12 sidebar entries; close button CloseButton; "
       .. "art not checked (no C_Texture.GetAtlasInfo)", last.detail)
   end)
 
@@ -4046,5 +4050,177 @@ describe("Browse categories and filters", function()
       sidebarButton(w, "ledger"):Click()
       assert.matches("take their gold", w.ledgerView.empty:GetText())
     end)
+  end)
+end)
+
+describe("My bids view (#95)", function()
+  local BELT, BRACERS, BOOTS = 10275, 15366, 9900
+  local ME, OTHER = "Player-6841-0A1B2C3D", "Player-6841-FFFF0000"
+  local function bids(env)
+    env.myBids = {
+      { id = 201, itemID = BELT, band = 2, minBid = 20075, bid = 19500, buyout = 21000, bidder = OTHER,
+        outbidUnlessNamed = true, link = "|cff1eff00|Hitem:10275::::::::60:::::|h[Gryphon Mail Belt]|h|r" },
+      { id = 202, itemID = BRACERS, band = 0, minBid = 790, bid = 750, buyout = 890, bidder = ME,
+        link = "|cff1eff00|Hitem:15366::::::::60:::::|h[Ridgeback Bracers]|h|r" },
+      { id = 203, itemID = BOOTS, band = 1, minBid = 1500, bid = 1400, bidder = OTHER, outbidUnlessNamed = true,
+        link = "|cff1eff00|Hitem:9900::::::::60:::::|h[Scouting Boots of the Bear]|h|r" },
+    }
+  end
+
+  local function open(opts, before)
+    local env, w, ns = setup(opts)
+    bids(env)
+    if before then before(env, ns) end
+    env.openAuctionHouse()
+    env.runTimers()
+    sidebarButton(w, "bids"):Click()
+    env.runTimers()
+    return env, w, ns, w.myBidsView
+  end
+
+  local function rowText(v, r)
+    local cells = v.rows[r]
+    return cells[1]:GetText(), cells[2]:GetText(), cells[3]:GetText(), cells[4]:GetText(), cells[5]:GetText()
+  end
+
+  it("sits under Buy, after Browse", function()
+    local _, w = setup()
+    assert.equal("My bids", w.model:label("bids"))
+  end)
+
+  it("lists the bids the client knows, and the outbid ones it was asked about", function()
+    -- What this character bid earlier, still in the store: the belt at 1g 80s, the boots unknown.
+    local env, w, _, v = open(nil, function(_, ns)
+      ns.myBidsAPI.session[201] = { bid = 18000, at = 1000000, misses = 0 }
+      ns.myBidsAPI.session[203] = { misses = 0 }
+    end)
+    assert.is_true(w.myBidsPanel:IsShown())
+    local q = env.bidQueries[#env.bidQueries]
+    table.sort(q)
+    assert.same({ 201, 203 }, q, "the query names the auctions bid on before")
+    local item, yours, status, _, buyout = rowText(v, 1)
+    assert.matches("Scouting Boots", item, "outbid first, ending soonest first")
+    assert.equal("-", yours, "an amount never seen")
+    assert.matches("Outbid", status)
+    assert.equal("none", buyout)
+    local left
+    item, yours, status, left, buyout = rowText(v, 2)
+    assert.matches("Gryphon Mail Belt", item)
+    assert.equal("1g 80s 0c", yours)
+    assert.matches("Outbid", status)
+    assert.equal("2-12 h", left)
+    assert.equal("2g 10s 0c", buyout)
+    item, yours, status, left = rowText(v, 3)
+    assert.matches("Ridgeback Bracers", item)
+    assert.equal("7s 50c", yours)
+    assert.matches("Highest", status)
+    assert.equal("under 30 min", left)
+    assert.matches("^3 bids · highest on 1 · 7s 50c tied up in bids · checked just now$", v.footer:GetText())
+    assert.matches("My bids.*2", sidebarButton(w, "bids"):GetText(), "the sidebar counts outbid bids")
+    assert.matches("Tied up in bids: 7s 50c", w.detailBody:GetText())
+  end)
+
+  it("asks once per visit and again on Refresh", function()
+    local env, _, _, v = open()
+    assert.equal(1, #env.bidQueries)
+    v.refreshButton:Click()
+    env.runTimers()
+    assert.equal(2, #env.bidQueries)
+  end)
+
+  it("fills the lowest new bid and bids again inside the click", function()
+    local env, w, _, v = open(nil, function(_, ns)
+      ns.myBidsAPI.session[201] = { bid = 18000, at = 1000000, misses = 0 }
+    end)
+    v.rows[1].button:Click()
+    assert.matches("Gryphon Mail Belt", w.detailTitle:GetText())
+    assert.matches("Lowest new bid: 2g 0s 75c", w.detailBody:GetText())
+    assert.matches("Current bid: 1g 95s 0c %(not yours%)", w.detailBody:GetText())
+    local c = v.controls
+    assert.same({ "2", "0", "75" }, { c.boxes[1]:GetText(), c.boxes[2]:GetText(), c.boxes[3]:GetText() })
+    assert.equal("Bid again", c.bid:GetText())
+    assert.equal("Buy out for 2g 10s 0c", c.buy:GetText())
+    c.boxes[3]:SetText("70")
+    c.bid:Click()
+    assert.equal(0, #env.bids, "below the lowest new bid nothing is sent")
+    assert.matches("lowest you can bid is 2g 0s 75c", c.note:GetText())
+    c.boxes[3]:SetText("80")
+    c.bid:Click()
+    assert.same({ auctionID = 201, amount = 20080 }, env.bids[1])
+    assert.equal("Bidding...", c.note:GetText())
+    env.runTimers(5)
+    assert.equal(20080, v:store()[201].bid, "what we bid is remembered")
+    assert.matches("Bid 2g 0s 80c sent on Gryphon Mail Belt", c.note:GetText())
+    assert.equal(2, #env.bidQueries, "the list is asked for again, once")
+  end)
+
+  it("can't bid on a bid that is already the highest, but can buy it out", function()
+    local env, _, _, v = open()
+    v.rows[1].button:Click() -- only the bracers are listed: nothing was asked for by id
+    local c = v.controls
+    assert.equal("You're the highest bidder", c.bid:GetText())
+    assert.is_false(c.bid:IsEnabled())
+    assert.is_true(c.buy:IsEnabled())
+    c.buy:Click()
+    assert.same({ auctionID = 202, amount = 890 }, env.bids[1])
+    env.runTimers()
+    assert.matches("Bought Ridgeback Bracers for 8s 90c", c.note:GetText())
+    assert.is_nil(v:store()[202], "a bought auction is forgotten")
+  end)
+
+  it("keeps the bids per character in saved variables", function()
+    local env, _, ns = open({ tracker = true })
+    local key = ns.CharacterTracker.characterKey(env)
+    assert.is_table(ns.bidSettings.characters[key][202])
+    assert.equal(750, ns.bidSettings.characters[key][202].bid)
+    assert.is_nil(next(ns.myBidsAPI.session))
+  end)
+
+  it("tracks a bid placed in Browse, even with My bids never opened, and lists it once outbid", function()
+    local env, w, ns = setup()
+    bids(env)
+    env.openAuctionHouse()
+    env.runTimers()
+    ns.myBidsAPI:placed(201, 18000) -- as Browse's Place bid does once the bid went
+    env.fire("BID_ADDED", 203)
+    assert.same({ bid = 18000, at = env.now, misses = 0 }, ns.myBidsAPI.session[201])
+    assert.is_table(ns.myBidsAPI.session[203])
+    sidebarButton(w, "bids"):Click()
+    env.runTimers()
+    local q = env.bidQueries[1]
+    table.sort(q)
+    assert.same({ 201, 203 }, q)
+    assert.equal(3, #w.myBidsView.shown)
+  end)
+
+  it("stops waiting when a query gets no answer", function()
+    local env, _, _, v = open(nil, function(e) e.bidsSilent = true end)
+    assert.equal("Reading your bids...", v.status:GetText())
+    assert.is_false(v.refreshButton:IsEnabled())
+    env.runTimers(11)
+    assert.is_nil(v.asking)
+    assert.is_true(v.refreshButton:IsEnabled())
+    assert.matches("didn't answer", v.controls.note:GetText())
+  end)
+
+  it("waits for the auction house when it is busy", function()
+    local env, _, _, v = open(nil, function(e) e.throttled = true end)
+    assert.equal(0, #env.bidQueries)
+    assert.matches("still answering a search", v.controls.note:GetText())
+    env.throttled = false
+    v.refreshButton:Click()
+    env.runTimers()
+    assert.equal(1, #env.bidQueries)
+  end)
+
+  it("starts afresh when the auction house closes, and clears the outbid count", function()
+    local env, w, _, v = open(nil, function(_, ns) ns.myBidsAPI.session[201] = { misses = 0 } end)
+    assert.matches("My bids.*1", sidebarButton(w, "bids"):GetText())
+    env.CloseAuctionHouse()
+    env.runTimers()
+    assert.is_nil(v.visit)
+    assert.is_nil(v.bids)
+    assert.is_false(v.controls.buy:IsShown())
+    assert.equal("My bids", sidebarButton(w, "bids"):GetText())
   end)
 end)

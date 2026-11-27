@@ -38,6 +38,7 @@ Core/MailSend.lua
 Core/SendRules.lua
 Core/TooltipPrices.lua
 Core/MyAuctions.lua
+Core/MyBids.lua
 Game/AuctionAPI.lua
 Game/CharacterTracker.lua
 Game/PostingAPI.lua
@@ -45,6 +46,7 @@ Game/SnipeAPI.lua
 Game/BrowseAPI.lua
 Game/TooltipHook.lua
 Game/MyAuctionsAPI.lua
+Game/MyBidsAPI.lua
 Game/LedgerAPI.lua
 Game/MailAPI.lua
 Game/MailCollector.lua
@@ -61,6 +63,7 @@ UI/BrowseHistory.lua
 UI/BrowseFilterBar.lua
 UI/BrowseView.lua
 UI/MyAuctionsView.lua
+UI/MyBidsView.lua
 UI/LedgerView.lua
 UI/WindowResize.lua
 UI/Window.lua

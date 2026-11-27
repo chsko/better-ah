@@ -33,6 +33,9 @@ frame:SetScript("OnEvent", function(self, event, loadedName)
     if type(BetterAHDB.browse.history) ~= "table" then BetterAHDB.browse.history = {} end
     ns.browseSettings = BetterAHDB.browse
     if ns.SearchHistory then ns.searchHistory = ns.SearchHistory.new(BetterAHDB.browse.history) end
+    -- My bids (#95): per character, the auctions bid on and what was bid (Core/MyBids.lua).
+    if type(BetterAHDB.bids) ~= "table" then BetterAHDB.bids = {} end
+    ns.bidSettings = BetterAHDB.bids
     -- The Mailbox window's settings (#154): replace = false keeps Blizzard's mail frame.
     if type(BetterAHDB.mail) ~= "table" then BetterAHDB.mail = {} end
     ns.mailSettings = BetterAHDB.mail

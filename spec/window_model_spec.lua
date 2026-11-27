@@ -15,7 +15,7 @@ describe("WindowModel", function()
     end
     assert.same({
       "Sell: post,auctions",
-      "Buy: browse,disenchant,deals,shopping",
+      "Buy: browse,bids,disenchant,deals,shopping",
       "Make: crafting",
       "Data: ledger,prices,alts",
       "Addon: settings",

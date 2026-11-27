@@ -78,12 +78,64 @@ end
 -- Whether a target takes an item: sniped, green, one of its types, in its item level band.
 -- band is the target's band from Disenchant.greenBands ({ min, max }).
 function Targets.matches(target, band, info)
-  if not (target.enabled and band and type(info) == "table") then return false end
+  return target.enabled == true and Targets.takes(target, band, info)
+end
+
+-- Whether an item fits a target, sniped or not: green, one of its types, in its item level band.
+function Targets.takes(target, band, info)
+  if not (band and type(info) == "table") then return false end
   if tonumber(info.quality) ~= 2 then return false end
   local t = Targets.typeOf(info)
   if not (t and target.types and target.types[t]) then return false end
   local level = tonumber(info.level)
   return level ~= nil and level >= band.min and level <= band.max
+end
+
+-- The best buy for a target right now (#246): of listings ({ item, price, info }, price per item in copper,
+-- info from AuctionAPI:itemInfo or nil while not loaded), the one the target takes with the most profit,
+-- ties to the lower price. One the sniper would buy comes before one it wouldn't, so the colour says
+-- whether it buys anything (with a percent profit on armor and weapons, the most profit can be short).
+-- worthOf(class) gives what an item of the target's band and that disenchant class
+-- ("armor", "weapon") is worth after the cut, or nil. Sniped or not, so unticked targets show it too.
+-- Returns { item, price, worth, profit, max, status } or nil: status is "buy" when the price is at or under
+-- the target's max price (what the sniper buys), "short" when it makes some profit but less than the
+-- target asks, "loss" otherwise.
+function Targets.best(target, band, listings, worthOf)
+  local best
+  for _, l in ipairs(listings or {}) do
+    local price = tonumber(l.price) or 0
+    if price > 0 and Targets.takes(target, band, l.info) then
+      local worth = worthOf(Targets.BY_ID[Targets.typeOf(l.info)].class)
+      if worth then
+        local profit, max = worth - price, Targets.maxPrice(target, worth)
+        local buys = max > 0 and price <= max
+        if not best or (buys and not best.buys) or (buys == best.buys and (profit > best.profit
+          or (profit == best.profit and price < best.price))) then
+          best = { item = l.item, price = price, worth = worth, profit = profit, max = max, buys = buys }
+        end
+      end
+    end
+  end
+  if not best then return nil end
+  if best.buys then
+    best.status = "buy"
+  elseif best.profit > 0 then
+    best.status = "short"
+  else
+    best.status = "loss"
+  end
+  best.buys = nil
+  return best
+end
+
+-- What a target asks the auction house: its band and item types, as text (#246). Two targets, or one
+-- target before and after an edit, with the same signature browse for the same items.
+function Targets.signature(target)
+  local ids = {}
+  for _, t in ipairs(Targets.TYPES) do
+    if target.types and target.types[t.id] then ids[#ids + 1] = t.id end
+  end
+  return tostring(target.band) .. ":" .. table.concat(ids, ",")
 end
 
 -- A short name for a target's types: "Armor", "Weapons", "All gear", or up to two labels and a count.

@@ -1028,7 +1028,7 @@ describe("Window", function()
       local v = w.disenchantView
       v.tabButtons.targets:Click()
       v.newButton:Click()
-      assert.same({ "", "Armor, req. 21-25", "Armor", "14s 20c", "10%", "12s 78c" }, target(w, 1))
+      assert.same({ "", "Armor, req. 21-25", "14s 20c", "10%", "12s 78c", "-", "-" }, target(w, 1))
       assert.is_false(v.targetRows[1].check:GetChecked(), "a new target starts unticked (#206)")
       assert.equal(1, #ns.disenchant.targets, "saved")
       assert.is_true(v.editor:IsShown())
@@ -1046,14 +1046,14 @@ describe("Window", function()
       local v = w.disenchantView
       v.tabButtons.targets:Click()
       v.newButton:Click()
-      assert.equal("14s 20c", target(w, 1)[4], "market value alone before a scan lists the dust cheaper")
+      assert.equal("14s 20c", target(w, 1)[3], "market value alone before a scan lists the dust cheaper")
       -- One Soul Dust listed at 1s: under its market value, which the rest of the listings keep near 4s 46c.
       local listings = { { item = "i:11083", name = "Soul Dust", count = 1, buyout = 100 } }
       for _ = 1, 9 do listings[#listings + 1] = { item = "i:11083", name = "Soul Dust", count = 1, buyout = 446 } end
       ns.prices:recordScan("/1/Horde", env.now, listings, true)
       v:render()
-      assert.same({ "Armor, req. 21-25", "Armor", "9s 27c", "10%", "8s 34c" },
-        { target(w, 1)[2], target(w, 1)[3], target(w, 1)[4], target(w, 1)[5], target(w, 1)[6] })
+      assert.same({ "Armor, req. 21-25", "9s 27c", "10%", "8s 34c" },
+        { target(w, 1)[2], target(w, 1)[3], target(w, 1)[4], target(w, 1)[5] })
       assert.equal("Worth 9s 27c after the cut", v.worthText:GetText())
       v.tabButtons.values:Click()
       assert.equal("13s 39c", band(w, 4)[3], "Values keeps market value")
@@ -1072,7 +1072,7 @@ describe("Window", function()
       assert.same({ kind = "gold", amount = 142 }, ns.disenchant.targets[1].profit, "the max price stays put")
       typeIn(v.profitInput, "3s")
       assert.equal("11s 20c", v.maxText:GetText())
-      assert.equal("3s 0c", target(w, 1)[5])
+      assert.equal("3s 0c", target(w, 1)[4])
       typeIn(v.profitInput, "lots")
       assert.equal("Type an amount like 3s or 1g 5s.", v.editorStatus:GetText())
       v.percentButton:Click()
@@ -1088,7 +1088,7 @@ describe("Window", function()
       assert.equal(31, ns.disenchant.targets[1].band)
       assert.equal(bands[at + 1], v.bandDrop:GetText())
       assert.equal("Cloth, Leather, req. 26-30", w.detailTitle:GetText())
-      assert.matches("%*$", target(w, 1)[4], "only Soul Dust is priced for that band")
+      assert.matches("%*$", target(w, 1)[3], "only Soul Dust is priced for that band")
       assert.equal("A material has no price yet, so this is too low. Scan materials on Values.",
         v.editorStatus:GetText())
       v.deleteButton:Click()
@@ -1273,6 +1273,124 @@ describe("Window", function()
         v.tabButtons.snipe:Click()
         return env, w, ns, v.snipe
       end
+
+      describe("Profit now on Targets (#246)", function()
+        local function instant(env)
+          env.GetItemInfoInstant = function(id)
+            if id >= 5001 and id <= 5003 then return id, "Armor", "Leather", "INVTYPE_WRIST", 0, 4, 2 end
+            return id, "Trade Goods", "Enchanting", "", 0, 7, 12
+          end
+        end
+        local function fakeTip(env)
+          local tip = { lines = {} }
+          function tip:SetOwner() self.lines = {} end
+          function tip:SetText(text) self.lines[#self.lines + 1] = text end
+          function tip:AddLine(text) self.lines[#self.lines + 1] = text end
+          function tip:Show() self.shown = true end
+          function tip:Hide() self.shown = false end
+          env.GameTooltip = tip
+          return tip
+        end
+
+        it("shows the full scan's best listing, green when the sniper would buy it", function()
+          local env, w, ns = snipeSetup()
+          instant(env)
+          ns.prices:recordScan("/1/Horde", env.now - 360, {
+            { item = "i:5001", name = "Ridgeback Bracers", count = 1, buyout = 900 },
+            { item = "i:5002", name = "Ridgeback Boots", count = 1, buyout = 5000 },
+            { item = "i:5003", name = "Ridgeback Belt", count = 1, buyout = 100 }, -- item level 35: out of band
+            { item = "i:10940", name = "Strange Dust", count = 5, buyout = 500 } })
+          local v = w.disenchantView
+          v.tabButtons.targets:Click()
+          assert.same({ "", "Armor, req. 21-25", "14s 20c", "10%", "12s 78c", "9s 0c", "5s 20c" }, target(w, 1))
+          local cells = v.targetRows[1]
+          assert.same({ 0.12, 1, 0 }, cells[7].textColor, "green")
+          assert.is_true(cells.tint:IsShown())
+          assert.equal("Now 9s 0c: 5s 20c profit", v.nowText:GetText())
+          local tip = fakeTip(env)
+          cells.button.scripts.OnEnter(cells.button)
+          assert.same({ "Profit now", "Ridgeback Bracers", "9s 0c, worth 14s 20c after the cut",
+            "5s 20c profit: the sniper buys it", "From the full scan 6 min ago" }, tip.lines)
+        end)
+
+        it("is yellow under the target's profit and red at a loss", function()
+          local env, w, ns = snipeSetup()
+          instant(env)
+          ns.prices:recordScan("/1/Horde", env.now, { { item = "i:5001", name = "Ridgeback Bracers", count = 1,
+            buyout = 1300 } })
+          local v = w.disenchantView
+          v.tabButtons.targets:Click()
+          assert.equal("1s 20c", target(w, 1)[7])
+          assert.same({ 1, 0.8, 0.2 }, v.targetRows[1][7].textColor, "yellow")
+          local tip = fakeTip(env)
+          v.targetRows[1].button.scripts.OnEnter(v.targetRows[1].button)
+          assert.equal("1s 20c profit, under your 10%", tip.lines[4])
+          ns.prices:recordScan("/1/Horde", env.now + 1, { { item = "i:5001", name = "Ridgeback Bracers", count = 1,
+            buyout = 2000 } })
+          v:render()
+          assert.equal("-5s 80c", target(w, 1)[7])
+          assert.same({ 1, 0.29, 0.23 }, v.targetRows[1][7].textColor, "red")
+          assert.is_false(v.targetRows[1].tint:IsShown(), "a loss isn't tinted")
+        end)
+
+        it("shows a dash with nothing listed, and waits for item details", function()
+          local env, w, ns = snipeSetup()
+          instant(env)
+          local v = w.disenchantView
+          v.tabButtons.targets:Click()
+          assert.equal("-", target(w, 1)[7], "no full scan")
+          env.uncached[5001] = true
+          ns.prices:recordScan("/1/Horde", env.now, { { item = "i:5001", name = "Ridgeback Bracers", count = 1,
+            buyout = 900 } })
+          v:render()
+          assert.equal("...", target(w, 1)[7], "loading")
+          env.runTimers(1)
+          assert.equal("5s 20c", target(w, 1)[7], "drawn again once the details load")
+        end)
+
+        it("takes the sniper's check over an older full scan", function()
+          local env, w, ns = snipeSetup()
+          instant(env)
+          ns.prices:recordScan("/1/Horde", env.now - 600, { { item = "i:5001", name = "Ridgeback Bracers", count = 1,
+            buyout = 2000 } })
+          local v = w.disenchantView
+          v.snipe:start()
+          env.runTimers()
+          v.tabButtons.targets:Click()
+          assert.equal("9s 0c", target(w, 1)[6], "the check's cheapest")
+          local tip = fakeTip(env)
+          v.targetRows[1].button.scripts.OnEnter(v.targetRows[1].button)
+          assert.matches("^From the sniper's check", tip.lines[#tip.lines])
+          v.typeBoxes.mail:Click() -- a different query: the check no longer counts
+          assert.equal("20s 0c", target(w, 1)[6], "back to the full scan")
+        end)
+
+        it("keeps a check to the market it was made on", function()
+          local env, w, ns = snipeSetup()
+          instant(env)
+          local v = w.disenchantView
+          v.snipe:start()
+          env.runTimers()
+          v.snipe.listed[ns.disenchant.targets[1]].market = "/1/Alliance"
+          v.tabButtons.targets:Click()
+          assert.equal("-", target(w, 1)[6], "no full scan here, and the check was elsewhere")
+        end)
+
+        it("only waits on item details of the target's own types", function()
+          local env, w, ns = snipeSetup()
+          instant(env)
+          local inner = env.GetItemInfoInstant
+          env.GetItemInfoInstant = function(id)
+            if id == 5009 then return id, "Weapon", "Swords", "INVTYPE_WEAPON", 0, 2, 7 end
+            return inner(id)
+          end
+          env.uncached[5009] = true
+          ns.prices:recordScan("/1/Horde", env.now, { { item = "i:5009", name = "Sword", count = 1, buyout = 900 } })
+          local v = w.disenchantView
+          v.tabButtons.targets:Click()
+          assert.equal("-", target(w, 1)[7], "an armor target doesn't wait on a sword")
+        end)
+      end)
 
       it("starts from Targets and lists the buys it finds, most profit first", function()
         local env, w, ns = snipeSetup()

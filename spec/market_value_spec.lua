@@ -26,6 +26,11 @@ describe("MarketValue", function()
       assert.same({ units = 10, used = 2, dropped = 0, lowest = 100 }, info)
     end)
 
+    it("rounds the lowest unit buyout up, never to 0 (#163)", function()
+      assert.equal(1, select(2, MarketValue.scanValue({ { count = 10, buyout = 5 } })).lowest)
+      assert.equal(34, select(2, MarketValue.scanValue({ { count = 3, buyout = 100 } })).lowest)
+    end)
+
     it("takes up to 30% while prices stay close", function()
       local value, info = MarketValue.scanValue(stacks(10, 10, 1000))
       assert.equal(1000, value)

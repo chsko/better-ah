@@ -43,7 +43,11 @@ function Money.parse(text)
   if type(text) ~= "string" then return nil end
   text = text:lower():gsub("%s+", "")
   if text == "" then return nil end
-  if text:match("^%d+$") then return tonumber(text) end
+  if text:match("^%d+$") then
+    local copper = tonumber(text)
+    if copper > Money.MAX then return nil end
+    return copper
+  end
   local total, rest = 0, text
   for _, unit in ipairs({ { "g", COPPER_PER_GOLD }, { "s", COPPER_PER_SILVER }, { "c", 1 } }) do
     local n, after = rest:match("^(%d+)" .. unit[1] .. "(.*)$")

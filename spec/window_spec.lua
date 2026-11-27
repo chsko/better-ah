@@ -1378,6 +1378,17 @@ describe("Window", function()
         assert.equal(5, #s.nearRows, "the list keeps its five-row height")
         assert.equal("Piece 6001", s.nearRows[1][1]:GetText())
         assert.is_true(s.nearBar:IsShown(), "more than fit: the bar shows")
+        local barAt = s.nearBar.points.TOPLEFT
+        local rowWidth = 540 - ns.SnipeView.NEAR_BAR_ROOM
+        assert.equal(rowWidth + ns.SnipeView.NEAR_BAR_GAP, barAt.x, "inside the panel, right of the rows")
+        local cols = {}
+        for _, col in ipairs(ns.SnipeView.NEAR_COLUMNS) do cols[#cols + 1] = col end
+        table.sort(cols, function(x, y) return x[2] < y[2] end)
+        for i, col in ipairs(cols) do
+          assert.is_true(col[2] + col[3] <= rowWidth, col[1] .. " stays clear of the bar")
+          local after = cols[i + 1]
+          if after then assert.is_true(col[2] + col[3] <= after[2], col[1] .. " doesn't overlap the next") end
+        end
         s.nearBar:drag(1)
         assert.equal(15, s.nearOffset)
         assert.equal("Piece 6016", s.nearRows[1][1]:GetText())

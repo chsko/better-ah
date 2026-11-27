@@ -17,7 +17,7 @@ read_globals = {
   "DEFAULT_CHAT_FRAME", "UIParent", "UISpecialFrames", "GetCursorPosition", "IsMouseButtonDown", "GameTooltip",
   "AuctionFrame", "AuctionHouseFrame", "CloseAuctionHouse", "hooksecurefunc", "ChatEdit_InsertLink",
   "GetItemQualityColor", "TooltipDataProcessor", "ItemRefTooltip", "GetCoinTextureString", "GetItemCount",
-  "IsShiftKeyDown",
+  "IsShiftKeyDown", "C_CurrencyInfo",
 }
 
 files["spec/"] = { std = "+busted" }

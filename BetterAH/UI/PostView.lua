@@ -271,13 +271,18 @@ function PostView:buildEditor()
   self.limitInput:SetScript("OnEnterPressed", function() self:saveProfile() end)
   ns.Window.tooltip(env, self.limitInput, "Post at most",
     "The most of this item to post per visit; the rest stay in your bags. Leave it empty to post everything.")
-  self.durationButtons = {}
-  for i = 1, 3 do
-    self.durationButtons[i] = button(PostView.durationLabel(env, i), 64, -42, (i - 1) * 66, function()
+  local durations = {}
+  for i = 1, 3 do durations[i] = { i, PostView.durationLabel(env, i) } end
+  self.durationDrop = ns.Dropdown.radio(env, box, { width = 130, height = 20, options = durations,
+    get = function()
+      local row = self:selectedRow()
+      return self.duration or (row and self.addon.posting and self.addon.posting:durationFor(row.item))
+    end,
+    set = function(i)
       self.duration = i
       self:renderEditor()
-    end)
-  end
+    end, title = "Duration", tip = "How long this item's auctions run. Save keeps it for this item." })
+  self.durationDrop:SetPoint("TOPLEFT", box, "TOPLEFT", 0, -40)
   self.saveButton = button("Save", 64, -66, 0, function() self:saveProfile() end)
   ns.Window.tooltip(env, self.saveButton, "Save posting profile",
     "Remember this limit and duration for this item. You can change them later here.")
@@ -830,10 +835,7 @@ function PostView:renderEditor(row)
   local editable = row and row.state ~= "checking" and row.state ~= "failed" and self.addon.posting
   self.editor:SetShown(editable and true or false)
   if not editable then return end
-  local current = self.duration or self.addon.posting:durationFor(row.item)
-  for i, b in ipairs(self.durationButtons) do
-    if i == current then b:LockHighlight() else b:UnlockHighlight() end
-  end
+  self.durationDrop.refresh()
 end
 
 function PostView:render()

@@ -19,7 +19,7 @@ MailSendPanel.SLOT_TIP = "Alt-click an item in your bags to add it, or drop one 
 MailSendPanel.NO_ANSWER = "No answer from the game. Check your sent items before sending again."
 MailSendPanel.COLLECTING = "Collect is running. Send once it is done."
 MailSendPanel.TIMEOUT = 30 -- seconds without MAIL_SEND_SUCCESS or MAIL_FAILED before Send comes back
-local SLOT, SLOT_STEP, PER_ROW, LIST_MAX = 30, 36, 6, 10
+local SLOT, SLOT_STEP, PER_ROW = 30, 36, 6
 
 local function money(copper) return ns.Money.format(copper) end
 
@@ -55,12 +55,16 @@ function MailSendPanel:build(parent, inner)
   self.to = input(env, p, inner - 30)
   self.to:SetPoint("TOPLEFT", p, "TOPLEFT", 18, -48)
   self.to:SetScript("OnTextChanged", function(e) self:setTo(e:GetText()) end)
-  local pick = env.CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
-  pick:SetSize(24, 22)
-  pick:SetPoint("TOPLEFT", p, "TOPLEFT", 12 + inner - 24, -47)
-  pick:SetText("v")
-  pick:SetScript("OnClick", function() self:toggleList() end)
-  ns.Window.tooltip(env, pick, "Your characters", "Pick one of your characters on this faction.")
+  -- Your characters, in Blizzard's drop-down list under the To box (#189).
+  local pick = ns.Dropdown.radio(env, p, { arrow = true, anchor = self.to,
+    options = function()
+      local out = {}
+      for _, n in ipairs(self:recipients()) do out[#out + 1] = { n, n } end
+      return out
+    end,
+    get = function() return self.draft.to end, set = function(name) self:pickRecipient(name) end,
+    title = "Your characters", tip = "Pick one of your characters on this faction." })
+  pick:SetPoint("TOPLEFT", p, "TOPLEFT", 12 + inner - 24, -46)
   self.pick = pick
 
   text("GameFontNormalSmall", -74):SetText("Subject")
@@ -133,23 +137,6 @@ function MailSendPanel:build(parent, inner)
   send:SetScript("OnClick", function() self:send() end)
   self.sendButton = send
 
-  -- Your characters, under the To box while open.
-  local list = env.CreateFrame("Frame", nil, p)
-  list:EnableMouse(true) -- clicks between the names stay on the list
-  list:SetPoint("TOPLEFT", p, "TOPLEFT", 14, -70)
-  list:SetSize(inner - 4, LIST_MAX * 18 + 8)
-  list:SetFrameLevel(p:GetFrameLevel() + 10)
-  local listBg = list:CreateTexture(nil, "BACKGROUND")
-  listBg:SetAllPoints(list)
-  listBg:SetColorTexture(0.05, 0.04, 0.03, 0.95)
-  self.list, self.listButtons = list, {}
-  for i = 1, LIST_MAX do
-    local b = ns.Window.entryButton(env, list, inner - 12)
-    b:SetPoint("TOPLEFT", list, "TOPLEFT", 4, -4 - (i - 1) * 18)
-    b:SetScript("OnClick", function() self:pickRecipient(b.name) end)
-    self.listButtons[i] = b
-  end
-  list:Hide()
   return p
 end
 
@@ -234,26 +221,14 @@ end
 -- Mailbox opened or closed: a send still waiting for its answer is over, as is a reply to this visit's mail.
 function MailSendPanel:reset()
   self.sending, self.lastError, self.draft.replyMail = nil, nil, nil
-  if self.list then self.list:Hide() end
+  if self.pick then self.pick:CloseMenu() end
   self:render()
-end
-
-function MailSendPanel:toggleList()
-  if self.list:IsShown() then return self.list:Hide() end
-  local names = self:recipients()
-  for i, b in ipairs(self.listButtons) do
-    b.name = names[i]
-    b:SetShown(names[i] ~= nil)
-    if names[i] then b:SetText(names[i]) end
-  end
-  if #names > 0 then self.list:Show() end
 end
 
 function MailSendPanel:pickRecipient(name)
   if not name then return end
   self.to:SetText(name)
   self:setTo(name)
-  self.list:Hide()
 end
 
 function MailSendPanel:setMode(mode)
@@ -389,7 +364,7 @@ function MailSendPanel:render()
   self.status:SetText(self.message or "")
   self.sendButton:SetEnabled(not self.sending and not self:collecting() and not self:sendingAll())
   self.sendButton:SetText(self.sending and "Sending..." or "Send")
-  if self.list and not self:shown() then self.list:Hide() end
+  if self.pick and not self:shown() then self.pick:CloseMenu() end
 end
 
 ns.MailSendPanel = MailSendPanel

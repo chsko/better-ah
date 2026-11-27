@@ -151,6 +151,93 @@ function Frame:Click()
   if self.scripts.OnClick then self.scripts.OnClick(self) end
 end
 
+-- Blizzard_Menu's DropdownButton (#189), as far as Dropdown.lua uses it. The menu a generator builds is
+-- kept as a tree of entries ({ text, kind, isSelected, onSelect, data, children }), so a spec can read it
+-- (M.menu) and pick from it by label (M.pick), as a click in the real list would.
+local Description = {}
+Description.__index = Description
+local function newDescription(text, kind, isSelected, onSelect, data)
+  return setmetatable({ text = text, kind = kind, isSelected = isSelected, onSelect = onSelect, data = data,
+    children = {} }, Description)
+end
+function Description:add(e) self.children[#self.children + 1] = e; return e end
+function Description:CreateRadio(text, isSelected, onSelect, data)
+  return self:add(newDescription(text, "radio", isSelected, onSelect, data))
+end
+function Description:CreateCheckbox(text, isSelected, onSelect, data)
+  return self:add(newDescription(text, "checkbox", isSelected, onSelect, data))
+end
+function Description:CreateButton(text, onSelect, data)
+  return self:add(newDescription(text, "button", nil, onSelect, data))
+end
+function Description:CreateTitle(text) return self:add(newDescription(text, "title")) end
+function Description:CreateDivider() return self:add(newDescription(nil, "divider")) end
+function Description:SetScrollMode(extent) self.scrollExtent = extent end
+function Description:IsSelected() return self.isSelected ~= nil and self.isSelected(self.data) or false end
+
+M.Description = Description
+
+local function dropdown(f)
+  function f:SetupMenu(generator)
+    self.menuGenerator = generator
+    self:GenerateMenu()
+  end
+  function f:GenerateMenu()
+    local root = newDescription(nil, "root")
+    self.menuGenerator(self, root)
+    self.menuRoot = root
+  end
+  function f:OverrideText(t) self.text = t end
+  function f:SetDefaultText(t) self.defaultText = t end
+  function f:SetMenuAnchor(a) self.menuAnchor = a end
+  function f:IsMenuOpen() return self.menuOpen == true end
+  function f:OpenMenu() self:GenerateMenu(); self.menuOpen = true end
+  function f:CloseMenu() self.menuOpen = false end
+  -- A click opens or closes the list, like the real button's mouse-down.
+  function f:Click()
+    if not self:IsEnabled() then return end
+    if self.menuOpen then self:CloseMenu() else self:OpenMenu() end
+  end
+end
+
+-- The entries of a drop-down's menu (or of the entry at labels ... in it).
+function M.menu(dd, ...)
+  if not dd.menuRoot then dd:GenerateMenu() end
+  local at = dd.menuRoot
+  for _, label in ipairs({ ... }) do
+    local found
+    for _, e in ipairs(at.children) do if e.text == label then found = e end end
+    assert(found, "no menu entry " .. tostring(label))
+    at = found
+  end
+  return at
+end
+
+-- Labels of the entries, in order.
+function M.menuLabels(dd, ...)
+  local out = {}
+  for _, e in ipairs(M.menu(dd, ...).children) do out[#out + 1] = e.text end
+  return out
+end
+
+-- Picks the entry at labels ... like a click on it: radios and buttons close the list, check boxes keep it.
+function M.pick(dd, ...)
+  -- The player opens the list before picking from it (which builds it afresh, as the client does).
+  if not dd:IsMenuOpen() then dd:OpenMenu() end
+  local e = M.menu(dd, ...)
+  assert(e.onSelect, "menu entry " .. tostring(e.text) .. " can't be picked")
+  local response = e.onSelect(e.data)
+  if e.kind ~= "checkbox" and #e.children == 0 then dd:CloseMenu() end
+  return response
+end
+
+-- The labels of the selected entries at labels ... (the whole menu when none given).
+function M.selected(dd, ...)
+  local out = {}
+  for _, e in ipairs(M.menu(dd, ...).children) do if e:IsSelected() then out[#out + 1] = e.text end end
+  return out
+end
+
 -- Blizzard's ScrollBarMixin, as much as the lists use: setting the scroll percentage fires OnScroll
 -- (the client does that too, for the owner's own calls as well as the player's), and with
 -- SetHideIfUnscrollable the bar hides while everything is visible. bar:drag(p) is the player moving it.
@@ -243,6 +330,7 @@ function M.new(opts)
       end
     end
     if template == "MinimalScrollBar" then M.scrollBar(f) end
+    if kind == "DropdownButton" then dropdown(f) end
     env.frames[#env.frames + 1] = f
     if name then env[name] = f end
     return f

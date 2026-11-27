@@ -50,6 +50,7 @@ Game/MailAPI.lua
 Game/MailCollector.lua
 Game/MailSender.lua
 UI/Loading.lua
+UI/Dropdown.lua
 UI/PostView.lua
 UI/SnipeView.lua
 UI/ValueChart.lua

@@ -230,3 +230,9 @@ How Blizzard's Open All works (`Blizzard_MailFrame/MailFrame.lua`, `OpenAllMailM
 - `InCombatLockdown()`: protected frames cannot be shown, hidden or moved in combat; queue until `PLAYER_REGEN_ENABLED`.
 - Sounds: `PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)` and other `SOUNDKIT` keys, not file paths.
 - Window art and templates for our own window: [addon-ui-design.md](../research/addon-ui-design.md).
+- Drop-downs (#189): Forever ships Blizzard_Menu (game type `camelot`, see its `Camelot/` folder). The game's Settings
+  panel uses `WowStyle2DropdownTemplate` (`CreateFrame("DropdownButton", nil, parent, "WowStyle2DropdownTemplate")`),
+  filled with `dropdown:SetupMenu(function(dropdown, root) root:CreateRadio(text, isSelected, onSelect, data) end)`;
+  `CreateCheckbox` keeps the list open, an entry with children opens a submenu, `SetScrollMode(height)` scrolls a long
+  list, `OverrideText` sets the button's text. `WowStyle1ArrowDropdownTemplate` is the small arrow button; give it
+  `menuMixin = MenuStyle2Mixin` for the same list. Better AH wraps all of this in `UI/Dropdown.lua`.

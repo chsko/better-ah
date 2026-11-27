@@ -11,7 +11,6 @@ LedgerView.TABS = { { "entries", "Transactions" }, { "items", "By item" }, { "da
 LedgerView.PERIODS = { { "today", "Today" }, { "7d", "7 days" }, { "30d", "30 days" }, { "all", "All time" } }
 LedgerView.FILTERS = { { "all", "Money in and out" }, { "in", "Money in" }, { "out", "Money out" } }
 LedgerView.CHARACTERS = { { "all", "All characters" }, { "this", "This character" } }
-LedgerView.MENU_ENTRY = 20
 LedgerView.ENTRY_COLUMNS = {
   { "When", 4, 84, "LEFT" }, { "What", 92, 96, "LEFT" }, { "Item", 192, 186, "LEFT" }, { "Qty", 382, 36 },
   { "Gold", 422, 94 },
@@ -346,84 +345,23 @@ function LedgerView:setChars(all)
   self:render()
 end
 
--- A drop-down: a button showing the chosen option's label, which opens a menu of the options
--- below it. options = { { value, label }, ... }; get() gives the chosen value, set(value) picks one.
+-- A drop-down (UI/Dropdown.lua): options = { { value, label }, ... }; get() gives the chosen value,
+-- set(value) picks one.
 function LedgerView:dropdown(parent, width, options, get, set, title, tip)
-  local env = self.env
-  local b = env.CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-  b:SetSize(width, 20)
-  ns.Window.tooltip(env, b, title, tip)
-  local menu = env.CreateFrame("Frame", nil, parent)
-  menu:SetSize(width, #options * LedgerView.MENU_ENTRY + 8)
-  menu:SetPoint("TOPLEFT", b, "BOTTOMLEFT", 0, -2)
-  menu:SetFrameStrata("HIGH")
-  menu:EnableMouse(true)
-  -- The wheel over a menu shouldn't scroll the list under it.
-  menu:EnableMouseWheel(true)
-  menu:SetScript("OnMouseWheel", function() end)
-  -- Drawn like Browse's menus (UI/BrowseFilterBar.lua): dark ground, gold edge all round.
-  local bg = menu:CreateTexture(nil, "BACKGROUND")
-  bg:SetAllPoints(menu)
-  bg:SetColorTexture(0.06, 0.05, 0.04, 0.97)
-  for _, e in ipairs({ { "TOPLEFT", "TOPRIGHT", true }, { "BOTTOMLEFT", "BOTTOMRIGHT", true },
-    { "TOPLEFT", "BOTTOMLEFT" }, { "TOPRIGHT", "BOTTOMRIGHT" } }) do
-    local t = menu:CreateTexture(nil, "BORDER")
-    t:SetColorTexture(0.79, 0.64, 0.23, 1)
-    t:SetPoint(e[1], menu, e[1], 0, 0)
-    t:SetPoint(e[2], menu, e[2], 0, 0)
-    if e[3] then t:SetHeight(1) else t:SetWidth(1) end
-  end
-  menu:Hide()
-  b.menu, b.entries = menu, {}
-  for i, o in ipairs(options) do
-    local e = env.CreateFrame("Button", nil, menu)
-    e:SetSize(width - 8, LedgerView.MENU_ENTRY)
-    e:SetPoint("TOPLEFT", menu, "TOPLEFT", 4, -4 - (i - 1) * LedgerView.MENU_ENTRY)
-    local hl = e:CreateTexture(nil, "HIGHLIGHT")
-    hl:SetAtlas(ns.Window.ART.rowHighlight, false)
-    hl:SetAllPoints(e)
-    hl:SetBlendMode("ADD")
-    local sel = e:CreateTexture(nil, "ARTWORK")
-    sel:SetAtlas(ns.Window.ART.rowSelected, false)
-    sel:SetAllPoints(e)
-    sel:SetAlpha(0.5)
-    sel:Hide()
-    e.selectedTexture = sel
-    local text = e:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    text:SetPoint("LEFT", e, "LEFT", 6, 0)
-    text:SetText(o[2])
-    e.text = text
-    local value = o[1]
-    e:SetScript("OnClick", function()
-      menu:Hide()
-      set(value)
-    end)
-    b.entries[value] = e
-  end
-  b:SetScript("OnClick", function()
-    local open = menu:IsShown()
-    self:closeMenus()
-    if not open then menu:Show() end
-  end)
-  b.options, b.get = options, get
+  local d = ns.Dropdown.radio(self.env, parent, { width = width, options = options, get = get, set = set,
+    title = title, tip = tip })
   self.drops = self.drops or {}
-  self.drops[#self.drops + 1] = b
-  return b
+  self.drops[#self.drops + 1] = d
+  return d
 end
 
 function LedgerView:closeMenus()
-  for _, d in ipairs(self.drops or {}) do d.menu:Hide() end
+  for _, d in ipairs(self.drops or {}) do d:CloseMenu() end
 end
 
--- Shows each drop-down's chosen option on its button and in its menu.
+-- Shows each drop-down's chosen option on its button.
 function LedgerView:renderDrops()
-  for _, d in ipairs(self.drops or {}) do
-    local chosen = d.get()
-    for _, o in ipairs(d.options) do
-      if o[1] == chosen then d:SetText(o[2]) end
-      d.entries[o[1]].selectedTexture:SetShown(o[1] == chosen)
-    end
-  end
+  for _, d in ipairs(self.drops or {}) do d.refresh() end
 end
 
 function LedgerView:scroll(by)
@@ -470,7 +408,7 @@ function LedgerView:render()
   for _, t in ipairs(LedgerView.TABS) do ns.Window.markSelected(self.tabButtons[t[1]], t[1] == self.tab) end
   self:renderDrops()
   self.filterDrop:SetShown(self.tab == "entries")
-  if self.tab ~= "entries" then self.filterDrop.menu:Hide() end
+  if self.tab ~= "entries" then self.filterDrop:CloseMenu() end
   self.entryList:SetShown(self.tab == "entries")
   self.itemList:SetShown(self.tab == "items")
   self.chart:SetShown(self.tab == "days")

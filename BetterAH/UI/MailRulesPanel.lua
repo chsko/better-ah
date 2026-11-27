@@ -41,6 +41,10 @@ end
 
 local MATCHES = { { "item", "Item" }, { "group", "DE group" }, { "type", "Type" } }
 
+local function choices(match)
+  return match == "group" and ns.SendRules.GROUPS or ns.SendRules.TYPES
+end
+
 -- window: the Mailbox window (env, api, addon, sendPanel, collector, sender).
 function MailRulesPanel.new(window)
   return setmetatable({ window = window, env = window.env, api = window.api, offset = 0 }, MailRulesPanel)
@@ -144,23 +148,42 @@ function MailRulesPanel:buildEditor(p, width)
   end
   self.editTitle = label("New rule", 4, 0)
   label("Sends", 4, -26)
-  self.matchButtons = {}
-  for i, m in ipairs(MATCHES) do
-    self.matchButtons[m[1]] = button(m[2], 80, 60 + (i - 1) * 84, -22, function() self:setMatch(m[1]) end)
-  end
-  self.prevButton = button("<", 24, 60, -48, function() self:cycle(-1) end)
+  local Dropdown = ns.Dropdown
+  self.matchDrop = Dropdown.radio(env, ed, { width = 110, height = 20, options = MATCHES,
+    get = function() return self.draft and self.draft.match end, set = function(m) self:setMatch(m) end,
+    title = "Sends", tip = "One item, a disenchant group, or a type of item." })
+  self.matchDrop:SetPoint("TOPLEFT", ed, "TOPLEFT", 60, -22)
+  self.choiceDrop = Dropdown.radio(env, ed, { width = 200, height = 20,
+    options = function()
+      local out = {}
+      for _, c in ipairs(choices(self.draft and self.draft.match)) do out[#out + 1] = { c.id, c.label } end
+      return out
+    end,
+    get = function()
+      local d = self.draft
+      return d and (d.match == "group" and d.group or d.type)
+    end,
+    set = function(id) self:setChoice(id) end, title = "Sends", tip = "Which of them the rule sends." })
+  self.choiceDrop:SetPoint("TOPLEFT", ed, "TOPLEFT", 60, -49)
   self.choiceText = ed:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  self.choiceText:SetPoint("TOPLEFT", ed, "TOPLEFT", 90, -52)
-  self.choiceText:SetWidth(200)
+  self.choiceText:SetPoint("TOPLEFT", ed, "TOPLEFT", 64, -52)
+  self.choiceText:SetWidth(260)
   self.choiceText:SetJustifyH("LEFT")
-  self.nextButton = button(">", 24, 296, -48, function() self:cycle(1) end)
 
   label("To", 4, -80)
   self.toBox = input(env, ed, 110)
   self.toBox:SetPoint("TOPLEFT", ed, "TOPLEFT", 66, -76)
   self.toBox:SetScript("OnTextChanged", function(e) if self.draft then self.draft.to = e:GetText() end end)
-  self.toNext = button("v", 24, 180, -75, function() self:nextRecipient() end)
-  ns.Window.tooltip(env, self.toNext, "Your characters", "Picks the next of your characters on this faction.")
+  self.toPick = Dropdown.radio(env, ed, { arrow = true, anchor = self.toBox,
+    options = function()
+      local out = {}
+      local names = self.window.sendPanel and self.window.sendPanel:recipients() or {}
+      for _, n in ipairs(names) do out[#out + 1] = { n, n } end
+      return out
+    end,
+    get = function() return self.draft and self.draft.to end, set = function(name) self:setRecipient(name) end,
+    title = "Your characters", tip = "Pick one of your characters on this faction." })
+  self.toPick:SetPoint("LEFT", self.toBox, "RIGHT", 2, 0)
   label("Keep", 220, -80)
   self.keepBox = input(env, ed, 50)
   self.keepBox:SetPoint("TOPLEFT", ed, "TOPLEFT", 260, -76)
@@ -204,6 +227,7 @@ function MailRulesPanel:closeEditor()
   self.draft, self.editing, self.editMessage = nil, nil, nil
   if self.toBox.ClearFocus then self.toBox:ClearFocus() end
   if self.keepBox.ClearFocus then self.keepBox:ClearFocus() end
+  for _, d in ipairs({ self.matchDrop, self.choiceDrop, self.toPick }) do d:CloseMenu() end
   self:render()
 end
 
@@ -215,34 +239,27 @@ function MailRulesPanel:clickRow(r)
 end
 
 function MailRulesPanel:setMatch(match)
-  if not self.draft then return end
-  self.draft.match = match
-  self:render()
-end
-
-local function choices(match)
-  return match == "group" and ns.SendRules.GROUPS or ns.SendRules.TYPES
-end
-
-function MailRulesPanel:cycle(step)
-  local d = self.draft
-  if not d or d.match == "item" then return end
-  local list, field = choices(d.match), d.match == "group" and "group" or "type"
-  local at = 1
-  for i, c in ipairs(list) do if c.id == d[field] then at = i end end
-  d[field] = list[(at - 1 + step) % #list + 1].id
-  self:render()
-end
-
-function MailRulesPanel:nextRecipient()
   local d = self.draft
   if not d then return end
-  local names = self.window.sendPanel and self.window.sendPanel:recipients() or {}
-  if #names == 0 then return end
-  local at = 0
-  for i, n in ipairs(names) do if n == d.to then at = i end end
-  d.to = names[at % #names + 1]
-  self.toBox:SetText(d.to)
+  d.match = match
+  -- A rule that had no group or type yet starts on the first, so the drop-down always shows one.
+  if match == "group" and not d.group then d.group = ns.SendRules.GROUPS[1].id end
+  if match == "type" and not d.type then d.type = ns.SendRules.TYPES[1].id end
+  self:render()
+end
+
+function MailRulesPanel:setChoice(id)
+  local d = self.draft
+  if not d or d.match == "item" then return end
+  d[d.match == "group" and "group" or "type"] = id
+  self:render()
+end
+
+function MailRulesPanel:setRecipient(name)
+  local d = self.draft
+  if not (d and name) then return end
+  d.to = name
+  self.toBox:SetText(name)
 end
 
 -- An item rule waits for an alt-clicked bag item.
@@ -322,16 +339,14 @@ function MailRulesPanel:renderEditor()
   ed:SetShown(d ~= nil)
   if not d then return end
   self.editTitle:SetText(self.editing and "Change rule" or "New rule")
-  for id, b in pairs(self.matchButtons) do
-    if id == d.match then b:LockHighlight() else b:UnlockHighlight() end
-  end
   local item = d.match == "item"
-  self.prevButton:SetShown(not item)
-  self.nextButton:SetShown(not item)
+  self.matchDrop.refresh()
+  self.choiceDrop:SetShown(not item)
+  self.choiceText:SetShown(item)
   if item then
     self.choiceText:SetText(d.itemID and (d.name or ("item " .. d.itemID)) or MailRulesPanel.PICK_ITEM)
   else
-    self.choiceText:SetText(ns.SendRules.label(d))
+    self.choiceDrop.refresh()
   end
   self.deleteButton:SetShown(self.editing ~= nil)
   self.editStatus:SetText(self.editMessage or "")

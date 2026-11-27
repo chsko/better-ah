@@ -61,7 +61,7 @@ end
 
 function SnipeView.new(dview)
   return setmetatable({ dview = dview, window = dview.window, env = dview.env, addon = dview.addon,
-    round = 0, near = {}, seen = {}, why = {} }, SnipeView)
+    round = 0, near = {}, seen = {}, why = {}, listed = {} }, SnipeView)
 end
 
 -- Redraws the Disenchant view, but only while the window shows it: sniping runs on behind other views,
@@ -679,6 +679,16 @@ function SnipeView:tick(run)
     local name = ns.DisenchantView.targetName(entry.target, entry.row)
     self.seen[entry.target] = #results
     self.why[entry.target] = ns.Sniper.why(band, results, max, level)
+    -- What this check saw, cheapest per item, for Profit now on Targets (#246). Kept after sniping stops:
+    -- Targets uses it on this market while it is newer than the full scan and the target still asks the
+    -- same query.
+    local listed = {}
+    for _, r in ipairs(results) do
+      local id = r.itemKey and r.itemKey.itemID
+      if id and (r.minPrice or 0) > 0 then listed[#listed + 1] = { item = "i:" .. id, price = r.minPrice } end
+    end
+    self.listed[entry.target] = { time = self:now(), market = self.window:market(),
+      signature = ns.Targets.signature(entry.target), listings = listed }
     local near = ns.Sniper.near(band, results, max, level)
     for _, e in ipairs(near) do e.target = name end
     self.near[entry.target] = near

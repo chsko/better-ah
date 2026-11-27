@@ -13,10 +13,17 @@ DisenchantView.__index = DisenchantView
 
 DisenchantView.TABS = { { "values", "Values" }, { "targets", "Targets" }, { "snipe", "Snipe" } }
 -- Laid out to fit beside the scroll bar (518 px): the names keep their room, the money columns give it up.
+-- The target name already says its item types ("Armor, req. 21-25"), so the list has no column for them.
+-- Cheapest and Profit now are the target's best listing right now (#246).
 DisenchantView.TARGET_COLUMNS = {
-  { "", 4, 18 }, { "Target", 26, 140, "LEFT" }, { "Item types", 168, 100, "LEFT" }, { "Worth", 270, 76 },
-  { "Profit", 348, 72 }, { "Max price", 422, 92 },
+  { "", 4, 18 }, { "Target", 26, 140, "LEFT" }, { "Worth", 168, 66 }, { "Profit", 236, 50 },
+  { "Max price", 288, 70 }, { "Cheapest", 360, 70 }, { "Profit now", 432, 82 },
 }
+-- Profit now's colour and row tint per Targets.best status: green the sniper buys it, yellow some profit
+-- but less than the target asks, red a loss.
+DisenchantView.NOW_COLORS = { buy = { 0.12, 1, 0 }, short = { 1, 0.8, 0.2 }, loss = { 1, 0.29, 0.23 } }
+DisenchantView.NOW_TINT = 0.12
+DisenchantView.INFO_RETRIES = 10 -- re-draws, a second apart, while item details for Profit now load
 local TAB_HEIGHT = 28 -- the tab row above each tab's own panel
 
 DisenchantView.COLUMNS = {
@@ -337,6 +344,13 @@ function DisenchantView:buildTargets(p, width)
     ns.Window.tooltip(env, box, "Snipe this target", "Tick to snipe this target, untick to keep it without "
       .. "sniping it. While sniping runs, this takes effect right away.")
     cells.check = box
+    local tint = cells.button:CreateTexture(nil, "BACKGROUND")
+    tint:SetAllPoints(cells.button)
+    tint:SetColorTexture(1, 1, 1, 0)
+    tint:Hide()
+    cells.tint = tint
+    cells.button:SetScript("OnEnter", function(b) self:showNowTip(b, r + self.targetOffset) end)
+    cells.button:SetScript("OnLeave", function() if env.GameTooltip then env.GameTooltip:Hide() end end)
   end
   local start = env.CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
   start:SetSize(width, 26)
@@ -538,7 +552,7 @@ function DisenchantView:buildEditors()
   local box = env.CreateFrame("Frame", nil, w.detailLayer)
   -- Under the title, which can take two lines.
   box:SetPoint("TOPLEFT", w.detailTitle, "BOTTOMLEFT", 0, -8)
-  box:SetSize(196, 350)
+  box:SetSize(196, 360)
   box:Hide()
   self.editor = box
   local function label(text, y)
@@ -617,11 +631,16 @@ function DisenchantView:buildEditors()
   label("Most it buys at", -240)
   self.maxText = box:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   self.maxText:SetPoint("TOPLEFT", box, "TOPLEFT", 0, -256)
+  -- The best listing right now and its profit (#246), in Profit now's colour.
+  self.nowText = box:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  self.nowText:SetPoint("TOPLEFT", box, "TOPLEFT", 0, -278)
+  self.nowText:SetWidth(196)
+  self.nowText:SetJustifyH("LEFT")
   self.editorStatus = box:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  self.editorStatus:SetPoint("TOPLEFT", box, "TOPLEFT", 0, -276)
+  self.editorStatus:SetPoint("TOPLEFT", box, "TOPLEFT", 0, -294)
   self.editorStatus:SetWidth(196)
   self.editorStatus:SetJustifyH("LEFT")
-  self.deleteButton = button("Delete target", 110, -326, 0, function() self:deleteTarget() end)
+  self.deleteButton = button("Delete target", 110, -336, 0, function() self:deleteTarget() end)
 end
 
 -- The saved targets.
@@ -650,6 +669,7 @@ function DisenchantView:selectTab(tab)
   self:dropFocus()
   self.tab = tab
   self.message = nil
+  if tab == "targets" then self.infoTries = 0 end
   self:render()
 end
 
@@ -893,9 +913,192 @@ function DisenchantView:renderValues(key, opts)
   end
 end
 
+-- Money that can be negative: "-45s 0c" for a loss.
+function DisenchantView.signedMoney(copper)
+  if copper < 0 then return "-" .. ns.Money.format(-copper) end
+  return ns.Money.format(copper)
+end
+
+-- Profit now's cell (#246): the profit on the target's best listing, "-" for nothing listed (or no worth),
+-- "..." while item details load.
+function DisenchantView.nowText(now)
+  if now.best then return DisenchantView.signedMoney(now.best.profit) end
+  return now.loading and "..." or "-"
+end
+
+-- The editor's line for the best listing right now.
+function DisenchantView.nowLine(now)
+  local b = now.best
+  if not b then return now.loading and "Now: loading item details..." or "Now: nothing listed." end
+  return string.format("Now %s: %s profit", ns.Money.format(b.price), DisenchantView.signedMoney(b.profit))
+end
+
+-- Item details for Profit now: from the cache, else the client's, else asked for (once) and nil.
+function DisenchantView:gearInfo(item)
+  self.infoCache = self.infoCache or {}
+  local info = self.infoCache[item]
+  if info then return info end
+  local api = self.addon.auctionAPI
+  info = api and api:itemInfo(item)
+  if info and info.classID then
+    self.infoCache[item] = info
+    return info
+  end
+  self.asked = self.asked or {}
+  local load = self.env.C_Item and self.env.C_Item.RequestLoadItemDataByID
+  local id = tonumber(item:match("^i:(%d+)$"))
+  if id and type(load) == "function" and not self.asked[item] then
+    self.asked[item] = true
+    pcall(load, id)
+  end
+  return nil
+end
+
+-- An item's target type (Targets.typeOf) from GetItemInfoInstant, which answers at once, or nil.
+function DisenchantView:typeOf(item)
+  local api = self.addon.auctionAPI
+  return ns.Targets.typeOf(api and api:itemType(item))
+end
+
+-- The gear the price database has for a market, as { item, type } with a target item type, worked out
+-- again after each full scan.
+function DisenchantView:gearItems(key, prices)
+  local last = prices:lastScan(key)
+  local g = self.gear
+  if g and g.key == key and g.last == last then return g.items end
+  local items = {}
+  for _, e in ipairs(prices:items(key)) do
+    local typeID = self:typeOf(e.item)
+    if typeID then items[#items + 1] = { item = e.item, type = typeID } end
+  end
+  self.gear, self.infoTries = { key = key, last = last, items = items }, 0
+  return items
+end
+
+-- The last full scan's cheapest listing of every green it saw, as Targets.best takes them, the scan's
+-- time, and the item types with item details still loading (a set). Once per draw.
+function DisenchantView:scanListings()
+  if self.scanCache then return self.scanCache end
+  local key, prices = self.window:market(), self.addon.prices
+  local out = { listings = {}, time = nil, pending = {} }
+  if key and prices and prices:lastScan(key) then
+    out.time = prices:lastScan(key)
+    for _, g in ipairs(self:gearItems(key, prices)) do
+      local item = g.item
+      local cur = prices:current(key, item)
+      if cur and cur.lowest and cur.lowest > 0 then
+        local info = self:gearInfo(item)
+        if not info then
+          out.pending[g.type] = true
+        elseif tonumber(info.quality) == 2 then
+          out.listings[#out.listings + 1] = { item = item, price = cur.lowest, info = info }
+        end
+      end
+    end
+  end
+  self.scanCache = out
+  return out
+end
+
+-- A target's best listing right now (#246): { best (Targets.best), source ("check" or "scan"), time,
+-- loading }. The sniper's last check of the target wins while it is from this market, at least as new as
+-- the full scan, and the target still asks the same query; otherwise the full scan. loading: an item of
+-- one of the target's types has no details yet. Cached per draw.
+function DisenchantView:targetNow(t, row)
+  self.nowCache = self.nowCache or {}
+  if self.nowCache[t] then return self.nowCache[t] end
+  local band = row and row.band
+  local worthOf = function(class) return row and row[class] and row[class].net end
+  local scan = self:scanListings()
+  local live = self.snipe and self.snipe.listed and self.snipe.listed[t]
+  local out
+  local function wanted(pending)
+    for id in pairs(pending) do
+      if t.types and t.types[id] then return true end
+    end
+    return false
+  end
+  if live and live.market == self.window:market() and live.signature == ns.Targets.signature(t)
+    and live.time >= (scan.time or 0) then
+    local listings, pending = {}, {}
+    for _, l in ipairs(live.listings) do
+      local info = self:gearInfo(l.item)
+      if info then
+        listings[#listings + 1] = { item = l.item, price = l.price, info = info }
+      else
+        local typeID = self:typeOf(l.item)
+        if typeID then pending[typeID] = true end
+      end
+    end
+    out = { best = ns.Targets.best(t, band, listings, worthOf), source = "check", time = live.time,
+      loading = wanted(pending) }
+  else
+    out = { best = ns.Targets.best(t, band, scan.listings, worthOf), source = scan.time and "scan" or nil,
+      time = scan.time, loading = wanted(scan.pending) }
+  end
+  if out.loading then self:retryInfo() end
+  self.nowCache[t] = out
+  return out
+end
+
+-- Draws Targets again in a second while item details load, at most INFO_RETRIES times per full scan or
+-- visit to the tab.
+function DisenchantView:retryInfo()
+  local timer = self.env.C_Timer
+  if self.infoTimer or not (timer and timer.After) then return end
+  self.infoTries = (self.infoTries or 0) + 1
+  if self.infoTries > DisenchantView.INFO_RETRIES then return end
+  self.infoTimer = true
+  timer.After(1, function()
+    self.infoTimer = nil
+    if self.tab == "targets" and self.panel and self.panel:IsShown() then self:render() end
+  end)
+end
+
+-- The tooltip over a target's row: its best listing now, what it makes, and where the price comes from.
+function DisenchantView:showNowTip(owner, index)
+  local tip = self.env.GameTooltip
+  local t = self:targets():list()[index]
+  if not (tip and t) then return end
+  local row = self:rowFor(t.band)
+  local now = self:targetNow(t, row)
+  local money = ns.Money.format
+  tip:SetOwner(owner, "ANCHOR_RIGHT")
+  tip:SetText("Profit now", 1, 1, 1)
+  local b = now.best
+  if b then
+    local api = self.addon.auctionAPI
+    local name = api and api:itemName(b.item)
+    if name then tip:AddLine(name, 0.12, 1, 0) end
+    tip:AddLine(string.format("%s, worth %s after the cut", money(b.price), money(b.worth)), 1, 1, 1)
+    local c = DisenchantView.NOW_COLORS[b.status]
+    local verdict
+    if b.status == "buy" then
+      verdict = string.format("%s profit: the sniper buys it", money(b.profit))
+    elseif b.status == "short" then
+      verdict = string.format("%s profit, under your %s", money(b.profit), ns.Targets.profitText(t))
+    else
+      verdict = string.format("%s: costs more than it's worth", DisenchantView.signedMoney(b.profit))
+    end
+    tip:AddLine(verdict, c[1], c[2], c[3])
+  else
+    tip:AddLine(now.loading and "Loading item details..." or "Nothing listed that this target takes.", 1, 1, 1)
+  end
+  local clock = self.addon.auctionAPI and self.addon.auctionAPI:now()
+  if now.source == "check" then
+    tip:AddLine("From the sniper's check " .. ns.Time.ago(now.time, clock), 0.62, 0.62, 0.62)
+  elseif now.source == "scan" then
+    tip:AddLine("From the full scan " .. ns.Time.ago(now.time, clock), 0.62, 0.62, 0.62)
+  else
+    tip:AddLine("No full scan yet.", 0.62, 0.62, 0.62)
+  end
+  tip:Show()
+end
+
 function DisenchantView:renderTargets()
   local w = self.window
   local list = self:targets():list()
+  self.nowCache, self.scanCache = {}, nil
   if self.target and not list[self.target] then self.target = nil end
   local money = ns.Money.format
   self.targetOffset = math.max(0, math.min(self.targetOffset, #list - #self.targetRows))
@@ -907,15 +1110,27 @@ function DisenchantView:renderTargets()
       local row = self:rowFor(t.band)
       local worth, missing = DisenchantView.targetWorth(t, row)
       local max = ns.Targets.maxPrice(t, worth)
+      local now = self:targetNow(t, row)
       cells[2]:SetText(DisenchantView.targetName(t, row))
-      cells[3]:SetText(ns.Targets.typesText(t))
-      cells[4]:SetText(worth and (money(worth) .. (missing and " *" or "")) or "-")
-      cells[5]:SetText(ns.Targets.profitText(t))
-      cells[6]:SetText(max and money(max) or "-")
+      cells[3]:SetText(worth and (money(worth) .. (missing and " *" or "")) or "-")
+      cells[4]:SetText(ns.Targets.profitText(t))
+      cells[5]:SetText(max and money(max) or "-")
+      cells[6]:SetText(now.best and money(now.best.price) or "-")
+      cells[7]:SetText(DisenchantView.nowText(now))
+      local color = now.best and DisenchantView.NOW_COLORS[now.best.status]
+      if color then cells[7]:SetTextColor(color[1], color[2], color[3]) else cells[7]:SetTextColor(0.62, 0.62, 0.62) end
+      local tint = now.best and now.best.status ~= "loss" and color
+      if tint then
+        cells.tint:SetColorTexture(tint[1], tint[2], tint[3], DisenchantView.NOW_TINT)
+        cells.tint:Show()
+      else
+        cells.tint:Hide()
+      end
       cells.check:SetChecked(t.enabled)
       cells.button:Show()
     else
       for _, cell in ipairs(cells) do cell:SetText("") end
+      cells.tint:Hide()
       cells.button:Hide()
     end
     cells.button.selectedTexture:SetShown(t ~= nil and index == self.target)
@@ -960,6 +1175,10 @@ function DisenchantView:renderTargets()
   self.worthText:SetText(worth and ("Worth " .. money(worth) .. " after the cut")
     or "No worth yet: scan materials on Values.")
   self.maxText:SetText(max and money(max) or "-")
+  local now = self:targetNow(t, row)
+  self.nowText:SetText(DisenchantView.nowLine(now))
+  local color = now.best and DisenchantView.NOW_COLORS[now.best.status]
+  if color then self.nowText:SetTextColor(color[1], color[2], color[3]) else self.nowText:SetTextColor(1, 1, 1) end
   local note = self.message
   if not note and not next(ns.Targets.classes(t)) then note = "Pick at least one item type to snipe." end
   if not note and missing then note = "A material has no price yet, so this is too low. Scan materials on Values." end

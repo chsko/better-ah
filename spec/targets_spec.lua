@@ -100,4 +100,80 @@ describe("Targets", function()
     end
     assert.equal("leather", Targets.typeOf(ns.AuctionAPI.new(env):itemInfo("i:1234")))
   end)
+  describe("best listing now (#246)", function()
+    local leather = { quality = 2, level = 28, classID = 4, subclassID = 2, equip = "INVTYPE_WRIST" }
+    local sword = { quality = 2, level = 28, classID = 2, subclassID = 7, equip = "INVTYPE_WEAPON" }
+    local worth = { armor = 1000, weapon = 2000 }
+    local function worthOf(class) return worth[class] end
+
+    it("picks the listing with the most profit among those the target takes", function()
+      local t = target({ "leather", "onehand" }, { kind = "percent", amount = 10 })
+      local best = Targets.best(t, band, {
+        { item = "i:1", price = 950, info = leather },
+        { item = "i:2", price = 1500, info = sword },
+        { item = "i:3", price = 100, info = { quality = 3, level = 28, classID = 4, subclassID = 2 } }, -- blue
+        { item = "i:4", price = 100, info = { quality = 2, level = 40, classID = 4, subclassID = 2 } }, -- band
+        { item = "i:5", price = 100, info = { quality = 2, level = 28, classID = 4, subclassID = 4 } }, -- plate
+        { item = "i:6", price = 0, info = leather }, -- no buyout
+        { item = "i:7", price = 100 }, -- not loaded
+      }, worthOf)
+      assert.same({ item = "i:2", price = 1500, worth = 2000, profit = 500, max = 1800, status = "buy" }, best)
+    end)
+
+    it("counts unticked targets too", function()
+      local t = target({ "leather" })
+      t.enabled = false
+      assert.equal("i:1", Targets.best(t, band, { { item = "i:1", price = 500, info = leather } }, worthOf).item)
+    end)
+
+    it("says whether the sniper would buy, the profit is short, or it loses", function()
+      local t = target({ "leather" }, { kind = "gold", amount = 200 }) -- max 800
+      local function status(price)
+        return Targets.best(t, band, { { item = "i:1", price = price, info = leather } }, worthOf).status
+      end
+      assert.equal("buy", status(800), "at the max")
+      assert.equal("short", status(801))
+      assert.equal("short", status(999))
+      assert.equal("loss", status(1000), "no profit")
+      assert.equal("loss", status(1200))
+      assert.equal(-200, Targets.best(t, band, { { item = "i:1", price = 1200, info = leather } }, worthOf).profit)
+    end)
+
+    it("never says buy when the profit takes the whole worth", function()
+      local t = target({ "leather" }, { kind = "percent", amount = 100 })
+      assert.equal("short", Targets.best(t, band, { { item = "i:1", price = 1, info = leather } }, worthOf).status)
+    end)
+
+    it("has nothing without a listing it takes or a worth", function()
+      local t = target({ "leather" })
+      assert.is_nil(Targets.best(t, band, {}, worthOf))
+      assert.is_nil(Targets.best(t, band, nil, worthOf))
+      assert.is_nil(Targets.best(t, band, { { item = "i:1", price = 500, info = leather } }, function() return nil end))
+      assert.is_nil(Targets.best(t, nil, { { item = "i:1", price = 500, info = leather } }, worthOf))
+    end)
+
+    it("puts a listing the sniper buys before a short one with more profit", function()
+      local t = target({ "leather", "onehand" }, { kind = "percent", amount = 10 })
+      local best = Targets.best(t, band, { { item = "i:2", price = 1820, info = sword }, -- 180 profit, max 1800
+        { item = "i:1", price = 850, info = leather } }, worthOf) -- 150 profit, max 900
+      assert.equal("i:1", best.item)
+      assert.equal("buy", best.status)
+    end)
+
+    it("breaks a profit tie by the lower price", function()
+      local t = target({ "leather", "onehand" })
+      local best = Targets.best(t, band, { { item = "i:2", price = 1500, info = sword },
+        { item = "i:1", price = 500, info = leather } }, function(class) return class == "armor" and 1000 or 2000 end)
+      assert.equal("i:1", best.item)
+    end)
+  end)
+  it("signs a target by its band and item types (#246)", function()
+    local a = target({ "leather", "cloth" })
+    assert.equal("26:cloth,leather", Targets.signature(a))
+    local b = target({ "cloth", "leather" }, { kind = "percent", amount = 50 })
+    b.enabled = false
+    assert.equal(Targets.signature(a), Targets.signature(b), "profit and ticks don't change the query")
+    b.band = 31
+    assert.are_not.equal(Targets.signature(a), Targets.signature(b))
+  end)
 end)

@@ -70,9 +70,24 @@ describe("Sniper", function()
     assert.equal(180, a[1].delta)
     local b = Sniper.near(band, { result(5, 26, 990), result(6, 26, 2000), result(7, 26, 999) }, maxOf)
     local ids = {}
-    for i, e in ipairs(Sniper.closest({ a, b })) do ids[i] = e.itemKey.itemID end
+    for i, e in ipairs(Sniper.closest({ a, b }, 5)) do ids[i] = e.itemKey.itemID end
     assert.same({ 1, 5, 7, 4, 2 }, ids, "under the max (most first), then over it (closest first), five at most")
+    assert.equal(6, #Sniper.closest({ a, b }), "up to 20 by default (#201)")
     assert.same({}, Sniper.closest({}))
+  end)
+
+  it("tells which closest entries are new or changed since the last list (#201)", function()
+    local function e(id, price, max, under)
+      return { itemKey = { itemID = id, itemLevel = 28 }, minPrice = price, max = max, target = under or "T" }
+    end
+    local changed, prev = Sniper.changes(nil, { e(1, 900, 1000), e(2, 1200, 1000) })
+    assert.same({}, changed, "nothing to compare the first list with")
+    changed, prev = Sniper.changes(prev, { e(1, 900, 1000), e(2, 1100, 1000), e(3, 50, 1000), e(1, 900, 1000, "U") })
+    assert.same({ [Sniper.nearKey(e(2))] = true, [Sniper.nearKey(e(3))] = true,
+      [Sniper.nearKey(e(1, 0, 0, "U"))] = true }, changed,
+      "a moved price, a new item, and the same item under another target")
+    changed = Sniper.changes(prev, { e(1, 900, 1200), e(2, 1100, 1000) })
+    assert.same({ [Sniper.nearKey(e(1))] = true }, changed, "an edited max counts too; a dropped entry doesn't")
   end)
 
   it("gives every browse result one reason, so the counts add up", function()

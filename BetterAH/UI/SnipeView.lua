@@ -18,6 +18,12 @@ SnipeView.HISTORY = 20 -- finished sessions kept
 SnipeView.NEAR_COLUMNS = { { "Item", 4, 150, "LEFT" }, { "Target", 158, 116, "LEFT" }, { "Cheapest", 316, 70 },
   { "Max", 390, 70 }, { "vs. max", 462, 74 }, { "Listed", 274, 38 } }
 SnipeView.NEAR_ROW = 17
+-- Rows the closest list shows at a time; a scroll bar beside it reaches the rest (Sniper.CLOSEST, #201).
+-- The mouse wheel over the tab still buys, so the list scrolls only by its bar (Christian, #201).
+SnipeView.NEAR_VISIBLE = 5
+-- A row whose listing is new or changed blinks: two fades in and out over FLASH seconds, up to
+-- FLASH_ALPHA (#201).
+SnipeView.FLASH, SnipeView.FLASH_PULSES, SnipeView.FLASH_ALPHA = 1.2, 2, 0.35
 -- The session log's scroll area runs from under the title down to the settings box (#101); this is its
 -- height until the client has laid it out.
 SnipeView.LOG_HEIGHT = 250
@@ -182,7 +188,7 @@ function SnipeView:build(p, width)
   self.nearEmpty:SetWidth(width - 8)
   self.nearEmpty:SetJustifyH("LEFT")
   self.nearRows = {}
-  for i = 1, ns.Sniper.CLOSEST do
+  for i = 1, SnipeView.NEAR_VISIBLE do
     local y = top - 16 - i * SnipeView.NEAR_ROW
     local row = {}
     local shade = p:CreateTexture(nil, "BACKGROUND")
@@ -191,6 +197,13 @@ function SnipeView:build(p, width)
     shade:SetColorTexture(0.12, 1, 0, 0.12)
     shade:Hide()
     row.bg = shade
+    local flash = p:CreateTexture(nil, "BORDER")
+    flash:SetPoint("TOPLEFT", p, "TOPLEFT", 0, y + 2)
+    flash:SetSize(width, SnipeView.NEAR_ROW)
+    flash:SetColorTexture(1, 0.82, 0, 1)
+    flash:SetAlpha(0)
+    flash:Hide()
+    row.flash = flash
     for c, col in ipairs(SnipeView.NEAR_COLUMNS) do
       row[c] = cell(c == 1 and "GameFontNormalSmall" or "GameFontHighlightSmall", col, y)
     end
@@ -199,8 +212,90 @@ function SnipeView:build(p, width)
     row.hover:SetSize(width, SnipeView.NEAR_ROW)
     self.nearRows[i] = row
   end
+  self:buildNearBar(p, width, top - 16 - SnipeView.NEAR_ROW + 2)
+  -- Drives the row blinks while any is running; hidden (so no OnUpdate) otherwise.
+  self.flashDriver = env.CreateFrame("Frame", nil, p)
+  self.flashDriver:Hide()
+  self.flashDriver:SetScript("OnUpdate", function() self:drawFlashes() end)
+  self.nearOffset, self.nearList, self.flashes = 0, {}, {}
   self:buildSettings()
   self:buildLog()
+end
+
+-- The closest list's scroll bar, right of the rows from y (its top) down NEAR_VISIBLE rows. It hides
+-- itself while every row fits. Dragging it, clicking its track or arrows, or wheeling over the bar
+-- itself scrolls the list a row at a time.
+function SnipeView:buildNearBar(p, width, y)
+  local bar = self.env.CreateFrame("EventFrame", nil, p, "MinimalScrollBar")
+  bar:SetPoint("TOPLEFT", p, "TOPLEFT", width + 8, y)
+  bar:SetPoint("BOTTOMLEFT", p, "TOPLEFT", width + 8, y - SnipeView.NEAR_VISIBLE * SnipeView.NEAR_ROW)
+  bar:SetHideIfUnscrollable(true)
+  bar.wheelPanScalar = 1
+  bar:RegisterCallback("OnScroll", function(_, percentage)
+    if self.nearSyncing then return end
+    local max = #self.nearList - SnipeView.NEAR_VISIBLE
+    if max <= 0 then return end
+    self.nearMoving = true
+    local ok, err = pcall(function()
+      self.nearOffset = math.floor(percentage * max + 0.5)
+      self:drawNear()
+    end)
+    self.nearMoving = nil
+    if not ok then error(err, 0) end
+  end, bar)
+  self.nearBar = bar
+end
+
+-- Sizes the bar's thumb for the list and moves it to the offset (not while the player moves the bar).
+function SnipeView:syncNearBar()
+  local bar, total, rows = self.nearBar, #self.nearList, SnipeView.NEAR_VISIBLE
+  local max = total - rows
+  local held = self.nearMoving or (bar.IsThumbMouseDown and bar:IsThumbMouseDown())
+  self.nearSyncing = true
+  local ok, err = pcall(function()
+    if max > 0 then
+      bar:SetPanExtentPercentage(1 / max)
+      bar:SetVisibleExtentPercentage(rows / total)
+      if not held then bar:SetScrollPercentage(self.nearOffset / max, true) end
+    else
+      bar:SetVisibleExtentPercentage(1)
+      bar:SetScrollPercentage(0, true)
+    end
+  end)
+  self.nearSyncing = nil
+  if not ok then error(err, 0) end
+end
+
+-- Scrolls the closest list to show from row offset + 1 (kept in range).
+function SnipeView:scrollNear(offset)
+  self.nearOffset = offset
+  self:drawNear()
+end
+
+-- A fine clock for the blinks: GetTime (seconds, with fractions), or the auction house's clock.
+function SnipeView:fineTime()
+  local t = self.env.GetTime and self.env.GetTime()
+  return tonumber(t) or self:now()
+end
+
+-- Sets each shown row's blink for where it is in its FLASH, and forgets blinks that are over.
+function SnipeView:drawFlashes()
+  local now, live = self:fineTime(), false
+  for key, started in pairs(self.flashes) do
+    if now - started >= SnipeView.FLASH then self.flashes[key] = nil else live = true end
+  end
+  for _, row in ipairs(self.nearRows) do
+    local started = row.entry and self.flashes[ns.Sniper.nearKey(row.entry)]
+    if started then
+      local phase = (now - started) * SnipeView.FLASH_PULSES / SnipeView.FLASH
+      row.flash:SetAlpha(SnipeView.FLASH_ALPHA * (1 - math.cos(2 * math.pi * phase)) / 2)
+      row.flash:Show()
+    else
+      row.flash:SetAlpha(0)
+      row.flash:Hide()
+    end
+  end
+  self.flashDriver:SetShown(live)
 end
 
 -- The session log, in the detail panel: newest first, in a scroll area above the settings box, with a
@@ -392,6 +487,8 @@ function SnipeView:start()
   local db = self.addon.disenchant
   SnipeView.file(db, self:now())
   db.session = {}
+  -- A new session's closest list starts at the top, with nothing to compare its first rows with.
+  self.nearSigs, self.flashes, self.nearOffset, self.nearBaseline = nil, {}, 0, {}
   self.session = ns.Sniper.Session.new(db.session, self:now())
   self.running, self.message, self.lastCheck, self.near, self.seen, self.why = true, nil, nil, {}, {}, {}
   self.requested = {}
@@ -656,7 +753,6 @@ end
 
 -- The listings closest to the targets' max prices, from each ticked target's last check.
 function SnipeView:renderNear()
-  local short = ns.Money.short
   -- Each target's last check, with its max price and name as the target is now (it may have been
   -- edited since).
   local lists, seen, checked, why = {}, 0, false, {}
@@ -679,7 +775,8 @@ function SnipeView:renderNear()
         end
         if max and max > 0 and price then
           fresh[#fresh + 1] = { itemKey = e.itemKey, minPrice = price, browsePrice = e.minPrice, max = max,
-            delta = max - price, target = name, quantity = e.quantity }
+            delta = max - price, target = name, quantity = e.quantity, targetKey = tostring(entry.target),
+            targetRef = entry.target }
         end
       end
       lists[#lists + 1] = fresh
@@ -711,8 +808,38 @@ function SnipeView:renderNear()
     self.hint:SetText("Shows what is close to your max prices while sniping.")
     self.nearEmpty:SetText("")
   end
+  -- Blink the rows whose listing is new or changed since the last draw (none on a session's first list).
+  -- An empty list (before a session's first check, or between) isn't compared with, so the first
+  -- rows to arrive don't all blink.
+  local changed, sigs = ns.Sniper.changes(self.nearSigs, near)
+  if #near > 0 then self.nearSigs = sigs end
+  -- A target's first check of the session only sets its baseline: with several targets checked one after
+  -- another, the rows each one brings in at first don't blink either.
+  local flashAt = self:fineTime()
+  self.nearBaseline = self.nearBaseline or {}
+  for _, e in ipairs(near) do
+    local key = ns.Sniper.nearKey(e)
+    local started = self.flashes[key]
+    -- A row still blinking carries on rather than jumping back to the start.
+    local live = started and flashAt - started < SnipeView.FLASH
+    if changed[key] and self.nearBaseline[e.targetRef] and not live then self.flashes[key] = flashAt end
+  end
+  for _, entry in ipairs(self.running and self:runnable() or {}) do
+    if self.near[entry.target] then self.nearBaseline[entry.target] = true end
+  end
+  self.nearList = near
+  self.nearBuyable = {}
+  for i, e in ipairs(near) do self.nearBuyable[i] = buyable(e) and true or false end
+  self:drawNear()
+end
+
+-- Draws the NEAR_VISIBLE rows of the closest list from nearOffset, and its scroll bar.
+function SnipeView:drawNear()
+  local short = ns.Money.short
+  local near = self.nearList
+  self.nearOffset = math.max(0, math.min(self.nearOffset or 0, #near - SnipeView.NEAR_VISIBLE))
   for i, row in ipairs(self.nearRows) do
-    local e = near[i]
+    local e = near[self.nearOffset + i]
     row.entry = e
     -- Named only for the rows shown: the list behind them can hold hundreds of items.
     row[1]:SetText(e and self:nearName(e.itemKey) or "")
@@ -728,9 +855,10 @@ function SnipeView:renderNear()
     else
       row[5]:SetText("|cffff9d3a" .. short(-delta) .. " over|r")
     end
-    row.bg:SetShown(e ~= nil and buyable(e) and true or false)
-    row.entry = e
+    row.bg:SetShown(e ~= nil and self.nearBuyable[self.nearOffset + i] or false)
   end
+  self:syncNearBar()
+  self:drawFlashes()
 end
 
 function SnipeView:hide()

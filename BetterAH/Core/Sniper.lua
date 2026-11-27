@@ -124,7 +124,7 @@ function Sniper.why(band, results, reasonOf, levelFallback)
   return out
 end
 
-Sniper.CLOSEST = 5
+Sniper.CLOSEST = 20 -- the Snipe tab shows 5 at a time and scrolls through the rest (#201)
 
 -- The listings to show from each target's last check (lists: a list of Sniper.near lists): what can be
 -- bought first, most under the max first, then what is over it, closest first. At most n (CLOSEST).
@@ -135,10 +135,35 @@ function Sniper.closest(lists, n)
   end
   table.sort(all, function(a, b)
     if a.delta ~= b.delta then return a.delta > b.delta end
-    return a.itemKey.itemID < b.itemKey.itemID
+    if a.itemKey.itemID ~= b.itemKey.itemID then return a.itemKey.itemID < b.itemKey.itemID end
+    -- A full tie break keeps rows from swapping (and blinking at the cut) between draws (#201).
+    return Sniper.nearKey(a) < Sniper.nearKey(b)
   end)
   while #all > (n or Sniper.CLOSEST) do table.remove(all) end
   return all
+end
+
+-- A closest-list entry's identity: the item (with its level and suffix) under one target. targetKey tells
+-- targets apart that show the same name (same types and band, other profit); target (the name) otherwise.
+function Sniper.nearKey(e)
+  local k = e.itemKey
+  return string.format("%d:%d:%d:%s", k.itemID, k.itemLevel or 0, k.itemSuffix or 0,
+    tostring(e.targetKey or e.target or ""))
+end
+
+-- Which entries of a closest list (from Sniper.closest) changed since the last one (#201): new to the
+-- list, or their cheapest or max price moved. prev is what this returned last time as its second value;
+-- with no prev nothing counts as changed, so the first list of a session doesn't light up all at once.
+-- Returns changed (a set of Sniper.nearKey keys) and what to pass as prev next time.
+function Sniper.changes(prev, near)
+  local now, changed = {}, {}
+  for _, e in ipairs(near) do
+    local key = Sniper.nearKey(e)
+    local sig = tostring(e.minPrice) .. ":" .. tostring(e.max)
+    now[key] = sig
+    if prev and prev[key] ~= sig then changed[key] = true end
+  end
+  return changed, now
 end
 
 -- The buys among an item's auctions ({ auctionID, unit, count, ownCount, link } from

@@ -149,6 +149,23 @@ function MyBidsView:build(f, x, y, width, height)
   return panel
 end
 
+-- Lays the view out for a list listWidth wide beside a detail panel detailWidth wide, as the divider
+-- between them is dragged (#236, #240). The item column takes the change.
+function MyBidsView:layoutPanes(listWidth, detailWidth)
+  self.panel:SetWidth(listWidth)
+  self.list:SetWidth(listWidth)
+  self.status:SetWidth(listWidth)
+  -- With a spinner or bar showing, the status line starts right of it: Loading places it.
+  if self.loading and self.loading.at then
+    self.loading.at[6] = listWidth
+    self.loading:reflow()
+  end
+  ns.Window.layoutRows(self.rows, self.list, ns.Window.fitColumns(MyBidsView.COLUMNS, listWidth, true), listWidth)
+  self.footer:SetWidth(listWidth - 24)
+  local note = self.controls and self.controls.note
+  if note then note:SetWidth(detailWidth - 24) end
+end
+
 -- On the shared detail panel, so shown only while this view is: the new bid boxes, Bid again, Buy out.
 function MyBidsView:buildControls()
   local env, layer = self.env, self.window.detailLayer

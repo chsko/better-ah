@@ -4504,8 +4504,8 @@ describe("Resizable detail panel (#236)", function()
   end)
 
   it("hides the divider on a view not laid out for other widths yet", function()
-    local _, w = open({ auctions = 400, disenchant = 400 })
-    sidebarButton(w, "auctions"):Click()
+    local _, w = open({ ledger = 400, disenchant = 400 })
+    sidebarButton(w, "ledger"):Click()
     assert.is_false(w.paneDivider:IsShown())
     assert.equal(300, w.detailPanel:GetWidth(), "a saved width doesn't apply to it")
     sidebarButton(w, "disenchant"):Click()
@@ -4627,6 +4627,39 @@ describe("Resizable detail panel (#236)", function()
     w.paneDivider.scripts.OnMouseUp(w.paneDivider, "LeftButton")
     assert.equal(360, ns.paneSettings.post)
   end)
+
+  local views = { { "auctions", "myAuctionsView", "MyAuctionsView" }, { "bids", "myBidsView", "MyBidsView" } }
+  for _, case in ipairs(views) do
+    it("lays " .. case[3] .. " out for the width (#240)", function()
+      local env, w, ns = open()
+      sidebarButton(w, case[1]):Click()
+      assert.is_true(w.paneDivider:IsShown())
+      local v = w[case[2]]
+      local note = v.note or v.controls.note
+      drag(env, w.paneDivider, 500, 2000)
+      assert.equal(600, v.panel:GetWidth())
+      assert.equal(600, v.list:GetWidth())
+      assert.equal(576, v.footer.width)
+      assert.equal(216, note.width)
+      env.cursorX = 0
+      w.paneDivider.scripts.OnUpdate(w.paneDivider, 0.01)
+      assert.equal(420, v.panel:GetWidth())
+      assert.equal(396, note.width)
+      if v.filterButtons then
+        local right
+        for _, b in pairs(v.filterButtons) do
+          right = math.max(right or 0, b.points.TOPLEFT.x + b.width)
+        end
+        assert.is_true(right <= 420 - 24 - 110, "the filters stay clear of Check prices")
+      end
+      local cols = ns[case[3]].COLUMNS
+      local last = v.rows[1][#cols]
+      assert.is_true(last.points.LEFT.x + last.width <= 420 - 22, "the last column stays clear of the scroll bar")
+      env.mouseDown = false
+      w.paneDivider.scripts.OnMouseUp(w.paneDivider, "LeftButton")
+      assert.equal(420, ns.paneSettings[case[1]])
+    end)
+  end
 
   it("opens Post at its saved width", function()
     local _, w = open({ post = 260 })

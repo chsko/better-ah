@@ -67,7 +67,7 @@ fn main() -> ExitCode {
 }
 
 const USAGE: &str =
-    "usage: better-ah-companion collect --out <dir> --cache <dir> [--pages-url <url>]
+    "usage: better-ah-companion collect --out <dir> --cache <dir> [--pages-url <url>] [--publish]
        better-ah-companion sync [--target <BetterAH folder>] [--url <data file url>]
        better-ah-companion install [--target <BetterAH folder>] [--url <data file url>]
        better-ah-companion uninstall
@@ -76,7 +76,8 @@ sync copies the sell times data file into the BetterAH folder (default
 %USERPROFILE%\\better-ah\\BetterAH). install copies the app to
 %LOCALAPPDATA%\\better-ah-companion and adds a scheduled task that syncs hourly and at logon.
 
-collect:
+collect: --publish writes the site even when there is no new export, so a code
+change goes live without waiting for one.
 
 Environment: BLIZZARD_CLIENT_ID, BLIZZARD_CLIENT_SECRET (required),
 REGION (eu), RULESET (2), HOUSE (114), MARKET (/Normal/Horde).";
@@ -85,6 +86,8 @@ struct Collect {
     out: PathBuf,
     cache: PathBuf,
     pages_url: Option<String>,
+    /// Write the site even without a new export (after a code change).
+    publish: bool,
     region: String,
     ruleset: String,
     house: String,
@@ -96,6 +99,7 @@ impl Collect {
         let mut out = None;
         let mut cache = None;
         let mut pages_url = None;
+        let mut publish = false;
         let mut it = args.iter();
         while let Some(a) = it.next() {
             let mut value = || it.next().cloned().ok_or(format!("{a} needs a value"));
@@ -103,6 +107,7 @@ impl Collect {
                 "--out" => out = Some(PathBuf::from(value()?)),
                 "--cache" => cache = Some(PathBuf::from(value()?)),
                 "--pages-url" => pages_url = Some(value()?.trim_end_matches('/').to_string()),
+                "--publish" => publish = true,
                 _ => return Err(format!("unknown argument {a}\n\n{USAGE}")),
             }
         }
@@ -110,6 +115,7 @@ impl Collect {
             out: out.ok_or(USAGE)?,
             cache: cache.ok_or(USAGE)?,
             pages_url,
+            publish,
             region: env_or("REGION", "eu"),
             ruleset: env_or("RULESET", "2"),
             house: env_or("HOUSE", "114"),
@@ -152,7 +158,7 @@ impl Collect {
         println!("applied {applied:?}");
         // Even without a new export, nothing older than 30 days may stay published.
         let expired = stats.prune_at(now);
-        if applied == Applied::Repeated && !expired {
+        if applied == Applied::Repeated && !expired && !self.publish {
             set_output("changed", "false");
             return Ok(());
         }

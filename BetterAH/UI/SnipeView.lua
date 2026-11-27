@@ -425,7 +425,7 @@ function SnipeView:holdReason()
   local find = self.session and self.session:next()
   if find and not self.buying then
     local s, api = SnipeView.settings(self.addon), self:api()
-    if not self.session:canBuy(find.price, api and api:money(), s.cap, s.keep) then find = nil end
+    if not self.session:canBuy(find.price, api and api:money(), s.cap, s.keep, self:now()) then find = nil end
   end
   if self.buying or find then return "a find waits: buy it or pass" end
   local api = self.addon.auctionAPI
@@ -600,7 +600,7 @@ function SnipeView:buyNext(source)
   if not self:api():ready() then return end
   local s = SnipeView.settings(self.addon)
   local api = self:api()
-  local ok, why = self.session:canBuy(find.price, api:money(), s.cap, s.keep)
+  local ok, why = self.session:canBuy(find.price, api:money(), s.cap, s.keep, self:now())
   if not ok then
     self.message = "Can't buy " .. find.name .. ": " .. why .. "."
     return self:refresh()

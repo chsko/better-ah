@@ -167,8 +167,14 @@ function Session.new(saved, now)
   -- taken: per auction ID, how many of its items were bought this session; math.huge once it is written
   -- off (refused, gone). Treated as no longer buyable (#145).
   -- names: per item key, the item's full name (with its random suffix) from a lookup's links (#147).
-  return setmetatable({ saved = saved, finds = {}, seen = {}, looked = {}, taken = {}, names = {} }, Session)
+  -- held: per auction ID, { price, time } of a buy that got no answer ("unknown", "closed"). It may still
+  -- have gone through (a late confirmation counts it as bought), so its price counts toward the spend cap
+  -- until it settles: bought, seen listed again in a lookup, or HOLD seconds old.
+  return setmetatable({ saved = saved, finds = {}, seen = {}, looked = {}, taken = {}, names = {}, held = {} },
+    Session)
 end
+
+Sniper.HOLD = 300 -- seconds a buy with no answer counts toward the spend cap
 
 Sniper.RELOOK = 60 -- seconds before an item whose cheapest price hasn't changed is looked up again
 
@@ -192,6 +198,11 @@ function Session:sawListings(key, listings)
       self.names[text] = name
       break
     end
+  end
+  -- An auction still listed with as many items as before was not bought by a buy that got no answer.
+  for _, x in ipairs(listings or {}) do
+    local h = x.auctionID and self.held[x.auctionID]
+    if h and math.max(1, x.count or 1) >= h.count then self.held[x.auctionID] = nil end
   end
   local l = self.looked[text]
   if not l then return end
@@ -268,6 +279,7 @@ end
 -- The auction house took the buyout.
 function Session:bought(time, find)
   drop(self, find.auctionID)
+  self.held[find.auctionID] = nil
   self.taken[find.auctionID] = (self.taken[find.auctionID] or 0) + 1
   local s = self.saved
   s.spent, s.bought, s.worth = s.spent + find.price, s.bought + 1, s.worth + (find.worth or 0)
@@ -297,6 +309,12 @@ function Session:missed(time, find, why, kind)
   if kind == "refused" or kind == "gone" then self.taken[find.auctionID] = math.huge end
   local dropped = 0
   if kind == "unknown" or kind == "closed" then
+    -- How many items the auction had at its lookup: a later lookup showing fewer means one may be ours.
+    local count, l = 1, find.itemKey and self.looked[keyText(find.itemKey)]
+    for _, x in ipairs(l and l.left or {}) do
+      if x.auctionID == find.auctionID then count = x.count end
+    end
+    self.held[find.auctionID] = { price = find.price or 0, time = time, count = count }
     self.seen[find.auctionID] = nil
     if find.itemKey then self.looked[keyText(find.itemKey)] = nil end
   elseif kind == "gone" and find.itemKey then
@@ -318,11 +336,27 @@ function Session:missed(time, find, why, kind)
   return dropped
 end
 
--- Whether a buy at price is allowed: under the session's spend cap (0: none) and leaving at least keep
--- copper on the character. Returns true, or false and why.
-function Session:canBuy(price, money, cap, keep)
+-- What buys with no answer yet may have spent (see held). time: now, to let go of old ones.
+function Session:heldSpend(time)
+  local total = 0
+  for id, h in pairs(self.held) do
+    if time and time - h.time >= Sniper.HOLD then
+      self.held[id] = nil
+    else
+      total = total + h.price
+    end
+  end
+  return total
+end
+
+-- Whether a buy at price is allowed: under the session's spend cap (0: none), counting buys still waiting
+-- for an answer, and leaving at least keep copper on the character. Returns true, or false and why.
+function Session:canBuy(price, money, cap, keep, time)
   cap, keep = tonumber(cap) or 0, tonumber(keep) or 0
   if cap > 0 and self.saved.spent + price > cap then return false, "over your spend cap for this session" end
+  if cap > 0 and self.saved.spent + self:heldSpend(time) + price > cap then
+    return false, "over your spend cap for this session if buys still waiting for an answer went through"
+  end
   if money and money < price then return false, "not enough gold" end
   if money and money - price < keep then return false, "it would leave you under the gold you keep" end
   return true

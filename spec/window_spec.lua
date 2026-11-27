@@ -10,7 +10,7 @@ local function setup(opts)
   helper.load("BetterAH/Core/Buying.lua", ns)
   local core = { "Money", "Time", "MarketKey", "MarketValue", "Disenchant", "ValueHistory", "Targets", "Sniper",
     "PriceDB", "CharacterRecords", "MatFloors", "EssenceSwap", "Posting", "PostQueue", "SelfTest", "Probes",
-    "Purchases", "TooltipPrices", "MyAuctions", "MyBids", "Ledger" }
+    "Purchases", "SnipeProfit", "TooltipPrices", "MyAuctions", "MyBids", "Ledger" }
   for _, file in ipairs(core) do
     helper.load("BetterAH/Core/" .. file .. ".lua", ns)
   end
@@ -45,6 +45,7 @@ local function setup(opts)
   ns.characters = ns.CharacterRecords.new({})
   ns.posting = ns.Posting.Settings.new({})
   ns.purchases = ns.Purchases.new({})
+  ns.snipeProfit = ns.SnipeProfit.new({})
   ns.searchHistory = ns.SearchHistory.new({})
   ns.browseSettings = {}
   ns.paneSettings = opts and opts.panes or {}
@@ -1753,6 +1754,25 @@ describe("Window", function()
         assert.equal("Spent this session: 9s 0c", s.spentText:GetText(), "the last session stays in view")
         w:select("prices")
         assert.is_false(s.settingsBox:IsShown())
+      end)
+
+      it("records a sniped green with a copy of its target for Results (#255)", function()
+        local env, _, ns, s = snipeSetup()
+        s.startButton:Click()
+        env.runTimers()
+        s.buyButton:Click()
+        env.runTimers()
+        local g = ns.snipeProfit.store.greens[1]
+        assert.is_truthy(g, "the buy is recorded")
+        assert.equal(5001, g.item)
+        assert.equal(900, g.c)
+        assert.equal("Armor", g.target.name)
+        assert.is_number(g.target.min)
+        assert.is_number(g.target.max)
+        assert.is_true(g.target.max >= g.target.min)
+        assert.is_string(g.target.profit)
+        assert.is_number(g.target.worth)
+        assert.is_nil(g.de)
       end)
 
       it("counts a buy the auction house confirms after Stop", function()

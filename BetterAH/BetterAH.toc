@@ -36,6 +36,7 @@ Core/WindowScale.lua
 Core/DetailPane.lua
 Core/AutoScan.lua
 Core/Purchases.lua
+Core/SnipeProfit.lua
 Core/Ledger.lua
 Core/Mailbox.lua
 Core/MailCollect.lua

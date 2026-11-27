@@ -19,6 +19,11 @@ frame:SetScript("OnEvent", function(self, event, loadedName)
     if ns.Posting then ns.posting = ns.Posting.Settings.new(BetterAHDB.posting) end
     BetterAHDB.purchases = BetterAHDB.purchases or {}
     if ns.Purchases then ns.purchases = ns.Purchases.new(BetterAHDB.purchases) end
+    -- Sniped greens and their disenchants (#254). SnipeProfit.new starts a broken store over.
+    if ns.SnipeProfit then
+      ns.snipeProfit = ns.SnipeProfit.new(BetterAHDB.snipeProfit)
+      BetterAHDB.snipeProfit = ns.snipeProfit.store
+    end
     -- The auction house ledger (#137). Ledger.new starts a broken store over.
     if ns.Ledger then
       ns.ledger = ns.Ledger.new(BetterAHDB.ledger)

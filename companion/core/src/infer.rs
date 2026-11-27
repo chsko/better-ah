@@ -88,6 +88,59 @@ pub fn infer(prev: &Snapshot, next: &Snapshot) -> Inference {
     }
 }
 
+/// How the listings of one kind (auctions or commodities) fared between two exports.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KindBreakdown {
+    /// Listings in the earlier export.
+    pub before: u64,
+    /// Of those, still up (same ID, same item) in the later one.
+    pub kept: u64,
+    /// Of those, whose ID now belongs to another item.
+    pub reused: u64,
+    /// Units counted as sold because a listing vanished before it could expire.
+    pub vanished_sold: u64,
+    /// Units counted as sold from a commodity listing's smaller quantity.
+    pub partial_sold: u64,
+    /// Units that vanished but may have expired.
+    pub unknown: u64,
+}
+
+/// The same comparison as `infer`, split by kind, for the run log: it shows whether listing
+/// IDs survive between exports, which the sale rule depends on. None when `infer` would
+/// not compare the two (a `Gap`).
+pub fn breakdown(prev: &Snapshot, next: &Snapshot) -> Option<(KindBreakdown, KindBreakdown)> {
+    let gap = next.exported_at - prev.exported_at;
+    if gap <= 0 || gap > MAX_GAP_SECONDS {
+        return None;
+    }
+    let now: HashMap<(bool, u64), (u32, u32)> = next
+        .listings
+        .iter()
+        .map(|l| ((l.commodity, l.id), (l.item, l.quantity)))
+        .collect();
+    let (mut auctions, mut commodities) = (KindBreakdown::default(), KindBreakdown::default());
+    for l in &prev.listings {
+        let b = if l.commodity {
+            &mut commodities
+        } else {
+            &mut auctions
+        };
+        b.before += 1;
+        match now.get(&(l.commodity, l.id)) {
+            None if gap < least_remaining(l.time_left) => b.vanished_sold += u64::from(l.quantity),
+            None => b.unknown += u64::from(l.quantity),
+            Some(&(item, _)) if item != l.item => b.reused += 1,
+            Some(&(_, q)) => {
+                b.kept += 1;
+                if l.commodity && q < l.quantity {
+                    b.partial_sold += u64::from(l.quantity - q);
+                }
+            }
+        }
+    }
+    Some((auctions, commodities))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,6 +170,88 @@ mod tests {
 
     fn sold(item: u32, units: u32, gold: u64) -> Sale {
         Sale { item, units, gold }
+    }
+
+    #[test]
+    fn breakdown_splits_auctions_and_commodities() {
+        let a = snap(
+            0,
+            vec![
+                l(1, 720, 1, 500, TimeLeft::Long, false),
+                l(2, 720, 1, 500, TimeLeft::Short, false),
+                l(3, 720, 1, 500, TimeLeft::Long, false),
+                l(1, 2770, 20, 10, TimeLeft::Long, true),
+                l(2, 2770, 5, 10, TimeLeft::VeryLong, true),
+            ],
+        );
+        let b = snap(
+            HOUR,
+            vec![
+                l(3, 720, 1, 500, TimeLeft::Long, false),
+                l(1, 2770, 12, 10, TimeLeft::Long, true),
+            ],
+        );
+        let (auctions, commodities) = breakdown(&a, &b).unwrap();
+        assert_eq!(
+            auctions,
+            KindBreakdown {
+                before: 3,
+                kept: 1,
+                reused: 0,
+                vanished_sold: 1,
+                partial_sold: 0,
+                unknown: 1
+            }
+        );
+        assert_eq!(
+            commodities,
+            KindBreakdown {
+                before: 2,
+                kept: 1,
+                reused: 0,
+                vanished_sold: 5,
+                partial_sold: 8,
+                unknown: 0
+            }
+        );
+    }
+
+    #[test]
+    fn breakdown_matches_infer_and_skips_gaps() {
+        let a = snap(
+            0,
+            vec![
+                l(1, 720, 1, 500, TimeLeft::Long, false),
+                l(2, 720, 3, 500, TimeLeft::Medium, false),
+                l(4, 720, 1, 500, TimeLeft::Long, false),
+                l(1, 2770, 20, 10, TimeLeft::Long, true),
+                l(2, 2770, 5, 10, TimeLeft::Short, true),
+            ],
+        );
+        let b = snap(
+            HOUR,
+            vec![
+                l(4, 999, 1, 500, TimeLeft::Long, false),
+                l(1, 2770, 12, 10, TimeLeft::Long, true),
+            ],
+        );
+        let (x, y) = breakdown(&a, &b).unwrap();
+        assert_eq!(x.reused, 1);
+        let Inference::Compared {
+            sales,
+            unknown_units,
+        } = infer(&a, &b)
+        else {
+            panic!("compared")
+        };
+        let sold: u64 = sales.iter().map(|s| u64::from(s.units)).sum();
+        assert_eq!(
+            sold,
+            x.vanished_sold + x.partial_sold + y.vanished_sold + y.partial_sold
+        );
+        assert_eq!(unknown_units, x.unknown + y.unknown);
+        assert_eq!(breakdown(&a, &snap(4 * HOUR, vec![])), None);
+        assert_eq!(breakdown(&a, &a), None);
     }
 
     #[test]

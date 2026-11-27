@@ -474,13 +474,14 @@ describe("Window", function()
       local env, w = setup()
       env.openAuctionHouse()
       w:select("prices")
+      env.auctions = { { name = "Linen Cloth", count = 20, buyout = 4000, itemID = 2589 } }
       local replicate = env.C_AuctionHouse.ReplicateItems
       env.C_AuctionHouse.ReplicateItems = function()
         replicate()
         env.runTimers()
       end
       w:startScan()
-      assert.equal("Scanned 0 listings of 0 items in 0 seconds.", w.scanStatus:GetText())
+      assert.equal("Scanned 1 listings of 1 items in 0 seconds.", w.scanStatus:GetText())
     end)
 
     it("says why a scan can't start", function()
@@ -980,6 +981,7 @@ describe("Window", function()
       w.disenchantView.materialsButton:Click()
       env.runTimers()
       assert.matches("Materials: ", w.disenchantView.status:GetText(), 1, true)
+      env.auctions = { { name = "Linen Cloth", count = 20, buyout = 4000, itemID = 2589 } }
       w:startScan()
       env.runTimers()
       assert.equal("Prices for ruleset 1, Horde from the full scan just now.", w.disenchantView.status:GetText())
@@ -1143,6 +1145,7 @@ describe("Window", function()
       env.now = env.now + 2 * 3600
       w.addon.auctionAPI.store.answeredAt = nil
       w:startScan()
+      env.auctions[2] = { name = "Soul Dust", count = 10, buyout = 6000, itemID = 11083 } -- a fresh list
       env.runTimers()
       w:select("disenchant")
       assert.equal("Prices for ruleset 1, Horde from the full scan just now. Green and red: change from the full "

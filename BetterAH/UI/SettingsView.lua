@@ -40,17 +40,13 @@ function SettingsView:build(f, x, y, width, height)
   label:SetText("Default duration")
   self.durationLabel = label
 
-  self.durationButtons = {}
-  for i in ipairs(ns.Posting.DURATIONS) do
-    local text = ns.PostView.durationLabel(env, i)
-    local b = env.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-    b:SetSize(72, 22)
-    b:SetPoint("TOPLEFT", panel, "TOPLEFT", 150 + (i - 1) * 76, -47)
-    b:SetText(text)
-    b:SetScript("OnClick", function() self:setDuration(i) end)
-    ns.Window.tooltip(env, b, text, "Post new items for " .. text .. " unless they have their own duration.")
-    self.durationButtons[i] = b
-  end
+  local durations = {}
+  for i in ipairs(ns.Posting.DURATIONS) do durations[i] = { i, ns.PostView.durationLabel(env, i) } end
+  self.durationDrop = ns.Dropdown.radio(env, panel, { width = 140, options = durations,
+    get = function() return self.addon.posting and self.addon.posting:defaultDuration() end,
+    set = function(i) self:setDuration(i) end, title = "Default duration",
+    tip = "How long new items post for, unless they have their own duration." })
+  self.durationDrop:SetPoint("TOPLEFT", panel, "TOPLEFT", 150, -47)
 
   self:buildDebug(panel)
   self:buildTooltips(panel)
@@ -71,7 +67,7 @@ function SettingsView:build(f, x, y, width, height)
   return panel
 end
 
--- The debug log (#99): off or on, in the same style as the duration buttons.
+-- The debug log (#99): off or on, in the same style as the duration drop-down.
 SettingsView.DEBUG_NOTE = "Keeps a log of what you do in Better AH and what the auction house answers, "
   .. "for bug reports. It's saved on /reload or logout. Type /bah mark and a note to flag a moment."
 
@@ -87,18 +83,11 @@ function SettingsView:buildDebug(panel)
   label:SetText("Debug log")
   self.debugLabel = label
 
-  self.debugButtons = {}
-  for i, spec in ipairs({ { false, "Off", "Don't keep a debug log." },
-    { true, "On", "Log what you do and what the auction house answers, for bug reports." } }) do
-    local b = env.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-    b:SetSize(72, 22)
-    b:SetPoint("TOPLEFT", panel, "TOPLEFT", 150 + (i - 1) * 76, -111)
-    b:SetText(spec[2])
-    b:SetScript("OnClick", function() self:setDebug(spec[1]) end)
-    ns.Window.tooltip(env, b, "Debug log " .. spec[2]:lower(), spec[3])
-    b.debugValue = spec[1]
-    self.debugButtons[i] = b
-  end
+  self.debugDrop = ns.Dropdown.radio(env, panel, { width = 140, options = { { false, "Off" }, { true, "On" } },
+    get = function() return ns.debugLog ~= nil and ns.debugLog:isOn() end,
+    set = function(on) self:setDebug(on) end, title = "Debug log",
+    tip = "On: log what you do and what the auction house answers, for bug reports." })
+  self.debugDrop:SetPoint("TOPLEFT", panel, "TOPLEFT", 150, -111)
 
   local note = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   note:SetPoint("TOPLEFT", panel, "TOPLEFT", 8, -142)
@@ -201,6 +190,8 @@ end
 
 function SettingsView:hide()
   if self.resetButton then self.resetButton:Hide() end
+  if self.durationDrop then self.durationDrop:CloseMenu() end
+  if self.debugDrop then self.debugDrop:CloseMenu() end
 end
 
 function SettingsView:render()
@@ -209,15 +200,10 @@ function SettingsView:render()
   w.detailTitle:SetText(SettingsView.DETAIL.title)
   w.detailBody:SetText(settings and SettingsView.DETAIL.body or "Settings aren't loaded yet.")
   local current = settings and settings:defaultDuration()
-  for i, b in ipairs(self.durationButtons) do
-    if i == current then b:LockHighlight() else b:UnlockHighlight() end
-    if settings then b:Enable() else b:Disable() end
-  end
-  local log = ns.debugLog
-  for _, b in ipairs(self.debugButtons or {}) do
-    if log and log:isOn() == b.debugValue then b:LockHighlight() else b:UnlockHighlight() end
-    if log then b:Enable() else b:Disable() end
-  end
+  self.durationDrop.refresh()
+  self.durationDrop:SetEnabled(settings ~= nil)
+  self.debugDrop.refresh()
+  self.debugDrop:SetEnabled(ns.debugLog ~= nil)
   local saved = self.addon.tooltipSettings
   local opts = ns.TooltipPrices.options(saved)
   for _, b in ipairs(self.tooltipChecks or {}) do

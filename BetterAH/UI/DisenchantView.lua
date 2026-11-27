@@ -554,11 +554,14 @@ function DisenchantView:buildEditors()
   end
 
   label("Level band", -122)
-  self.bandDown = button("<", 24, -138, 0, function() self:stepBand(-1) end)
-  self.bandUp = button(">", 24, -138, 172, function() self:stepBand(1) end)
-  self.bandText = box:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  self.bandText:SetPoint("TOPLEFT", box, "TOPLEFT", 28, -142)
-  self.bandText:SetWidth(140)
+  self.bandDrop = ns.Dropdown.radio(env, box, { width = 196, height = 20, options = DisenchantView.bandOptions,
+    get = function()
+      local t = self:current()
+      return t and t.band
+    end,
+    set = function(min) self:setBand(min) end, empty = "-", title = "Level band",
+    tip = "The required level and item level of the greens this target snipes." })
+  self.bandDrop:SetPoint("TOPLEFT", box, "TOPLEFT", 0, -139)
 
   label("Profit you want", -168)
   local profit = env.CreateFrame("EditBox", nil, box, "InputBoxTemplate")
@@ -690,21 +693,20 @@ function DisenchantView:setType(id, on)
   self:render()
 end
 
--- Moves the target to the next or previous green band.
-function DisenchantView:stepBand(by)
+-- The level band drop-down's entries: { band.min, "Req. 21-25, ilvl 21-25" } per green band.
+function DisenchantView.bandOptions()
+  local out = {}
+  for _, band in ipairs(ns.Disenchant.greenBands()) do
+    out[#out + 1] = { band.min, string.format("Req. %s, ilvl %s",
+      range(band.required.min, band.required.max, band.max), range(band.min, band.max)) }
+  end
+  return out
+end
+
+function DisenchantView:setBand(min)
   local t = self:current()
   if not t then return end
-  local bands = ns.Disenchant.greenBands()
-  local found = false
-  for i, band in ipairs(bands) do
-    if band.min == t.band then
-      local other = bands[i + by]
-      if other then t.band = other.min end
-      found = true
-      break
-    end
-  end
-  if not found then t.band = bands[1].min end -- a band no longer in the table: start again at the bottom
+  t.band = min
   self.message = nil
   self:render()
 end
@@ -903,6 +905,7 @@ function DisenchantView:renderTargets()
 
   local t = self:current()
   if not t then
+    self.bandDrop:CloseMenu()
     self.editor:Hide()
     w.detailTitle:SetText("")
     w.detailBody:SetText(#list > 0 and "Select a target to change it." or "")
@@ -913,11 +916,7 @@ function DisenchantView:renderTargets()
   w.detailBody:SetText("")
   self.editor:Show()
   for id, c in pairs(self.typeBoxes) do c:SetChecked(t.types and t.types[id] == true) end
-  self.bandText:SetText(row and string.format("Req. %s, item level %s",
-    range(row.band.required.min, row.band.required.max, row.band.max), range(row.band.min, row.band.max)) or "-")
-  local bands = ns.Disenchant.greenBands()
-  if not row or row.band.min == bands[1].min then self.bandDown:Disable() else self.bandDown:Enable() end
-  if row and row.band.min == bands[#bands].min then self.bandUp:Disable() else self.bandUp:Enable() end
+  self.bandDrop.refresh()
   local percent = t.profit and t.profit.kind == "percent"
   if percent then
     self.percentButton:LockHighlight(); self.goldButton:UnlockHighlight()

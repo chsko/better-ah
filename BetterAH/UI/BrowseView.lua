@@ -222,7 +222,7 @@ function BrowseView:layout(historyWidth)
   self.listWidth = listWidth
   self.panel:SetWidth(listWidth)
   -- The search box gives up room for the level boxes, the Category button and Search.
-  local fixed = self.filterBar and 380 or 250
+  local fixed = self.filterBar and 410 or 250
   self.searchBox:SetWidth(math.max(120, math.min(260, listWidth - fixed)))
   self.list:SetWidth(listWidth)
   -- The status line's width, spinner room included, is set by Loading when the view renders.

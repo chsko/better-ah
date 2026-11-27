@@ -1,9 +1,9 @@
--- Browse's category and filters (#92): a Category drop-down in the search row with Forever's categories
--- (up to three levels: category, subcategory, slot, each a submenu of the one before), and a row of
--- filters under it: Usable by me, Exact name, a Rarity drop-down of check boxes, and Clear filters. Both
--- drop-downs are Blizzard's own (UI/Dropdown.lua, #189). Layout follows
--- artboard 6 of the Browse mockup linked from #90 (Christian picked the drop-down, 2026-11-26). The
--- rules live in Core/BrowseFilters.lua; the category tree comes from BrowseAPI:categories().
+-- Browse's category and filters (#92): a Category drop-down with Forever's categories (up to three levels:
+-- category, subcategory, slot, each a submenu of the one before) and a Rarity drop-down of check boxes, then
+-- the view's level range, Usable by me and Exact name, on one row under the search row; Clear filters sits
+-- on the search row, left of Search (#213, artboard 9 of the Browse mockup linked from #90, approved by
+-- Christian 2026-11-27). Both drop-downs are Blizzard's own (UI/Dropdown.lua, #189). The rules live in
+-- Core/BrowseFilters.lua; the category tree comes from BrowseAPI:categories().
 local _, ns = ...
 ns = ns or {}
 
@@ -12,7 +12,9 @@ Bar.__index = Bar
 
 Bar.ALL = "All items"
 Bar.LEVELS = 3 -- category, subcategory, slot
-Bar.TOP = 24 -- room the filter row takes under the search row
+Bar.TOP = 30 -- room the filter row takes under the search row
+Bar.CLEAR_WIDTH = 84
+Bar.ROW = -27 -- the filter row's top, under the search row (#213)
 
 function Bar.new(view)
   return setmetatable({ view = view, env = view.env, path = nil, chips = ns.BrowseFilters.defaults() }, Bar)
@@ -79,36 +81,45 @@ local function holds(path, chosen)
   return true
 end
 
--- The Category drop-down right of anchor (the second level box), the filter row under the search row.
-function Bar:build(panel, anchor)
+-- The filter row under the search row (#213, artboard 9 of the mockup): Category, Rarity, the view's
+-- level range (levelLabel to levelTo), Usable by me, Exact name. Clear filters shows on the search row,
+-- left of Search, only once a filter is set.
+function Bar:build(panel, levelLabel, levelTo)
   local env = self.env
   local Dropdown = ns.Dropdown
-  local category = Dropdown.create(env, panel, { width = 140, title = "Category",
+  local category = Dropdown.create(env, panel, { width = 112, height = 22, title = "Category",
     tip = "Search one category of the auction house. Pick All items to search everything.",
     text = function() return self:label() end,
     build = function(root) self:buildCategories(root) end })
-  category:SetPoint("LEFT", anchor, "RIGHT", 12, 0)
+  category:SetPoint("TOPLEFT", panel, "TOPLEFT", 4, Bar.ROW)
   self.categoryButton = category
 
-  local usable = check(env, panel, "Usable by me", "Usable by me",
-    "Only items this character can use.", function(c) self:setChip("usable", c:GetChecked()) end)
-  usable:SetPoint("TOPLEFT", panel, "TOPLEFT", 4, -24)
-  self.usableCheck = usable
-  local exact = check(env, panel, "Exact name", "Exact name",
-    "Only items named exactly what you typed.", function(c) self:setChip("exact", c:GetChecked()) end)
-  exact:SetPoint("LEFT", usable, "RIGHT", 82, 0)
-  self.exactCheck = exact
-
-  local rarity = Dropdown.create(env, panel, { width = 140, height = 20, title = "Rarity",
+  local rarity = Dropdown.create(env, panel, { width = 120, height = 22, title = "Rarity",
     tip = "Which item qualities to search for.",
     text = function() return ns.BrowseFilters.rarityText(self.chips) or "Any rarity" end,
     build = function(root) self:buildRarities(root) end })
-  rarity:SetPoint("LEFT", exact, "RIGHT", 76, 0)
+  rarity:SetPoint("LEFT", category, "RIGHT", 6, 0)
   self.rarityButton = rarity
 
+  local last = rarity
+  if levelLabel and levelTo then
+    levelLabel:SetPoint("LEFT", rarity, "RIGHT", 10, 0)
+    last = levelTo
+  end
+
+  local usable = check(env, panel, "Usable by me", "Usable by me",
+    "Only items this character can use.", function(c) self:setChip("usable", c:GetChecked()) end)
+  usable:SetPoint("LEFT", last, "RIGHT", 10, 0)
+  self.usableCheck = usable
+  local exact = check(env, panel, "Exact name", "Exact name",
+    "Only items named exactly what you typed.", function(c) self:setChip("exact", c:GetChecked()) end)
+  exact:SetPoint("LEFT", usable.label, "RIGHT", 8, -1)
+  self.exactCheck = exact
+
   local clear = env.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-  clear:SetSize(90, 20)
-  clear:SetPoint("LEFT", rarity, "RIGHT", 8, 0)
+  clear:SetSize(Bar.CLEAR_WIDTH, 22)
+  -- On the search row, left of Search: the filter row has no room for it (#213).
+  clear:SetPoint("RIGHT", self.view.searchButton or panel, self.view.searchButton and "LEFT" or "TOPRIGHT", -6, 0)
   clear:SetText("Clear filters")
   clear:SetScript("OnClick", function() self:clear() end)
   ns.Window.tooltip(env, clear, "Clear filters", "Back to all items, every rarity, and no other filters.")
@@ -257,7 +268,11 @@ function Bar:render()
   self.usableCheck:SetChecked(self.chips.usable)
   self.exactCheck:SetChecked(self.chips.exact)
   self.rarityButton.refresh()
-  self.clearButton:SetShown(self.path ~= nil or not ns.BrowseFilters.isDefault(self.chips))
+  local shown = self.path ~= nil or not ns.BrowseFilters.isDefault(self.chips)
+  if shown ~= self.clearButton:IsShown() then
+    self.clearButton:SetShown(shown)
+    if self.view.layoutSearchRow then self.view:layoutSearchRow() end
+  end
 end
 
 ns.BrowseFilterBar = Bar

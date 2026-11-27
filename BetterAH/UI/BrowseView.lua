@@ -9,6 +9,7 @@ local BrowseView = {}
 BrowseView.__index = BrowseView
 
 BrowseView.WIDTH = 848 -- the main and detail panels together: the results list has no detail panel
+BrowseView.EMPTY_HINT = "Type a name and press Enter. Or click Search with the box empty to list everything."
 BrowseView.DIVIDER = 8 -- the draggable gap between the results and the search history panel (#129)
 BrowseView.ITEM_WIDTH = 540 -- an item's page uses the main panel, with the buy controls on the detail panel
 BrowseView.DETAIL_WIDTH = 276 -- text width on the detail panel
@@ -78,19 +79,24 @@ function BrowseView:build(f, x, y, width, height)
   -- On the box itself, so its border art can't draw over the hint.
   local hint = search:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   hint:SetPoint("LEFT", search, "LEFT", 2, 0)
-  hint:SetText("Search by name, or shift-click an item")
+  hint:SetText("Item name, or shift-click an item")
   self.searchHint = hint
 
+  -- The level range sits on the filter row (#213): after the Rarity button, or under the search box
+  -- without a filter bar.
   local levelLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  levelLabel:SetPoint("LEFT", search, "RIGHT", 14, 0)
   levelLabel:SetText("Level")
+  -- The edit box border art reaches about 5 px left of the box, so 10 looks like the row's other gaps.
   local lo = input(env, panel, 32, true)
+  lo:SetHeight(22)
   lo:SetPoint("LEFT", levelLabel, "RIGHT", 10, 0)
   local to = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  to:SetPoint("LEFT", lo, "RIGHT", 6, 0)
-  to:SetText("to")
+  to:SetPoint("LEFT", lo, "RIGHT", 4, 0)
+  to:SetText("-")
   local hi = input(env, panel, 32, true)
+  hi:SetHeight(22)
   hi:SetPoint("LEFT", to, "RIGHT", 10, 0)
+  self.levelLabel = levelLabel
   for _, box in ipairs({ lo, hi }) do
     box:SetScript("OnEnterPressed", function() self:search() end)
     box:SetScript("OnEscapePressed", function(e) e:ClearFocus() end)
@@ -98,19 +104,6 @@ function BrowseView:build(f, x, y, width, height)
   end
   search:SetScript("OnTabPressed", function() lo:SetFocus() end)
   self.minLevel, self.maxLevel = lo, hi
-
-  -- The Category button and the filter row under the search row (#92).
-  local top = 0
-  if ns.BrowseFilterBar then
-    self.filterBar = ns.BrowseFilterBar.new(self)
-    self.filterBar:build(panel, hi)
-    top = ns.BrowseFilterBar.TOP
-  end
-  -- The results table sits under them.
-  local list = env.CreateFrame("Frame", nil, panel)
-  list:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -top)
-  list:SetSize(width, height - top)
-  self.list = list
 
   local go = env.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
   go:SetSize(80, 22)
@@ -120,10 +113,35 @@ function BrowseView:build(f, x, y, width, height)
   ns.Window.tooltip(env, go, "Search", "Search the auction house. A blank search lists everything.")
   self.searchButton = go
 
+  -- The Category button and the filter row under the search row (#92).
+  local top = 0
+  if ns.BrowseFilterBar then
+    self.filterBar = ns.BrowseFilterBar.new(self)
+    self.filterBar:build(panel, levelLabel, hi)
+    top = ns.BrowseFilterBar.TOP
+  else
+    levelLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 6, -30)
+  end
+  -- The results table sits under them.
+  local list = env.CreateFrame("Frame", nil, panel)
+  list:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -top)
+  list:SetSize(width, height - top)
+  self.list = list
+
   local w = self.window
   self.rows = w:buildRows(list, BrowseView.COLUMNS, function(index) self:selectRow(index) end,
     function(offset) self.offset = offset; self:render() end, width)
   self:buildHeaders(list)
+
+  -- Before the first search: a title and a hint in the middle of the empty list (#213).
+  local emptyTitle = list:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  emptyTitle:SetPoint("CENTER", list, "CENTER", 0, 10)
+  emptyTitle:SetText("Search the auction house")
+  local emptyHint = list:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  emptyHint:SetPoint("TOP", emptyTitle, "BOTTOM", 0, -6)
+  emptyHint:SetWidth(340)
+  emptyHint:SetText(BrowseView.EMPTY_HINT)
+  self.emptyTitle, self.emptyHint = emptyTitle, emptyHint
 
   local status = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   status:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 4, 4)
@@ -165,14 +183,16 @@ function BrowseView:buildDivider(container, height)
   local env = self.env
   local d = env.CreateFrame("Button", nil, container)
   d:SetSize(BrowseView.DIVIDER, height)
-  local grip = d:CreateTexture(nil, "ARTWORK")
-  grip:SetSize(2, 40)
-  grip:SetPoint("CENTER", d, "CENTER", 0, 0)
-  grip:SetColorTexture(0.79, 0.64, 0.23, 0.6)
+  -- A thin dark line the height of the panels, lit up gold under the mouse (#213).
+  local line = d:CreateTexture(nil, "ARTWORK")
+  line:SetSize(1, height)
+  line:SetPoint("TOPLEFT", d, "TOPLEFT", math.floor(BrowseView.DIVIDER / 2), 0) -- on a whole pixel
+  line:SetColorTexture(0.24, 0.19, 0.13, 1)
   local highlight = d:CreateTexture(nil, "HIGHLIGHT")
-  highlight:SetSize(4, height)
+  highlight:SetSize(2, height)
   highlight:SetPoint("CENTER", d, "CENTER", 0, 0)
-  highlight:SetColorTexture(0.79, 0.64, 0.23, 0.25)
+  highlight:SetColorTexture(0.79, 0.64, 0.23, 0.5)
+  d.line = line
   ns.Window.tooltip(env, d, "Resize", "Drag to make the search history wider or narrower. Double-click to reset it.")
   local function cursorX()
     local x = env.GetCursorPosition()
@@ -221,9 +241,7 @@ function BrowseView:layout(historyWidth)
   local listWidth = self.width - BrowseView.DIVIDER - historyWidth
   self.listWidth = listWidth
   self.panel:SetWidth(listWidth)
-  -- The search box gives up room for the level boxes, the Category button and Search.
-  local fixed = self.filterBar and 410 or 250
-  self.searchBox:SetWidth(math.max(120, math.min(260, listWidth - fixed)))
+  self:layoutSearchRow()
   self.list:SetWidth(listWidth)
   -- The status line's width, spinner room included, is set by Loading when the view renders.
   if self.loading and self.loading.at then self.loading.at[6] = listWidth - 8 end
@@ -234,6 +252,15 @@ function BrowseView:layout(historyWidth)
   self.divider:SetPoint("TOPLEFT", self.container, "TOPLEFT", listWidth, 0)
   self.history:layout(listWidth + BrowseView.DIVIDER, historyWidth)
   if self.built then self:render() end
+end
+
+-- The search box takes the search row, less Search at its end and Clear filters when it shows (#213). The
+-- filter row has no room left for Clear filters.
+function BrowseView:layoutSearchRow()
+  local width = (self.listWidth or self.width) - 6 - 4 - 80 - 8
+  local clear = self.filterBar and self.filterBar.clearButton
+  if clear and clear:IsShown() then width = width - ns.BrowseFilterBar.CLEAR_WIDTH - 6 end
+  self.searchBox:SetWidth(math.max(120, width))
 end
 
 -- Whether the view wants the detail panel's room: yes for the results list, no on an item's page.
@@ -542,7 +569,7 @@ function BrowseView:statusText()
   if self.message then return self.message end
   if self.searching then return "Searching the auction house..." end
   local job = self.results
-  if not job then return "Type a name and press Enter, or search with the box blank to list everything." end
+  if not job then return "" end -- the empty list says what to do
   if #job.rows == 0 then return "Nothing on the auction house matches that search." end
   local line = ns.Browse.summary(#job.rows, job.query, job.truncated)
   line = line .. ". Searched " .. ns.Time.ago(job.at, self:now()) .. "."
@@ -563,6 +590,9 @@ function BrowseView:render()
   if self.searching then self.searchButton:Disable() else self.searchButton:Enable() end
   if self.searching then self.loading:spin() else self.loading:clear() end
   self.status:SetText(self:statusText())
+  local empty = not (self.results or self.searching or self.message)
+  self.emptyTitle:SetShown(empty)
+  self.emptyHint:SetShown(empty)
   if self.filterBar then self.filterBar:render() end
   self:renderHint()
   self:renderHeaders()

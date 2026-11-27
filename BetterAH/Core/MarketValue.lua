@@ -39,7 +39,8 @@ function MarketValue.scanValue(listings)
   end
   if units == 0 then return nil end
   table.sort(groups, function(a, b) return a.unit < b.unit end)
-  local lowest = math.floor(groups[1].unit)
+  -- Rounded up, never to 0: a stack of 10 for 5c is 1c each, not free.
+  local lowest = math.max(1, math.ceil(groups[1].unit))
 
   -- Step 2: the median unit (the ceil(units / 2)-th cheapest) sets the troll line.
   local first, dropped = 1, 0

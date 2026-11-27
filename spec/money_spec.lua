@@ -21,6 +21,8 @@ describe("Money", function()
     assert.equal(10500, Money.parse("1G5s"))
     assert.equal(1234, Money.parse(" 1234 "))
     assert.equal(0, Money.parse("0"))
+    assert.equal(Money.MAX, Money.parse(tostring(Money.MAX)))
+    assert.is_nil(Money.parse(tostring(Money.MAX + 1)), "a bare copper number keeps the limit too (#163)")
     for _, bad in ipairs({ "", "abc", "5x", "3s 2g", "1.5g", "g", "-5" }) do
       assert.is_nil(Money.parse(bad), bad)
     end

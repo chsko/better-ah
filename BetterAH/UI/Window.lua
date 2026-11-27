@@ -208,6 +208,10 @@ function Window:build()
     self.myAuctionsView = ns.MyAuctionsView.new(self, self.addon)
     self.myAuctionsPanel = self.myAuctionsView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
   end
+  if ns.MyBidsView then
+    self.myBidsView = ns.MyBidsView.new(self, self.addon)
+    self.myBidsPanel = self.myBidsView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
+  end
   if ns.LedgerView then
     self.ledgerView = ns.LedgerView.new(self, self.addon)
     self.ledgerPanel = self.ledgerView:build(f, SIDEBAR + 16, TOP - 42, LIST_WIDTH, HEIGHT + TOP - 42 - 8)
@@ -1033,7 +1037,8 @@ function Window:renderView()
   local view = self.model.view
   self.placeholder:SetShown(view ~= "prices" and view ~= "alts" and view ~= "post" and view ~= "disenchant"
     and view ~= "settings" and not (view == "browse" and self.browsePanel)
-    and not (view == "auctions" and self.myAuctionsPanel) and not (view == "ledger" and self.ledgerPanel))
+    and not (view == "auctions" and self.myAuctionsPanel) and not (view == "ledger" and self.ledgerPanel)
+    and not (view == "bids" and self.myBidsPanel))
   self:widenMain(view == "browse" and self.browsePanel ~= nil and self.browseView:wide())
   if self.browsePanel then self.browsePanel:SetShown(view == "browse") end
   self.pricesPanel:SetShown(view == "prices")
@@ -1044,6 +1049,8 @@ function Window:renderView()
   if self.myAuctionsPanel then self.myAuctionsPanel:SetShown(view == "auctions") end
   if view ~= "auctions" and self.myAuctionsView then self.myAuctionsView:hide() end
   if self.ledgerPanel then self.ledgerPanel:SetShown(view == "ledger") end
+  if self.myBidsPanel then self.myBidsPanel:SetShown(view == "bids") end
+  if view ~= "bids" and self.myBidsView then self.myBidsView:hide() end
   if view ~= "settings" and self.settingsView then self.settingsView:hide() end
   if view ~= "browse" and self.browseView then self.browseView:hide() end
   if view ~= "post" then
@@ -1067,6 +1074,8 @@ function Window:renderView()
     if self.frame:IsShown() then self.myAuctionsView:show() end
   elseif view == "ledger" and self.ledgerView then
     self.ledgerView:show()
+  elseif view == "bids" and self.myBidsView then
+    if self.frame:IsShown() then self.myBidsView:show() end
   else
     self.detailTitle:SetText("")
     self.detailBody:SetText("")
@@ -1138,6 +1147,7 @@ function Window:onEvent(event)
     if self.postView then self.postView:reset() end
     if self.browseView then self.browseView:reset() end
     if self.myAuctionsView then self.myAuctionsView:reset() end
+    if self.myBidsView then self.myBidsView:reset() end
     if self.disenchantView then self.disenchantView.snipe:stop("The auction house closed, so sniping stopped.") end
     self:render()
   end

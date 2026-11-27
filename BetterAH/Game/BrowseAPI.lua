@@ -154,10 +154,11 @@ end
 
 -- Buys an auction at its buyout, through SnipeAPI:buy. Must run inside a click. done(ok, why, kind), kind
 -- as SnipeAPI gives it ("unknown": no answer, it may have gone through; a late success calls done(true)).
-function BrowseAPI:buyout(auctionID, price, done)
+-- source names the view in SnipeAPI's messages (default "Browse").
+function BrowseAPI:buyout(auctionID, price, done, source)
   local why = self:blocked()
   if why then return done(false, why) end
-  self.snipe:buy(auctionID, price, function(ok, reason, kind) done(ok, reason, kind) end, "Browse")
+  self.snipe:buy(auctionID, price, function(ok, reason, kind) done(ok, reason, kind) end, source or "Browse")
 end
 
 local function after(env, seconds, fn)

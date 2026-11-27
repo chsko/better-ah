@@ -583,11 +583,46 @@ function M.new(opts)
         env.fire("AUCTION_HOUSE_SHOW_ERROR", env.bidError or 1)
       else
         env.money = env.money - amount
+        -- A bid on one of env.myBids makes it ours; a buyout takes it off the list.
+        for i, b in ipairs(env.myBids or {}) do
+          if b.id == auctionID then
+            if b.buyout and amount >= b.buyout then table.remove(env.myBids, i)
+            else b.bid, b.bidder, b.outbidUnlessNamed = amount, env.guid, nil end
+            break
+          end
+        end
         env.fire("AUCTION_HOUSE_PURCHASE_COMPLETED", auctionID)
       end
     end)
   end
   env.GetMoney = function() return env.money end
+  -- My bids: env.myBids lists the bids the client knows { id, itemID, link, band, minBid, bid, buyout, bidder }.
+  -- QueryBids answers with BIDS_UPDATED on the next tick (unless env.bidsSilent); env.bidQueries records
+  -- the ids each query named. An entry with outbidUnlessNamed is left out unless its id is named, as the
+  -- client leaves out outbid auctions nobody asks for.
+  env.myBids, env.bidQueries = {}, {}
+  local function bidsNow()
+    local named = {}
+    for _, id in ipairs(env.namedBids or {}) do named[id] = true end
+    local out = {}
+    for _, b in ipairs(env.myBids) do
+      if not b.outbidUnlessNamed or named[b.id] then out[#out + 1] = b end
+    end
+    return out
+  end
+  ah.QueryBids = function(sorts, ids)
+    assert(type(sorts) == "table" and type(ids) == "table", "QueryBids takes sorts and auction ids")
+    env.bidQueries[#env.bidQueries + 1] = ids
+    env.namedBids = ids
+    if env.bidsSilent then return end
+    env.C_Timer.After(0, function() env.fire("BIDS_UPDATED") end)
+  end
+  ah.GetNumBids = function() return #bidsNow() end
+  ah.GetBidInfo = function(i)
+    local b = bidsNow()[i]
+    return b and { auctionID = b.id, itemKey = { itemID = b.itemID }, itemLink = b.link, timeLeft = b.band,
+      minBid = b.minBid, bidAmount = b.bid, buyoutAmount = b.buyout, bidder = b.bidder }
+  end
   -- Commodity buying: StartCommoditiesPurchase quotes env.quote(itemID, quantity) -> unit, total (nil: no
   -- quote) on the next tick, unless env.blockQuote; ConfirmCommoditiesPurchase succeeds unless env.commodityFails.
   env.commodityBuys = {}

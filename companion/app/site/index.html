@@ -9,11 +9,11 @@
   --accent: #62c5ff; --best: #ffd100; --good: #3ce04a; --avg: #ffd100; --slow: #ff8a3a; --empty: #171a22; }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/20px Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
-header { display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; padding: 16px 32px; border-bottom: 1px solid #262a36; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; padding: 16px max(32px, calc((100% - 1280px) / 2 + 32px)); border-bottom: 1px solid #262a36; }
 .brand { font-weight: 600; } .brand span { color: var(--accent); }
 .meta, .sub, .note { color: var(--muted); font-size: 13px; }
 .note { font-size: 12px; }
-main { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; padding: 24px 32px; max-width: 1280px; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; padding: 24px 32px; max-width: 1280px; margin: 0 auto; }
 .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .search { position: relative; }
 .search input { width: 100%; padding: 9px 12px; border: 1px solid #3a3e4c; border-radius: 6px; background: var(--panel); color: #fff; font: inherit; }

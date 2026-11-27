@@ -54,6 +54,7 @@ function SettingsView:build(f, x, y, width, height)
 
   self:buildDebug(panel)
   self:buildTooltips(panel)
+  self:buildMail(panel)
 
   -- On the shared detail panel, so shown only while this view is.
   local w = self.window
@@ -136,6 +137,41 @@ function SettingsView:buildTooltips(panel)
   end
 end
 
+-- Mail (#154): the Mailbox window replaces Blizzard's mail frame unless this is off.
+SettingsView.MAIL_TOP = -320
+SettingsView.MAIL = { label = "Replace Blizzard's mail frame with the Better AH Mailbox",
+  tip = "Off: mailboxes open Blizzard's own mail frame again. Takes effect the next time you open a mailbox." }
+
+function SettingsView:buildMail(panel)
+  local env = self.env
+  local group = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  group:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, SettingsView.MAIL_TOP)
+  group:SetText("Mail")
+  self.mailGroupLabel = group
+  local b = env.CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+  b:SetSize(24, 24)
+  b:SetPoint("TOPLEFT", panel, "TOPLEFT", 4, SettingsView.MAIL_TOP - 16)
+  b:SetScript("OnClick", function(c) self:setMailReplace(c:GetChecked() and true or false) end)
+  ns.Window.tooltip(env, b, SettingsView.MAIL.label, SettingsView.MAIL.tip)
+  local label = b.Text
+  if not label then
+    label = b:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    label:SetPoint("LEFT", b, "RIGHT", 2, 0)
+  end
+  label:SetText(SettingsView.MAIL.label)
+  if b.SetHitRectInsets then b:SetHitRectInsets(0, -320, 0, 0) end
+  self.mailCheck = b
+end
+
+-- Stored as replace = false only when off, so a missing value means on.
+function SettingsView:setMailReplace(on)
+  local saved = self.addon.mailSettings
+  if type(saved) == "table" then
+    if on then saved.replace = nil else saved.replace = false end
+  end
+  self:render()
+end
+
 function SettingsView:setTooltip(key, on)
   local saved = self.addon.tooltipSettings
   if saved then ns.TooltipPrices.set(saved, key, on) end
@@ -182,6 +218,11 @@ function SettingsView:render()
     if b.label and b.label.SetTextColor then
       if usable then b.label:SetTextColor(1, 1, 1) else b.label:SetTextColor(0.5, 0.5, 0.5) end
     end
+  end
+  if self.mailCheck then
+    local mail = self.addon.mailSettings
+    self.mailCheck:SetChecked(not (type(mail) == "table" and mail.replace == false))
+    if type(mail) == "table" then self.mailCheck:Enable() else self.mailCheck:Disable() end
   end
   self.resetButton:SetShown(settings ~= nil)
   if current and current ~= ns.Posting.DEFAULT_DURATION then self.resetButton:Enable()

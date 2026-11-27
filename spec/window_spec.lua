@@ -1806,6 +1806,20 @@ describe("Window", function()
       assert.same({}, ns.tooltipSettings, "back to everything on")
     end)
 
+    it("turns the Mailbox window's replacement of Blizzard's mail frame off and on (#154)", function()
+      local env, w, ns = setup()
+      ns.mailSettings = {}
+      env.openAuctionHouse()
+      sidebarButton(w, "settings"):Click()
+      local b = w.settingsView.mailCheck
+      assert.is_true(b:GetChecked(), "on to start with")
+      b:Click()
+      assert.same({ replace = false }, ns.mailSettings)
+      assert.is_false(b:GetChecked())
+      b:Click()
+      assert.same({}, ns.mailSettings)
+    end)
+
     it("keeps an item saved with only a limit on the default duration", function()
       local env, w, ns = setup()
       env.containers[0] = { { itemID = 4306, count = 10, name = "Silk Cloth" } }

@@ -254,7 +254,8 @@ function MailboxWindow.clock(seconds)
   seconds = math.max(0, math.floor(seconds))
   return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
 end
-local KIND_ROW = 20
+-- The hint above takes two lines, so the kinds start below it.
+local KIND_ROW, KIND_TOP = 20, -62
 
 function MailboxWindow:buildCollect(parent)
   local env, inner = self.env, DETAIL - 24
@@ -272,7 +273,7 @@ function MailboxWindow:buildCollect(parent)
   self.collectHint = text("GameFontDisableSmall", -30)
   self.kindRows = {}
   for i, k in ipairs(ns.Mailbox.KINDS) do
-    local y = -50 - (i - 1) * KIND_ROW
+    local y = KIND_TOP - (i - 1) * KIND_ROW
     local row = { id = k.id }
     if k.id ~= "cod" then
       local box = env.CreateFrame("CheckButton", nil, c, "UICheckButtonTemplate")
@@ -287,10 +288,10 @@ function MailboxWindow:buildCollect(parent)
     row.holds = text("GameFontHighlightSmall", y, 186, 70, "RIGHT")
     self.kindRows[i] = row
   end
-  self.collectExpiring = text("GameFontHighlightSmall", -50 - #ns.Mailbox.KINDS * KIND_ROW - 6)
-  self.collectTakes = text("GameFontHighlight", -50 - #ns.Mailbox.KINDS * KIND_ROW - 28)
-  self.collectProgress = text("GameFontHighlight", -50)
-  self.collectBags = text("GameFontHighlightSmall", -74)
+  self.collectExpiring = text("GameFontHighlightSmall", KIND_TOP - #ns.Mailbox.KINDS * KIND_ROW - 6)
+  self.collectTakes = text("GameFontHighlight", KIND_TOP - #ns.Mailbox.KINDS * KIND_ROW - 28)
+  self.collectProgress = text("GameFontHighlight", KIND_TOP)
+  self.collectBags = text("GameFontHighlightSmall", KIND_TOP - 24)
   if self.collectBags.SetSpacing then self.collectBags:SetSpacing(3) end
   local b = env.CreateFrame("Button", nil, c, "UIPanelButtonTemplate")
   b:SetSize(inner, 28)

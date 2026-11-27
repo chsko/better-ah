@@ -27,7 +27,9 @@ MailRulesPanel.MAIL_BUSY = "Send or empty the new mail first: Send all uses the 
 MailRulesPanel.NOTHING = "Nothing to send: no rule matches what is in your bags."
 MailRulesPanel.SENDING = "Sending mail %d of %d..."
 MailRulesPanel.STOPPING = "Stopping once the game answers the mail on its way..."
-local ROW_HEIGHT, EDIT_TOP = 18, -214
+local ROW_HEIGHT = 18
+-- Under the list: "+ Add rule", or the editor in its place while a rule is being written.
+local LIST_BOTTOM = -32 - MailRulesPanel.ROWS * ROW_HEIGHT - 16
 
 local MATCHES = { { "item", "Item" }, { "group", "DE group" }, { "type", "Type" } }
 
@@ -76,7 +78,7 @@ function MailRulesPanel:build(parent, width, height)
   end
   self.emptyText = text("GameFontDisable", -60)
   self.emptyText:SetText(MailRulesPanel.EMPTY)
-  local listBottom = -32 - MailRulesPanel.ROWS * ROW_HEIGHT - 16
+  local listBottom = LIST_BOTTOM
   local add = env.CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
   add:SetSize(100, 22)
   add:SetPoint("TOPLEFT", p, "TOPLEFT", 2, listBottom)
@@ -116,7 +118,7 @@ end
 function MailRulesPanel:buildEditor(p, width)
   local env = self.env
   local ed = env.CreateFrame("Frame", nil, p)
-  ed:SetPoint("TOPLEFT", p, "TOPLEFT", 0, EDIT_TOP)
+  ed:SetPoint("TOPLEFT", p, "TOPLEFT", 4, LIST_BOTTOM - 4)
   ed:SetSize(width, 140)
   self.editor = ed
   local function label(textValue, x, y)
@@ -346,6 +348,7 @@ function MailRulesPanel:render()
   end
   self.emptyText:SetShown(#rules == 0)
   self.hintText:SetShown(#rules > 0 and not self.draft)
+  self.addButton:SetShown(not self.draft)
   if #rules > MailRulesPanel.ROWS then
     self.hintText:SetText(string.format(MailRulesPanel.MORE, self.offset + 1,
       math.min(#rules, self.offset + MailRulesPanel.ROWS), #rules))

@@ -71,12 +71,7 @@ function MailSendPanel:build(parent, inner)
   self.subject:SetScript("OnTextChanged", function(e) self.draft.subject = e:GetText() end)
 
   text("GameFontNormalSmall", -114):SetText("Message")
-  local body = env.CreateFrame("EditBox", nil, p, "InputBoxTemplate")
-  body:SetSize(inner - 6, 44)
-  body:SetPoint("TOPLEFT", p, "TOPLEFT", 18, -128)
-  body:SetAutoFocus(false)
-  if body.SetMultiLine then body:SetMultiLine(true) end
-  if body.SetMaxLetters then body:SetMaxLetters(500) end
+  local body = self:messageBox(p, inner, -128)
   body:SetScript("OnTextChanged", function(e) self.draft.body = e:GetText() end)
   self.body = body
   -- Tab moves on, Escape lets go of the keyboard.
@@ -86,13 +81,13 @@ function MailSendPanel:build(parent, inner)
     box:SetScript("OnEscapePressed", function(e) e:ClearFocus() end)
   end
 
-  self.itemsLabel = text("GameFontNormalSmall", -180)
+  self.itemsLabel = text("GameFontNormalSmall", -192)
   self.slots = {}
   for i = 1, ns.MailSend.MAX_ATTACH do
     local b = env.CreateFrame("Button", nil, p)
     b:SetSize(SLOT, SLOT)
     local col, row = (i - 1) % PER_ROW, math.floor((i - 1) / PER_ROW)
-    b:SetPoint("TOPLEFT", p, "TOPLEFT", 12 + col * SLOT_STEP, -196 - row * SLOT_STEP)
+    b:SetPoint("TOPLEFT", p, "TOPLEFT", 12 + col * SLOT_STEP, -208 - row * SLOT_STEP)
     local bg = b:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(b)
     bg:SetColorTexture(0, 0, 0, 0.45)
@@ -107,7 +102,7 @@ function MailSendPanel:build(parent, inner)
     self.slots[i] = b
   end
 
-  local y = -196 - 2 * SLOT_STEP - 6
+  local y = -208 - 2 * SLOT_STEP - 6
   self.modes = {}
   for i, m in ipairs({ { "money", "Send gold" }, { "cod", "COD" } }) do
     local c = env.CreateFrame("CheckButton", nil, p, "UICheckButtonTemplate")
@@ -156,6 +151,65 @@ function MailSendPanel:build(parent, inner)
   end
   list:Hide()
   return p
+end
+
+-- The message: several lines in a dark box with an edge (InputBoxTemplate only draws one line), scrolling with
+-- the cursor once the text runs past the box. A click anywhere in the box puts the cursor in it.
+local MESSAGE_HEIGHT = 56
+function MailSendPanel:messageBox(p, inner, y)
+  local env = self.env
+  local box = env.CreateFrame("Frame", nil, p)
+  box:SetSize(inner, MESSAGE_HEIGHT)
+  box:SetPoint("TOPLEFT", p, "TOPLEFT", 12, y)
+  local bg = box:CreateTexture(nil, "BACKGROUND")
+  bg:SetAllPoints(box)
+  bg:SetColorTexture(0, 0, 0, 0.5)
+  for _, e in ipairs({ { "TOPLEFT", "TOPRIGHT", true }, { "BOTTOMLEFT", "BOTTOMRIGHT", true },
+    { "TOPLEFT", "BOTTOMLEFT" }, { "TOPRIGHT", "BOTTOMRIGHT" } }) do
+    local t = box:CreateTexture(nil, "BORDER")
+    t:SetColorTexture(0.45, 0.45, 0.45, 1)
+    t:SetPoint(e[1], box, e[1], 0, 0)
+    t:SetPoint(e[2], box, e[2], 0, 0)
+    if e[3] then t:SetHeight(1) else t:SetWidth(1) end
+  end
+  local scroll = env.CreateFrame("ScrollFrame", nil, box)
+  scroll:SetPoint("TOPLEFT", box, "TOPLEFT", 6, -5)
+  scroll:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -6, 5)
+  local body = env.CreateFrame("EditBox", nil, scroll)
+  body:SetSize(inner - 12, MESSAGE_HEIGHT - 10)
+  body:SetAutoFocus(false)
+  if body.SetFontObject then body:SetFontObject("ChatFontNormal") end
+  if body.SetMultiLine then body:SetMultiLine(true) end
+  if body.SetMaxLetters then body:SetMaxLetters(500) end
+  scroll:SetScrollChild(body)
+  -- Keep the cursor's line in view, as Blizzard's ScrollingEdit_OnCursorChanged does: on the next frame, once the
+  -- scroll range has grown with a new line.
+  body:SetScript("OnCursorChanged", function(_, _, cy, _, h)
+    scroll.cursor = { y = -(cy or 0), h = h or 0 }
+  end)
+  scroll:SetScript("OnUpdate", function()
+    local c = scroll.cursor
+    if not c then return end
+    scroll.cursor = nil
+    local top, view = scroll:GetVerticalScroll(), scroll:GetHeight() or (MESSAGE_HEIGHT - 10)
+    if c.y < top then
+      scroll:SetVerticalScroll(c.y)
+    elseif c.y + c.h > top + view then
+      scroll:SetVerticalScroll(c.y + c.h - view)
+    end
+  end)
+  if scroll.EnableMouseWheel then
+    scroll:EnableMouseWheel(true)
+    scroll:SetScript("OnMouseWheel", function(_, delta)
+      local max = scroll.GetVerticalScrollRange and scroll:GetVerticalScrollRange() or 0
+      scroll:SetVerticalScroll(math.max(0, math.min(max, scroll:GetVerticalScroll() - delta * 14)))
+    end)
+  end
+  self.messageScroll = scroll
+  box:EnableMouse(true)
+  box:SetScript("OnMouseDown", function() body:SetFocus() end)
+  self.messageFrame = box
+  return body
 end
 
 function MailSendPanel:shown()

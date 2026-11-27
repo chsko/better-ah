@@ -2763,6 +2763,42 @@ describe("Browse item page, after review", function()
     assert.is_nil(ns.browseAPI.commodity)
   end)
 
+  it("drops an open quote when the auction house closes, so buys work after reopening (#161)", function()
+    local env, _, ns, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    item.commodityControls.quantity:SetText("20")
+    item:quantityChanged()
+    env.quote = function(_, qty) return 98, qty * 98 end
+    item.commodityControls.buy:Click()
+    env.runTimers()
+    assert.equal("quoted", ns.browseAPI.commodity.step)
+    local cancelled = env.quoteCancelled or 0
+    env.CloseAuctionHouse()
+    assert.is_nil(ns.browseAPI.commodity)
+    assert.is_nil(ns.postingAPI.buying)
+    assert.equal(cancelled + 1, env.quoteCancelled, "the client's quote is cancelled too")
+    env.openAuctionHouse()
+    assert.is_nil(ns.browseAPI:blocked())
+    local bids = #env.bids
+    ns.snipeAPI:buy(1, 100, function() end)
+    assert.equal(bids + 1, #env.bids, "a snipe buy is sent")
+  end)
+
+  it("cancels a quote still waiting for its price when the auction house closes (#161)", function()
+    local env, _, ns, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    item.commodityControls.quantity:SetText("2")
+    item:quantityChanged()
+    env.quote = function(_, qty) return 98, qty * 98 end
+    item.commodityControls.buy:Click()
+    assert.equal("quote", ns.browseAPI.commodity.step)
+    local cancelled = env.quoteCancelled or 0
+    env.CloseAuctionHouse()
+    assert.equal(cancelled + 1, env.quoteCancelled)
+    assert.is_nil(ns.browseAPI.commodity)
+    assert.is_nil(ns.postingAPI.buying)
+  end)
+
   it("names the price quote when the game blocks it as UNKNOWN(), and frees the buttons (#108)", function()
     local env, _, ns, view = setupItem()
     local item = open(view, env, "Strange Dust")

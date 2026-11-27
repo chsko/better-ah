@@ -21,8 +21,10 @@ TooltipPrices.SETTINGS = {
     tip = "Only for items bought through Better AH (Snipe or Browse). Profit is after the 5% auction house cut." },
   { key = "shift", label = "Hold Shift for bag totals", sub = true,
     tip = "With Shift held, show the value of every one of the item in your bags." },
-  { key = "lowest", label = "Current min buyout", sub = true,
+  { key = "lowest", label = "Min buyout", sub = true,
     tip = "The cheapest buyout in your latest scan, and how old that scan is." },
+  { key = "sales", label = "Sold, past 7 days", sub = true,
+    tip = "How many you sold, of how many you posted, on all your characters in the last 7 days (from the Ledger)." },
 }
 
 function TooltipPrices.options(saved)
@@ -57,11 +59,13 @@ end
 --   shift      true while Shift is held
 --   current    { lowest, listed, seen } from PriceDB:current, or nil (never in a scan)
 --   now        the time, for how old the scan is
+--   sales      { sold, posted } over the past 7 days from Ledger:soldAndPosted, or nil
 -- }
 -- opts: TooltipPrices.options(...).
 -- Returns nil when nothing should be added, else { title, note, message, rows, hint }: note is dim text
 -- after the title, message a dim line under it when the item has no market value, each row
--- { label, money (copper, rounded), sign = true for a profit (shown with + or -) } or { label, text }, and
+-- { label, money (copper, rounded), sign = true for a profit (shown with + or -) } or
+-- { label, text, dim = true for "nothing there" }, and
 -- hint a dim line
 -- at the end. note, message and hint may be nil.
 function TooltipPrices.lines(item, opts)
@@ -80,20 +84,29 @@ function TooltipPrices.lines(item, opts)
   end
 
   local function lowest(each)
-    local c = opts.lowest and item.current
+    -- Not without a market value: a scan that old says nothing about today, and the "no price" line says why.
+    local c = opts.lowest and value and item.current
     if not c then return end
     local age = ns.Time and (" (" .. ns.Time.ago(c.seen, item.now) .. ")") or ""
     if c.listed and c.lowest and c.lowest > 0 then
       money("Min buyout" .. (each and ", each" or "") .. age, c.lowest)
     else
-      rows[#rows + 1] = { label = "Min buyout" .. age, text = "none listed" }
+      rows[#rows + 1] = { label = "Min buyout" .. age, text = "none listed", dim = true }
     end
+  end
+  -- Your own sale rate: only once there is something to say.
+  local function sales()
+    local s = opts.sales and item.sales
+    if not (s and (s.sold > 0 or s.posted > 0)) then return end
+    -- Not "x of y": a sale counts when its gold is taken, so it can be of an auction posted before the week.
+    rows[#rows + 1] = { label = "Sold, past 7 days", text = string.format("%d sold, %d posted", s.sold, s.posted) }
   end
 
   if total then
     out.note = "(" .. bags .. " in bags)"
     if value then money("Market value", value * bags) end
     lowest(true)
+    sales()
     if de then money("Disenchant value", de * bags) end
     if paid then
       local k = math.min(paid.units, bags)
@@ -109,6 +122,7 @@ function TooltipPrices.lines(item, opts)
     if item.stackable then out.note = "(each)" end
     if value then money("Market value", value) end
     lowest(false)
+    sales()
     if de then money("Disenchant value", de) end
     if paid then
       money(paid.units > 1 and "You paid, average" or "You paid", paid.unit)

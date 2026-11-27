@@ -250,5 +250,7 @@ describe("PriceDB:current (#194)", function()
     assert.same({ lowest = 250, quantity = 3, seen = 100, listed = true }, db:current("/N/H", "i:1"))
     db:recordScan("/N/H", 200, { { item = "i:2", count = 1, buyout = 100 } })
     assert.same({ quantity = 0, seen = 200, listed = false }, db:current("/N/H", "i:1"))
+    db:recordScan("/N/H", 300, { { item = "i:1", count = 1, buyout = 400 } }, true) -- a materials scan
+    assert.same({ lowest = 400, quantity = 1, seen = 300, listed = true }, db:current("/N/H", "i:1"))
   end)
 end)

@@ -35,3 +35,27 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
+
+  # The companion's sync/install run on Windows (#220): build and test there too.
+  rust-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: companion
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: companion
+      - run: cargo test --locked
+      # Registers the real scheduled task on the runner, reads it back and removes it.
+      - name: install / uninstall smoke test
+        shell: bash
+        run: |
+          addon="$RUNNER_TEMP/BetterAH"
+          mkdir -p "$addon" && touch "$addon/BetterAH.toc"
+          cargo build --locked
+          target/debug/better-ah-companion.exe install --target "$addon"
+          schtasks //Query //TN "Better AH sync" //XML
+          target/debug/better-ah-companion.exe uninstall

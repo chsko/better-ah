@@ -2,6 +2,11 @@
 //!
 //! `better-ah-companion collect` runs on GitHub Actions: it reads Blizzard's Forever
 //! auction house export, updates the rolling stats and writes the Pages site.
+//! `sync`, `install` and `uninstall` run on the player's PC: they copy the addon's data file
+//! from the Pages site into the BetterAH folder, by hand or from a scheduled task (#220).
+
+mod install;
+mod sync;
 
 use std::env;
 use std::fs;
@@ -27,6 +32,24 @@ fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("collect") => Collect::from_args(&args[1..]).and_then(|c| c.run()),
+        Some("sync") => sync::parse_sync_args(&args[1..]).and_then(|a| {
+            let out = sync::sync(&sync::Http, &a.url, &a.target)?;
+            match out {
+                sync::Outcome::Written(n) => println!("updated {} ({n} bytes)", a.target.join(sync::FILE_NAME).display()),
+                sync::Outcome::Unchanged => println!("{} is up to date", a.target.join(sync::FILE_NAME).display()),
+            }
+            Ok(())
+        }),
+        Some("install") => sync::parse_sync_args(&args[1..]).and_then(|a| {
+            install::install(&a.url, &a.target)?;
+            println!(
+                "Installed the \"{}\" task: it syncs {} hourly and at logon. Log: %LOCALAPPDATA%\\better-ah-companion\\sync.log",
+                install::TASK_NAME,
+                a.target.display()
+            );
+            Ok(())
+        }),
+        Some("uninstall") => install::uninstall().map(|()| println!("Removed the \"{}\" task.", install::TASK_NAME)),
         _ => Err(USAGE.to_string()),
     };
     match result {
@@ -40,6 +63,15 @@ fn main() -> ExitCode {
 
 const USAGE: &str =
     "usage: better-ah-companion collect --out <dir> --cache <dir> [--pages-url <url>]
+       better-ah-companion sync [--target <BetterAH folder>] [--url <data file url>]
+       better-ah-companion install [--target <BetterAH folder>] [--url <data file url>]
+       better-ah-companion uninstall
+
+sync copies the sell times data file into the BetterAH folder (default
+%USERPROFILE%\\better-ah\\BetterAH). install copies the app to
+%LOCALAPPDATA%\\better-ah-companion and adds a scheduled task that syncs hourly and at logon.
+
+collect:
 
 Environment: BLIZZARD_CLIENT_ID, BLIZZARD_CLIENT_SECRET (required),
 REGION (eu), RULESET (2), HOUSE (114), MARKET (/Normal/Horde).";

@@ -479,6 +479,25 @@ function SnipeView:runnable()
   return out
 end
 
+-- The most to pay for a find under the targets as they are now, or nil when the target it came from no
+-- longer runs (deleted, unticked, its band or item types changed) or its item is no longer wanted (#206).
+function SnipeView:currentMax(find)
+  for _, e in ipairs(self:runnable()) do
+    if e.target == find.source and e.row.band.min == find.band then
+      local m, _, no = self:maxFor(e, find.itemID)
+      if no == "loading" then return find.max end
+      return m
+    end
+  end
+  return nil
+end
+
+-- Drops the finds the targets no longer want (#206), but never the one a buy waits on.
+function SnipeView:prune()
+  if not self.session then return 0 end
+  return self.session:keep(function(f) return self:currentMax(f) end, self.buying)
+end
+
 function SnipeView:start()
   local api = self:api()
   if not (api and api:open()) then
@@ -611,6 +630,7 @@ function SnipeView:tick(run)
   if not self.running or self.run ~= run then return end
   local list = self:runnable()
   if #list == 0 then return self:stop("No ticked targets left to snipe.") end
+  self:prune()
   local hold = self:holdReason()
   if hold ~= self.held then
     self.held = hold
@@ -678,11 +698,14 @@ function SnipeView:tick(run)
         for _, l in ipairs(ns.Sniper.buys(listings, c.max)) do
           local auctionAPI = self.addon.auctionAPI
           local itemName = l.link or (auctionAPI and auctionAPI:itemName("i:" .. c.itemKey.itemID))
-          found = self.session:add({ auctionID = l.auctionID, itemID = c.itemKey.itemID, itemKey = c.itemKey,
+          local find = { auctionID = l.auctionID, itemID = c.itemKey.itemID, itemKey = c.itemKey,
             link = l.link, count = l.count,
             name = itemName or ("item " .. c.itemKey.itemID),
             price = l.unit, worth = worthOf[c.itemKey.itemID], max = c.max, target = name,
-            level = c.level }) or found
+            level = c.level, source = entry.target, band = band.min }
+          -- The target may have been deleted or edited while the lookup was out (#206).
+          local now = self:currentMax(find)
+          if now and find.price <= now then found = self.session:add(find) or found end
         end
         if found and SnipeView.settings(self.addon).sound then api:alert() end
         left = left - 1
@@ -695,6 +718,8 @@ end
 
 -- Buys the next find. Runs inside a click or a mouse wheel turn (a hardware event).
 function SnipeView:buyNext(source)
+  -- No prune here (#206): nothing but the buy goes before PlaceBid (#130). Every redraw prunes, so the
+  -- card shows what this buys.
   local find = self.running and self.session and self.session:next()
   if not find or self.buying then return end
   -- Still answering the last buy or check: a buy now would be refused, so this notch does nothing. The

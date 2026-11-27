@@ -122,11 +122,12 @@ function Targets:list()
   return self.saved
 end
 
--- A new sniped target for the four armor types, with a 10% profit. band: an item level band's min.
+-- A new target for the four armor types, with a 10% profit. band: an item level band's min. It starts
+-- unticked (not sniped), so a running sniper doesn't buy for it before it is set up (#206).
 function Targets:add(band)
   local types = {}
   for _, id in ipairs(Targets.ARMOR) do types[id] = true end
-  local target = { types = types, band = band, profit = { kind = "percent", amount = 10 }, enabled = true }
+  local target = { types = types, band = band, profit = { kind = "percent", amount = 10 }, enabled = false }
   self.saved[#self.saved + 1] = target
   return target, #self.saved
 end

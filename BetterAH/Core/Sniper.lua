@@ -361,6 +361,28 @@ function Session:missed(time, find, why, kind)
   return dropped
 end
 
+-- Drops the finds the targets no longer want (#206): a target deleted, unticked or edited while sniping
+-- must not leave its finds waiting to be bought. maxOf(find) gives the most to pay for a find under the
+-- targets as they are now, or nil when its target no longer runs. A find priced above that goes. A
+-- dropped find isn't written off: its item is looked up again, so it comes back if a target wants it.
+-- keep (optional): a find to leave alone, the one a buy is waiting on. Returns how many were dropped.
+function Session:keep(maxOf, keep)
+  local dropped = 0
+  for i = #self.finds, 1, -1 do
+    local f = self.finds[i]
+    local max = f ~= keep and maxOf(f)
+    if f ~= keep and not (max and f.price <= max) then
+      table.remove(self.finds, i)
+      self.seen[f.auctionID] = nil
+      if f.itemKey then self.looked[keyText(f.itemKey)] = nil end
+      dropped = dropped + 1
+    elseif f ~= keep then
+      f.max = max
+    end
+  end
+  return dropped
+end
+
 -- What buys with no answer yet may have spent (see held). time: now, to let go of old ones.
 function Session:heldSpend(time)
   local total = 0

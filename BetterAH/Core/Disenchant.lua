@@ -201,6 +201,33 @@ function Disenchant.priceOf(id, priceOf)
   return own or combined
 end
 
+-- How long a scan's cheapest listing counts for buyPriceOf: older ones may be long gone.
+Disenchant.CHEAPEST_FOR = 86400
+
+-- A material price for what to pay (#250): the lower of its market value and the cheapest buyout per unit
+-- the latest scan saw, so snipe targets' max prices drop as soon as a material crashes instead of days
+-- later. marketOf(id) gives a market value or nil; currentOf(id), if given, a PriceDB:current entry
+-- ({ lowest, listed, seen }) or nil. The cheapest counts only while still listed and seen within
+-- CHEAPEST_FOR seconds of now, and not below a tenth of market value (a troll price, as MarketValue
+-- leaves out: one 1c dust shouldn't set every target's max for a day). With one of the two known, that
+-- one. Returns a priceOf(id) for value.
+Disenchant.TROLL = 0.1
+function Disenchant.buyPriceOf(marketOf, currentOf, now)
+  return function(id)
+    local value = marketOf(id)
+    value = tonumber(value)
+    if value and value <= 0 then value = nil end
+    local c = currentOf and currentOf(id)
+    local lowest = c and c.listed and tonumber(c.lowest)
+    if lowest and (lowest <= 0 or not (tonumber(c.seen) and now - c.seen <= Disenchant.CHEAPEST_FOR)
+      or (value and lowest < value * Disenchant.TROLL)) then
+      lowest = nil
+    end
+    if value and lowest then return math.min(value, lowest) end
+    return value or lowest or nil
+  end
+end
+
 -- The expected value of disenchanting the item, in copper. opts as for yields. priceOf(materialID)
 -- gives a material's market value or nil. Returns value (nil when no material has a price), the breakdown
 -- ({ id, name, chance, min, max, expected, price, value } per material) and how many materials had

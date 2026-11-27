@@ -1041,6 +1041,24 @@ describe("Window", function()
       assert.is_false(ns.disenchant.targets[1].enabled, "kept but not sniped")
     end)
 
+    it("prices a target's materials at the latest scan's cheapest when it is under market value (#250)", function()
+      local env, w, ns = deSetup()
+      local v = w.disenchantView
+      v.tabButtons.targets:Click()
+      v.newButton:Click()
+      assert.equal("14s 20c", target(w, 1)[4], "market value alone before a scan lists the dust cheaper")
+      -- One Soul Dust listed at 1s: under its market value, which the rest of the listings keep near 4s 46c.
+      local listings = { { item = "i:11083", name = "Soul Dust", count = 1, buyout = 100 } }
+      for _ = 1, 9 do listings[#listings + 1] = { item = "i:11083", name = "Soul Dust", count = 1, buyout = 446 } end
+      ns.prices:recordScan("/1/Horde", env.now, listings, true)
+      v:render()
+      assert.same({ "Armor, req. 21-25", "Armor", "9s 27c", "10%", "8s 34c" },
+        { target(w, 1)[2], target(w, 1)[3], target(w, 1)[4], target(w, 1)[5], target(w, 1)[6] })
+      assert.equal("Worth 9s 27c after the cut", v.worthText:GetText())
+      v.tabButtons.values:Click()
+      assert.equal("13s 39c", band(w, 4)[3], "Values keeps market value")
+    end)
+
     it("edits a target's types, band and profit", function()
       local _, w, ns = deSetup()
       local v = w.disenchantView

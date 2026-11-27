@@ -731,8 +731,9 @@ function DisenchantView:setBand(min)
   self:render()
 end
 
+-- A band's row priced for buying (targetList), for targets and the sniper.
 function DisenchantView:rowFor(band)
-  for _, row in ipairs(self.list or {}) do
+  for _, row in ipairs(self.targetList or self.list or {}) do
     if row.band.min == band then return row end
   end
   return nil
@@ -802,6 +803,10 @@ function DisenchantView:render()
   end
   local base = DisenchantView.baseline(addon, key)
   self.list = DisenchantView.rows(priceOf, opts, dayOf, base and ns.ValueHistory.priceLookup(base))
+  -- Targets and the sniper pay by the lower of market value and the latest scan's cheapest (#250); Values
+  -- keeps showing market value.
+  local currentOf = key and prices and prices.current and function(id) return prices:current(key, "i:" .. id) end
+  self.targetList = DisenchantView.rows(ns.Disenchant.buyPriceOf(priceOf, currentOf, now), opts)
   -- A target deleted or edited while sniping takes its finds with it at once (#206).
   if self.snipe and self.snipe.running then self.snipe:prune() end
   self.base = base

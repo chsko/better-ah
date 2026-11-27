@@ -86,6 +86,8 @@ _Avoid_: DE price, destroy value
 
 **Disenchant target**:
 A rule for flagging disenchant deals: a minimum net profit in gold, a minimum profit percent, or both.
+Its worth prices each material at the lower of its market value and the latest scan's cheapest listing
+(from the last 24 hours), so max prices drop as soon as a material crashes.
 
 **Net profit**:
 What you actually earn: the sale value minus the 5% auction house cut and expected deposits, minus what you paid.

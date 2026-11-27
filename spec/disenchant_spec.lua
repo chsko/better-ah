@@ -131,4 +131,75 @@ describe("Disenchant", function()
     local value = Disenchant.value({ quality = 2, class = "armor", level = 33 }, priceOf, { salvager = true })
     assert.equal(1600, Disenchant.net(value))
   end)
+
+  describe("buyPriceOf (#250)", function()
+    local NOW = 100 * 86400 + 3600
+    local market = { [10940] = 500, [10939] = 2400, [11083] = 300 }
+    local current = {
+      [10940] = { lowest = 350, listed = true, seen = NOW - 600 },
+      [10939] = { lowest = 3000, listed = true, seen = NOW - 600 },
+      [11083] = { lowest = 100, listed = true, seen = NOW - 86400 - 1 },
+      [11084] = { lowest = 900, listed = true, seen = NOW - 60 },
+      [11138] = { lowest = nil, quantity = 0, listed = false, seen = NOW - 60 },
+      [11134] = { lowest = 50, listed = false, seen = NOW },
+      [11135] = { lowest = 0, listed = true, seen = NOW },
+      [11137] = { lowest = 49, listed = true, seen = NOW },
+      [11176] = { lowest = 400, listed = true, seen = NOW - 86400 },
+    }
+    market[11134], market[11135], market[11137], market[11176] = 800, 700, 500, 600
+    local priceOf = Disenchant.buyPriceOf(function(id) return market[id] end,
+      function(id) return current[id] end, NOW)
+
+    it("takes the cheapest listing when it is under market value", function()
+      assert.equal(350, priceOf(10940))
+    end)
+
+    it("keeps market value when the cheapest is above it", function()
+      assert.equal(2400, priceOf(10939))
+    end)
+
+    it("ignores a cheapest listing older than a day", function()
+      assert.equal(300, priceOf(11083))
+    end)
+
+    it("uses the cheapest alone when there is no market value", function()
+      assert.equal(900, priceOf(11084))
+    end)
+
+    it("is nil when neither is known, and ignores a mat no longer listed", function()
+      assert.is_nil(priceOf(11138))
+      assert.is_nil(priceOf(16204))
+    end)
+
+    it("ignores a cheapest a later full scan didn't list, or of no copper", function()
+      assert.equal(800, priceOf(11134))
+      assert.equal(700, priceOf(11135))
+    end)
+
+    it("ignores a troll cheapest below a tenth of market value", function()
+      assert.equal(500, priceOf(11137))
+    end)
+
+    it("still counts a cheapest seen exactly a day ago", function()
+      assert.equal(400, priceOf(11176))
+    end)
+
+    it("takes a market value lookup that returns more than one value", function()
+      local p = Disenchant.buyPriceOf(function() return 500, { days = 3 } end, nil, NOW)
+      assert.equal(500, p(10940))
+    end)
+
+    it("works without a current lookup", function()
+      assert.equal(500, Disenchant.buyPriceOf(function(id) return market[id] end, nil, NOW)(10940))
+    end)
+
+    it("feeds the essence rule: a lesser is still worth a third of the cheaper greater", function()
+      local m = { [10938] = 1000, [10939] = 2400 }
+      local c = { [10939] = { lowest = 1500, listed = true, seen = NOW } }
+      local p = Disenchant.buyPriceOf(function(id) return m[id] end, function(id) return c[id] end, NOW)
+      assert.equal(1000, Disenchant.priceOf(10938, p))
+      m[10938] = 300
+      assert.equal(500, Disenchant.priceOf(10938, p))
+    end)
+  end)
 end)

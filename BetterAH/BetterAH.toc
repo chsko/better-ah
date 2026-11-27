@@ -6,6 +6,8 @@
 ## SavedVariables: BetterAHDB
 
 Core/Init.lua
+# Sell times data, downloaded by better-ah-companion sync (#220). Gitignored; may be missing.
+SellTimes.lua
 Core/DebugLog.lua
 Core/Money.lua
 Core/Time.lua

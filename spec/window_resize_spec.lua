@@ -4,7 +4,8 @@ local fake = require("spec.fake_client")
 local W = 1060
 
 -- The files that need the real client at load time.
-local CLIENT_ONLY = { ["Core/Init.lua"] = true, ["Core/Commands.lua"] = true }
+-- SellTimes.lua is the optional data file the companion app downloads (#220).
+local CLIENT_ONLY = { ["Core/Init.lua"] = true, ["Core/Commands.lua"] = true, ["SellTimes.lua"] = true }
 
 -- Loads every addon file the .toc lists (but those), so this spec keeps up with
 -- new views, and installs the game adapters on the fake client.

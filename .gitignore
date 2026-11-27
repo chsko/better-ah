@@ -3,3 +3,6 @@
 lua_modules/
 *.zip
 .adversarial-review/
+# Sell times data file and its temp file, written by better-ah-companion sync (#220).
+BetterAH/SellTimes.lua
+BetterAH/SellTimes.lua.tmp

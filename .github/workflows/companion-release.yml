@@ -1,0 +1,53 @@
+# Builds the companion app for Windows and publishes it as a GitHub release (#220).
+# Run it from Actions > Companion release with a version like 0.1.0.
+name: Companion release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, for example 0.1.0 (tagged companion-v<version>)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: companion-release
+
+jobs:
+  windows:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: companion
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check the version
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must look like 0.1.0"
+            exit 1
+          fi
+      - run: cargo test --locked
+      # Static C runtime, so the exe runs without the Visual C++ redistributable.
+      - run: cargo build --release --locked
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+      - name: Publish the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          mkdir -p dist
+          cp target/release/better-ah-companion.exe target/release/better-ah-companion-task.exe dist/
+          gh release create "companion-v$VERSION" dist/*.exe \
+            --target "$GITHUB_SHA" \
+            --title "Better AH companion $VERSION" \
+            --notes "Download both .exe files into one folder, open a terminal there and run \`better-ah-companion.exe install\`. See docs/setup/companion.md."

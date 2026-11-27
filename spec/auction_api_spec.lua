@@ -198,6 +198,57 @@ describe("AuctionAPI", function()
     assert.matches("not in this client: AUCTION_HOUSE_BROWSE_FAILURE)", result[2], 1, true)
   end)
 
+  it("never takes an update event with an empty replicate list as a good scan (#163)", function()
+    local env, api, ns = setup()
+    env.auctions = {}
+    local result
+    ns.AuctionAPI.scanIntoPrices(ns, function(ok, message) result = { ok, message } end)
+    env.runTimers(0)
+    assert.is_nil(result, "an empty list is no answer: keep waiting")
+    assert.is_nil(ns.prices:lastScan("/1/Horde"))
+    env.auctions = { { name = "Linen Cloth", count = 20, buyout = 4000, itemID = 2589 } }
+    env.fire("REPLICATE_ITEM_LIST_UPDATE")
+    assert.is_true(result[1], "the real answer still counts")
+    assert.is_nil(api.pending)
+  end)
+
+  it("never takes an update event with the list from before our request as a good scan (#163)", function()
+    local env, _, ns = setup()
+    env.auctions = { { name = "Linen Cloth", count = 20, buyout = 4000, itemID = 2589 } }
+    ns.AuctionAPI.scanIntoPrices(ns, function() end)
+    env.runTimers()
+    local first = ns.prices:lastScan("/1/Horde")
+    env.now = env.now + 900
+    local result
+    ns.AuctionAPI.scanIntoPrices(ns, function(ok, message) result = { ok, message } end)
+    env.runTimers(119)
+    assert.is_nil(result, "the unchanged list is no answer")
+    env.runTimers(1)
+    assert.is_false(result[1])
+    assert.equal(first, ns.prices:lastScan("/1/Horde"), "the old list was not stored again")
+  end)
+
+  it("reports a refused scan once, by its return value (#163)", function()
+    local env, api = setup()
+    env.C_AuctionHouse.ReplicateItems = function() error("busy") end
+    local calls = 0
+    local ok, why = api:scan(function() calls = calls + 1 end)
+    assert.is_false(ok)
+    assert.matches("The auction house refused the scan: .*busy", why)
+    assert.equal(0, calls, "onDone is not called as well")
+    assert.is_nil(api.pending)
+    assert.is_true(select(1, api:scan(function() end)) == false, "still refused, and nothing is stuck")
+  end)
+
+  it("shows a refused scan in the self-test (#163)", function()
+    local env, _, ns = setup()
+    env.C_AuctionHouse.ReplicateItems = function() error("busy") end
+    local calls = 0
+    assert.is_false(ns.AuctionAPI.scanIntoPrices(ns, function() calls = calls + 1 end))
+    assert.equal(0, calls)
+    assert.equal("fail", check(ns, env, "Full scan").status)
+  end)
+
   it("ignores a late reply after a timeout", function()
     local env, _, ns = setup()
     env.replicateSilent = true
@@ -280,6 +331,7 @@ describe("AuctionAPI", function()
       local env, api = hooked()
       local told = 0
       api.onOtherScan = function() told = told + 1 end
+      env.auctions = { { name = "Linen Cloth", count = 20, buyout = 4000, itemID = 2589 } }
       assert.is_true(api:scan(function() end))
       assert.same({ env.now, "us" }, { api:lastAsk() })
       assert.equal(0, told, "our own request isn't another addon's")

@@ -229,7 +229,9 @@ function AuctionAPI:scan(onDone, opts)
     if ok then self:noteAsk("us") end
   end
   if not ok then
-    self:finish(nil, "The auction house refused the scan: " .. tostring(err))
+    -- The caller hears of a refusal from the return value only, so it is counted as one failure.
+    pending.onDone = nil
+    self:finish()
     return false, "The auction house refused the scan: " .. tostring(err)
   end
   if listen then
@@ -356,7 +358,12 @@ function AuctionAPI:onEvent(event, ...)
     end
   end
   pending.seen[event] = (pending.seen[event] or 0) + 1
-  if event == "REPLICATE_ITEM_LIST_UPDATE" then self:complete("event") end
+  if event == "REPLICATE_ITEM_LIST_UPDATE" then
+    -- The same guard as polling: an empty list, or one the same size as before our request, is no answer
+    -- (a throttled request, or the list from an earlier scan). Keep waiting; polling or the timeout ends it.
+    local n = try(self.env.C_AuctionHouse.GetNumReplicateItems) or 0
+    if n > 0 and n ~= pending.before then self:complete("event") end
+  end
 end
 
 -- A full scan answer came while no scan of ours waited: another addon's request (or a late answer to one
@@ -374,7 +381,7 @@ function AuctionAPI.scanIntoPrices(addon, onDone, opts)
   local api = addon.auctionAPI
   local key, why = AuctionAPI.currentMarket(api.env)
   if not key then return false, why end
-  return api:scan(function(listings, info)
+  local started, refused = api:scan(function(listings, info)
     if not listings then
       addon.lastScanReport = { ok = false, detail = info }
       return onDone(false, "Scan failed. " .. info)
@@ -399,6 +406,9 @@ function AuctionAPI.scanIntoPrices(addon, onDone, opts)
     onDone(true, string.format("%s %d listings of %d items in %d seconds.",
       opts and opts.listen and "Read another addon's full scan:" or "Scanned", info.listings, items, info.seconds))
   end, opts)
+  -- A refusal comes back here only (not through onDone): the self-test still shows it.
+  if not started then addon.lastScanReport = { ok = false, detail = refused } end
+  return started, refused
 end
 
 function AuctionAPI.install(env, addon)

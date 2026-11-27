@@ -1356,6 +1356,75 @@ describe("Window", function()
         assert.equal("Buy for 12s 0c", s.buyButton:GetText(), "but not the auction that was gone")
       end)
 
+      it("lists the 20 closest in five rows with a scroll bar, and blinks rows that change (#201)", function()
+        local env, _, ns, s = snipeSetup()
+        local clock = 100
+        env.GetTime = function() return clock end
+        env.GetItemInfo = function(id)
+          return "Piece " .. id, "link", 2, 28, 23, "Armor", "Leather", 1, "INVTYPE_WRIST", 0, 100, 4, 2
+        end
+        env.browseResults = {}
+        for i = 1, 25 do
+          env.browseResults[i] = { itemKey = { itemID = 6000 + i, itemLevel = 28 }, minPrice = 1300 + i,
+            totalQuantity = 1 }
+        end
+        s.startButton:Click()
+        env.runTimers()
+        assert.equal(20, #s.nearList, "the 20 closest are kept")
+        assert.equal(5, #s.nearRows, "the list keeps its five-row height")
+        assert.equal("Piece 6001", s.nearRows[1][1]:GetText())
+        assert.is_true(s.nearBar:IsShown(), "more than fit: the bar shows")
+        s.nearBar:drag(1)
+        assert.equal(15, s.nearOffset)
+        assert.equal("Piece 6016", s.nearRows[1][1]:GetText())
+        assert.equal("Piece 6020", s.nearRows[5][1]:GetText())
+        s.nearBar:wheel(1)
+        assert.equal("Piece 6015", s.nearRows[1][1]:GetText(), "wheeling over the bar scrolls a row")
+        for _, row in ipairs(s.nearRows) do assert.is_false(row.flash:IsShown(), "the first list doesn't blink") end
+        -- The next check: one listing got cheaper. Only its row blinks, and it scrolls with the list.
+        env.browseResults[16].minPrice = 1290
+        env.runTimers(2)
+        assert.equal(6016, s.nearList[1].itemKey.itemID, "now the closest")
+        s:scrollNear(0)
+        assert.is_true(s.nearRows[1].flash:IsShown(), "the changed row blinks")
+        assert.is_false(s.nearRows[2].flash:IsShown())
+        assert.is_true(s.flashDriver:IsShown())
+        s:scrollNear(1)
+        for _, row in ipairs(s.nearRows) do assert.is_false(row.flash:IsShown(), "the blink goes with its row") end
+        s:scrollNear(0)
+        assert.is_true(s.nearRows[1].flash:IsShown())
+        clock = clock + ns.SnipeView.FLASH / 4
+        s.flashDriver.scripts.OnUpdate(s.flashDriver, 0.3)
+        assert.is_true(s.nearRows[1].flash:GetAlpha() > 0.3, "at its brightest a quarter in")
+        clock = clock + ns.SnipeView.FLASH
+        s.flashDriver.scripts.OnUpdate(s.flashDriver, 1)
+        assert.is_false(s.nearRows[1].flash:IsShown(), "and gone once it's over")
+        assert.is_false(s.flashDriver:IsShown())
+        s.panel.scripts.OnMouseWheel(s.panel, -1)
+        assert.equal(0, s.nearOffset, "the wheel over the tab buys; it doesn't scroll the list")
+      end)
+
+      it("doesn't blink the rows each target brings in on its first check (#201)", function()
+        local env, w, _, s = snipeSetup()
+        local v = w.disenchantView
+        v.tabButtons.targets:Click()
+        v.newButton:Click()
+        v.tabButtons.snipe:Click()
+        env.GetTime = function() return 100 end
+        env.browseResults[1].minPrice = 1300 -- over the max, so no find pauses the checks
+        env.browseResults[2].minPrice = 1400
+        s.startButton:Click()
+        env.runTimers(3)
+        assert.is_true(#env.browses >= 2, "both targets checked")
+        assert.equal(4, #s.nearList, "the two look-alike targets each list both items")
+        assert.same({}, s.flashes, "nothing changed")
+        env.browseResults[2].minPrice = 1350
+        env.runTimers(3)
+        local n = 0
+        for _ in pairs(s.flashes) do n = n + 1 end
+        assert.equal(2, n, "a later check that moves a price blinks its row, under each target")
+      end)
+
       it("shows what is left from the lookup in the closest list after a buy (#145)", function()
         local env, _, _, s = snipeSetup()
         s.startButton:Click()

@@ -2994,15 +2994,48 @@ describe("My auctions view (#123)", function()
     assert.same({}, env.cancels)
   end)
 
-  it("says so when a cancel gets no answer, and lets it be tried again", function()
+  it("waits for the auctions list when a cancel gets no answer, then lets it be tried again (#163)", function()
+    local env, _, _, v = open()
+    env.cancelSilent = true
+    local query = env.C_AuctionHouse.QueryOwnedAuctions
+    env.C_AuctionHouse.QueryOwnedAuctions = function() end -- the list comes later
+    v.rows[1].button:Click()
+    v.cancelButton:Click()
+    env.runTimers(10)
+    assert.matches("No answer yet about cancelling Arcane Dust", v.note:GetText(), 1, true)
+    v.rows[1].button:Click()
+    assert.is_false(v.cancelButton:IsEnabled(), "never sent twice while it may still go through")
+    v.cancelButton:Click()
+    assert.same({ 101 }, env.cancels)
+    query() -- the list the timeout asked for still has it
+    env.runTimers()
+    assert.matches("The auction house didn't cancel Arcane Dust. You can try again.", v.note:GetText(), 1, true)
+    v.rows[1].button:Click()
+    assert.is_true(v.cancelButton:IsEnabled())
+  end)
+
+  it("counts a slow cancel as done once the auctions list no longer has it (#163)", function()
     local env, _, _, v = open()
     env.cancelSilent = true
     v.rows[1].button:Click()
     v.cancelButton:Click()
-    env.runTimers(11)
-    assert.matches("Couldn't cancel Arcane Dust: no answer from the auction house", v.note:GetText())
+    table.remove(env.owned, 1) -- the server cancelled it, but never said so
+    env.runTimers(10)
+    env.runTimers()
+    assert.matches("Cancelled 20 Arcane Dust. It comes back by mail", v.note:GetText(), 1, true)
+  end)
+
+  it("counts a late answer to a cancel (#163)", function()
+    local env, _, ns, v = open()
+    env.cancelSilent = true
+    env.C_AuctionHouse.QueryOwnedAuctions = function() end -- the list is slow too
     v.rows[1].button:Click()
-    assert.is_true(v.cancelButton:IsEnabled())
+    v.cancelButton:Click()
+    env.runTimers(10)
+    assert.matches("No answer yet", v.note:GetText(), 1, true)
+    env.fire("AUCTION_CANCELED", 101)
+    assert.matches("Cancelled 20 Arcane Dust", v.note:GetText(), 1, true)
+    assert.is_nil(ns.myAuctionsAPI.late[101])
   end)
 
   it("starts afresh on the next visit", function()

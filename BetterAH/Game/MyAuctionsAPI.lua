@@ -115,7 +115,7 @@ function MyAuctionsAPI:read(nameOf)
 end
 
 function MyAuctionsAPI.new(env)
-  local self = setmetatable({ env = env, open = false, cancelling = {} }, MyAuctionsAPI)
+  local self = setmetatable({ env = env, open = false, cancelling = {}, late = {}, updates = 0 }, MyAuctionsAPI)
   self.events = env.CreateFrame("Frame")
   self.events:SetScript("OnEvent", function(_, event, ...) self:onEvent(event, ...) end)
   for _, e in ipairs(MyAuctionsAPI.EVENTS) do pcall(self.events.RegisterEvent, self.events, e) end
@@ -125,9 +125,10 @@ end
 -- Asks the client for the player's auctions again; onChange follows with OWNED_AUCTIONS_UPDATED. The
 -- character tracker already asks on opening the auction house and after each cancel or post; while it is
 -- installed, this asks nothing, so the throttled query pipe isn't used twice.
-function MyAuctionsAPI:query()
+-- force: ask even with the tracker installed (it only asks on events, and a cancel with no answer has none).
+function MyAuctionsAPI:query(force)
   local ah = self.env.C_AuctionHouse
-  if self.addon and self.addon.tracker then return end
+  if self.addon and self.addon.tracker and not force then return end
   if self.open and ah and ah.QueryOwnedAuctions then try(ah.QueryOwnedAuctions, {}) end
 end
 
@@ -144,7 +145,9 @@ function MyAuctionsAPI:canCancel(id)
 end
 
 -- Cancels one auction. Must run inside a click (hardware event). Returns true when it was sent, or
--- false and a reason. done(ok, reason) follows: on AUCTION_CANCELED, or after TIMEOUT seconds.
+-- false and a reason. done(ok, reason, unconfirmed) follows: on AUCTION_CANCELED, or after TIMEOUT seconds
+-- with unconfirmed = true. A slow cancel may still go through: the owned auctions list is asked for again,
+-- and a late AUCTION_CANCELED calls done(true) after all.
 function MyAuctionsAPI:cancel(id, done)
   local ah = self.env.C_AuctionHouse
   if not self.open then return false, "the auction house is closed" end
@@ -159,18 +162,22 @@ function MyAuctionsAPI:cancel(id, done)
   local timer = self.env.C_Timer
   if timer and timer.After then
     timer.After(MyAuctionsAPI.TIMEOUT, function()
-      if self.cancelling[id] == job then self:finish(id, false, "no answer from the auction house") end
+      if self.cancelling[id] == job then
+        self:finish(id, false, "no answer from the auction house", true)
+        self.late[id] = job
+        self:query(true)
+      end
     end)
   end
   return true
 end
 
-function MyAuctionsAPI:finish(id, ok, reason)
-  local job = self.cancelling[id]
+function MyAuctionsAPI:finish(id, ok, reason, unconfirmed)
+  local job = self.cancelling[id] or ok and self.late[id]
   if not job then return end
-  self.cancelling[id] = nil
+  self.cancelling[id], self.late[id] = nil, nil
   if job.done then
-    local fine, err = pcall(job.done, ok, reason)
+    local fine, err = pcall(job.done, ok, reason, unconfirmed)
     if not fine and self.env.geterrorhandler then try(self.env.geterrorhandler(), err) end
   end
 end
@@ -182,13 +189,13 @@ function MyAuctionsAPI:onEvent(event, arg)
     self.open = false
     self.waiting, self.asked = nil, nil
     local waiting = self.cancelling
-    self.cancelling = {}
+    self.cancelling, self.late = {}, {}
     for _, job in pairs(waiting) do
       if job.done then pcall(job.done, false, "the auction house closed") end
     end
   elseif event == "AUCTION_CANCELED" then
-    -- Without an id, the oldest cancel still waiting is the one. An id that isn't ours (a late answer
-    -- after a timeout, or a cancel from Blizzard's window) finishes nothing.
+    -- Without an id, the oldest cancel still waiting is the one. A late answer after a timeout settles that
+    -- cancel after all; an id that isn't ours (a cancel from Blizzard's window) finishes nothing.
     local id = arg
     if id == nil then
       local oldest
@@ -196,7 +203,7 @@ function MyAuctionsAPI:onEvent(event, arg)
         if not oldest or job.order < oldest then id, oldest = waiting, job.order end
       end
     end
-    if id ~= nil and self.cancelling[id] then self:finish(id, true) end
+    if id ~= nil then self:finish(id, true) end
     self:query()
   elseif event == "ITEM_KEY_ITEM_INFO_RECEIVED" or event == "GET_ITEM_INFO_RECEIVED" then
     -- A name we asked for: redraw once for a burst of them.
@@ -211,6 +218,7 @@ function MyAuctionsAPI:onEvent(event, arg)
       if self.open and self.onChange then self.onChange() end
     end)
   elseif event == "OWNED_AUCTIONS_UPDATED" then
+    self.updates = self.updates + 1
     if self.open and self.onChange then self.onChange() end
   end
 end

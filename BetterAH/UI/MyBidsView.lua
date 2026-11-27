@@ -16,6 +16,7 @@ MyBidsView.TOP = 26
 MyBidsView.ROWS = 14
 -- Outbid in orange, highest in light blue: they differ in lightness too, as My auctions' colours do.
 MyBidsView.COLORS = { outbid = "ffff9a3c", highest = "ff8fd0ff", dim = "ff9d9d9d" }
+MyBidsView.RETRY, MyBidsView.RETRIES = 1, 30 -- while the auction house is busy: try each second, for 30 s
 MyBidsView.HINT = "If someone outbids you, your gold comes back by mail. Win or lose, the item or gold "
   .. "arrives by mail."
 
@@ -107,7 +108,7 @@ function MyBidsView:build(f, x, y, width, height)
   local refresh = button(env, panel, "Refresh", 20)
   refresh:SetWidth(90)
   refresh:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, 0)
-  refresh:SetScript("OnClick", function() self:query() end)
+  refresh:SetScript("OnClick", function() self:query(true) end)
   ns.Window.tooltip(env, refresh, "Refresh", "Ask the auction house for your bids again.")
   self.refreshButton = refresh
 
@@ -229,6 +230,8 @@ function MyBidsView:show()
     self.visit = {}
     self.selected, self.offset, self.message = nil, 0, nil
     self:query()
+  elseif not self.bids and not self.asking and not self.waiting then
+    return self:query()
   end
   self:render()
 end
@@ -236,26 +239,54 @@ end
 -- The auction house closed: the next visit starts afresh.
 function MyBidsView:reset()
   self.visit, self.bids, self.complete, self.selected, self.message, self.sending = nil, nil, nil, nil, nil, nil
-  self.checkedAt, self.asking = nil, nil
+  self.checkedAt, self.asking, self.waiting, self.busyNote = nil, nil, nil, nil
   self:hide()
   self.window:setBadge("bids", 0)
 end
 
+-- Leaving the view stops waiting for a busy auction house, so a retry doesn't take the query slot from
+-- Browse or Post; showing it again asks once more.
 function MyBidsView:hide()
+  self.waiting = nil
   self:showControls(false)
 end
 
--- Asks for the bids again, naming every auction this character has bid on.
-function MyBidsView:query()
+-- Asks for the bids again, naming every auction this character has bid on. fromUser: Refresh was clicked.
+function MyBidsView:query(fromUser)
   local api = self.addon.myBidsAPI
   if not api then return end
   if not api.open then
     self.message = "Open the auction house to see your bids."
     return self:render()
   end
+  if fromUser then self.waiting = nil end -- a click starts the 30 s over
   local sent, why = api:query(ns.MyBids.ids(self:store()))
   self.asking = sent or nil
-  if why == "busy" then self.message = "The auction house is still answering a search. Click Refresh in a moment." end
+  if why == "busy" then return self:waitForQuiet() end
+  self.waiting = nil
+  if self.busyNote then self.message, self.busyNote = nil, nil end
+  if not sent then
+    self.message, self.busyNote = "Couldn't ask the auction house for your bids. Click Refresh to try again.", true
+  end
+  self:render()
+end
+
+-- The auction house is answering another search (the throttled system isn't ready): ask again by itself
+-- each RETRY seconds, up to RETRIES times, then leave it to Refresh (#204).
+function MyBidsView:waitForQuiet()
+  local timer, visit = self.env.C_Timer, self.visit
+  local tries = (self.waiting or 0) + 1
+  if not (timer and timer.After) or tries > MyBidsView.RETRIES then
+    self.waiting = nil
+    self.message, self.busyNote = "The auction house is still busy with another search. Click Refresh to try again.",
+      true
+    return self:render()
+  end
+  self.waiting = tries
+  timer.After(MyBidsView.RETRY, function()
+    if self.visit ~= visit or self.waiting ~= tries or self.asking then return end
+    self:query()
+  end)
   self:render()
 end
 
@@ -392,7 +423,11 @@ end
 function MyBidsView:statusLine(rows)
   local api = self.addon.myBidsAPI
   if not (api and api.open) then return "Open the auction house to see your bids." end
-  if not self.bids then return "Reading your bids..." end
+  if self.waiting and not self.asking then return "Waiting for the auction house to finish a search..." end
+  if not self.bids then
+    if self.asking then return "Reading your bids..." end
+    return "Click Refresh to read your bids."
+  end
   if #rows == 0 then return "You have no bids on this character." end
   if self.asking then return "Checking your bids..." end
   return ""
@@ -406,7 +441,7 @@ function MyBidsView:render()
   local open = api and api.open
   if open and not self.asking then self.refreshButton:Enable() else self.refreshButton:Disable() end
   self.status:SetText(self:statusLine(rows))
-  if open and (self.asking or not self.bids) then self.loading:spin() else self.loading:clear() end
+  if open and (self.asking or self.waiting) then self.loading:spin() else self.loading:clear() end
 
   local visible = MyBidsView.ROWS
   self.offset = math.max(0, math.min(self.offset, math.max(0, #rows - visible)))

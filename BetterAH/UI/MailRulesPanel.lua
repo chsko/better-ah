@@ -2,7 +2,8 @@
 -- Rules in Core/SendRules.lua, saved per account in BetterAHDB.mail.rules; the run is Game/MailSender.lua.
 -- Layout follows the Send artboard of the mockup linked from #149.
 --
--- Needs the client to check: alt-click picks a bag item for an item rule; the list and footer fit; a Send all.
+-- Needs the client to check: alt-click picks a bag item for an item rule; the list and footer fit; a Send all;
+-- the bottom bar level with the new mail's Send; the editor under 8 rules clear of the last-run line.
 local _, ns = ...
 ns = ns or {}
 
@@ -28,8 +29,15 @@ MailRulesPanel.NOTHING = "Nothing to send: no rule matches what is in your bags.
 MailRulesPanel.SENDING = "Sending mail %d of %d..."
 MailRulesPanel.STOPPING = "Stopping once the game answers the mail on its way..."
 local ROW_HEIGHT = 18
--- Under the list: "+ Add rule", or the editor in its place while a rule is being written.
-local LIST_BOTTOM = -32 - MailRulesPanel.ROWS * ROW_HEIGHT - 16
+-- The bottom bar: "+ Add rule", the footer and Send all, level with the new mail's Send button.
+local BAR_Y, BAR_HEIGHT = 12, 28
+
+-- Where the hint and the rule editor start: just under the last rule shown (Window.buildRows puts row r's top at
+-- -32 - r * 18 + 3), or under the empty-list text.
+function MailRulesPanel.belowList(shown)
+  if shown == 0 then return -100 end
+  return -55 - shown * ROW_HEIGHT
+end
 
 local MATCHES = { { "item", "Item" }, { "group", "DE group" }, { "type", "Type" } }
 
@@ -78,30 +86,29 @@ function MailRulesPanel:build(parent, width, height)
   end
   self.emptyText = text("GameFontDisable", -60)
   self.emptyText:SetText(MailRulesPanel.EMPTY)
-  local listBottom = LIST_BOTTOM
-  local add = env.CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
-  add:SetSize(100, 22)
-  add:SetPoint("TOPLEFT", p, "TOPLEFT", 2, listBottom)
-  add:SetText("+ Add rule")
-  add:SetScript("OnClick", function() self:edit(nil) end)
-  self.addButton = add
-  self.hintText = text("GameFontDisableSmall", listBottom - 6, 112, width - 116)
+  self.hintText = text("GameFontDisableSmall", MailRulesPanel.belowList(0))
   self.hintText:SetText(MailRulesPanel.HINT)
   self:buildEditor(p, width)
 
+  local add = env.CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
+  add:SetSize(100, BAR_HEIGHT)
+  add:SetPoint("BOTTOMLEFT", p, "BOTTOMLEFT", 2, BAR_Y)
+  add:SetText("+ Add rule")
+  add:SetScript("OnClick", function() self:edit(nil) end)
+  self.addButton = add
   self.footer = p:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  self.footer:SetPoint("BOTTOMLEFT", p, "BOTTOMLEFT", 4, 36)
-  self.footer:SetWidth(width - 124)
+  self.footer:SetPoint("BOTTOMLEFT", p, "BOTTOMLEFT", 112, BAR_Y + 8)
+  self.footer:SetWidth(width - 112 - 118)
   self.footer:SetJustifyH("LEFT")
   local all = env.CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
-  all:SetSize(110, 24)
-  all:SetPoint("BOTTOMRIGHT", p, "BOTTOMRIGHT", -2, 30)
+  all:SetSize(110, BAR_HEIGHT)
+  all:SetPoint("BOTTOMRIGHT", p, "BOTTOMRIGHT", -2, BAR_Y)
   all:SetText("Send all")
   all:SetScript("OnClick", function() self:clickSendAll() end)
   ns.Window.tooltip(env, all, "Send all", MailRulesPanel.SEND_ALL_TIP)
   self.sendAllButton = all
   self.lastText = p:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  self.lastText:SetPoint("BOTTOMLEFT", p, "BOTTOMLEFT", 4, 8)
+  self.lastText:SetPoint("BOTTOMLEFT", p, "BOTTOMLEFT", 4, BAR_Y + BAR_HEIGHT + 10)
   self.lastText:SetWidth(width - 8)
   self.lastText:SetJustifyH("LEFT")
   return p
@@ -118,7 +125,7 @@ end
 function MailRulesPanel:buildEditor(p, width)
   local env = self.env
   local ed = env.CreateFrame("Frame", nil, p)
-  ed:SetPoint("TOPLEFT", p, "TOPLEFT", 4, LIST_BOTTOM - 4)
+  ed:SetPoint("TOPLEFT", p, "TOPLEFT", 4, MailRulesPanel.belowList(0))
   ed:SetSize(width, 140)
   self.editor = ed
   local function label(textValue, x, y)
@@ -346,9 +353,15 @@ function MailRulesPanel:render()
       rule.keep and tostring(rule.keep) or "0", SendRules.sendsText(plan.byRule[index]) } or {}
     for c = 1, #MailRulesPanel.COLUMNS do row[c]:SetText(cells[c] or "") end
   end
-  self.emptyText:SetShown(#rules == 0)
+  self.emptyText:SetShown(#rules == 0 and not self.draft)
   self.hintText:SetShown(#rules > 0 and not self.draft)
-  self.addButton:SetShown(not self.draft)
+  self.addButton:SetEnabled(not self.draft)
+  -- The hint and the editor follow the list down.
+  local below = MailRulesPanel.belowList(math.min(MailRulesPanel.ROWS, #rules))
+  self.hintText:ClearAllPoints()
+  self.hintText:SetPoint("TOPLEFT", self.frame, "TOPLEFT", 4, below)
+  self.editor:ClearAllPoints()
+  self.editor:SetPoint("TOPLEFT", self.frame, "TOPLEFT", 4, below)
   if #rules > MailRulesPanel.ROWS then
     self.hintText:SetText(string.format(MailRulesPanel.MORE, self.offset + 1,
       math.min(#rules, self.offset + MailRulesPanel.ROWS), #rules))

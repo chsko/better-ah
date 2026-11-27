@@ -145,6 +145,7 @@ function PostQueue:row(e)
     commodity = e.commodity, stacks = stacks(e), maxStack = e.maxStack, posted = self.posted[e.item],
     step = self.step, defaultDuration = settings and settings:defaultDuration(), own = self:own(e),
   })
+  row.swap = self:swap(e, row.plan)
   if self.skipped[e.item] then
     row.state, row.skipped = "skipped", "you"
   elseif row.plan.reason == "limit" then
@@ -155,6 +156,56 @@ function PostQueue:row(e)
     row.state = "skipped"
   end
   return row
+end
+
+-- The entry of an item in the bags, or nil.
+function PostQueue:entry(item)
+  for _, e in ipairs(self.all) do
+    if e.item == item then return e end
+  end
+  return nil
+end
+
+-- The other forms of the essences the queue shows that aren't in the bags and still need a lookup
+-- (#234): not looked up yet, or the lookup failed, and only for an essence with enough to convert. An
+-- other form in the bags is looked up as itself. Its listings stay for the visit, like a bag item's.
+function PostQueue:counterparts()
+  local out, seen = {}, {}
+  if not ns.EssenceSwap then return out end
+  for _, e in ipairs(self.entries) do
+    local other, direction = ns.EssenceSwap.counterpart(e.item)
+    local found = other and self.found[other]
+    -- Only when there is something to convert: two lessers make no greater.
+    local enough = other and ns.EssenceSwap.converted(direction, e.have) > 0
+    if enough and not seen[other] and not self:entry(other) and (not found or found.failed) then
+      seen[other] = true
+      out[#out + 1] = other
+    end
+  end
+  return out
+end
+
+-- Posting an essence as is against converting it to its other form (#234): an EssenceSwap.compare
+-- result, or nil. The other form is priced as Post would post it, from its own lookup: the units
+-- converting gives, its floor, and the player's own auctions of it.
+function PostQueue:swap(e, plan)
+  if not (ns.EssenceSwap and plan and plan.price) then return nil end
+  local other, direction = ns.EssenceSwap.counterpart(e.item)
+  local found = other and self.found[other]
+  if not (found and found.listings) then return nil end
+  local units = ns.EssenceSwap.converted(direction, e.have)
+  if units <= 0 then return nil end
+  local otherEntry = self:entry(other)
+    or { item = other, itemID = tonumber(other:match("%d+")), commodity = true }
+  local own = self.settings and self.settings:floor(self.key, other)
+  local mf = self.matFloor(other)
+  local otherPlan = ns.Posting.plan({
+    have = units, listings = found.listings, marketValue = self.marketValue(other), floor = own,
+    ruleFloor = mf and mf.floor, commodity = true, step = self.step,
+    defaultDuration = self.settings and self.settings:defaultDuration(), own = self:own(otherEntry),
+  })
+  return ns.EssenceSwap.compare({ item = e.item, have = e.have, price = plan.price,
+    otherPrice = otherPlan.price, otherPosts = otherPlan.action == "post", otherReason = otherPlan.reason })
 end
 
 -- Every item, in bag order (sorted by name), as rows.

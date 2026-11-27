@@ -58,6 +58,11 @@ _Avoid_: stack size
 **Post queue**:
 The items in your bags that are ready to be posted right now.
 
+**Essence swap**:
+Combining three lesser essences into one greater, or splitting a greater into three lesser, before posting.
+Post compares both at the prices it would post each form at and says when converting earns more (#234).
+_Avoid_: merge
+
 **My auctions**:
 The view of every auction you have up on this character, where you also cancel them. It was called Cancel.
 

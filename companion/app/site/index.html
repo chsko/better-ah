@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Better AH sell times</title>
+<style>
+:root { color-scheme: dark; --bg: #15171f; --panel: #1b1d26; --line: #2e3240; --fg: #e6e8ef; --muted: #8d93a5; --soft: #aab0c0;
+  --accent: #62c5ff; --best: #ffd100; --good: #3ce04a; --avg: #ffd100; --slow: #ff8a3a; --empty: #171a22; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/20px Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; padding: 16px 32px; border-bottom: 1px solid #262a36; }
+.brand { font-weight: 600; } .brand span { color: var(--accent); }
+.meta, .sub, .note { color: var(--muted); font-size: 13px; }
+.note { font-size: 12px; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; padding: 24px 32px; max-width: 1280px; }
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.search { position: relative; }
+.search input { width: 100%; padding: 9px 12px; border: 1px solid #3a3e4c; border-radius: 6px; background: var(--panel); color: #fff; font: inherit; }
+.search input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.results { position: absolute; z-index: 2; left: 0; right: 0; top: 42px; margin: 0; padding: 4px 0; list-style: none; background: var(--panel); border: 1px solid #3a3e4c; border-radius: 6px; max-height: 320px; overflow: auto; }
+.results li { display: flex; justify-content: space-between; gap: 8px; padding: 6px 12px; cursor: pointer; }
+.results li span:last-child { color: var(--muted); font-size: 12px; }
+.results li[aria-selected="true"], .results li:hover { background: #2a3448; }
+h2 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; color: #fff; }
+.head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.tabs { display: inline-flex; border: 1px solid #3a3e4c; border-radius: 6px; overflow: hidden; font-size: 13px; }
+.tabs button { border: 0; background: none; color: var(--soft); padding: 5px 12px; font: inherit; cursor: pointer; }
+.tabs button[aria-pressed="true"] { background: #2a3448; color: #fff; }
+.hm { display: grid; grid-template-columns: 40px repeat(24, minmax(0, 1fr)); gap: 3px; }
+.hm.tall { grid-template-columns: 30px repeat(7, minmax(0, 1fr)); }
+.c { aspect-ratio: 1 / 1; border-radius: 3px; position: relative; background: var(--empty); }
+.hm.tall .c { aspect-ratio: auto; height: 22px; }
+.c.b { box-shadow: inset 0 0 0 2px var(--best); }
+.c.n::after { content: ""; position: absolute; width: 8px; height: 8px; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 50%; background: #fff; }
+.hh { font-size: 11px; color: var(--muted); }
+.hm.tall .hh { text-align: center; }
+.dl { font-size: 12px; color: var(--soft); align-self: center; }
+.legend { display: flex; align-items: center; gap: 8px 12px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.ramp { display: inline-flex; } .ramp i { width: 18px; height: 10px; }
+.sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; box-shadow: inset 0 0 0 2px var(--best); }
+.card { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.big { font-size: 20px; line-height: 26px; color: #fff; font-weight: 600; }
+.row { display: flex; justify-content: space-between; gap: 12px; }
+.row.sep { border-top: 1px solid #262a36; padding-top: 10px; }
+.r0 { color: var(--best); } .r1 { color: var(--good); } .r2 { color: var(--avg); } .r3 { color: var(--slow); }
+.coin { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin: 0 3px 0 1px; }
+.cg { background: #e8b923; } .cs { background: #c2c4cc; } .cc { background: #c4703a; }
+.list { display: flex; flex-direction: column; }
+.list a { display: flex; justify-content: space-between; gap: 8px; padding: 7px 0; border-top: 1px solid #262a36; font-size: 13px; color: var(--fg); text-decoration: none; }
+.list a:hover span:first-child { color: var(--accent); }
+.list a span:last-child { color: var(--soft); white-space: nowrap; }
+.empty { padding: 24px; text-align: center; color: var(--soft); }
+.tip { position: fixed; z-index: 3; pointer-events: none; background: rgba(6, 8, 22, .96); border: 1px solid #8a8a9a; border-radius: 5px; padding: 6px 9px; font-size: 12px; line-height: 17px; white-space: nowrap; }
+[hidden] { display: none !important; }
+@media (max-width: 760px) {
+  header { padding: 12px 16px; }
+  main { grid-template-columns: 1fr; padding: 16px; }
+  main { display: flex; flex-direction: column; }
+  .left, .side { display: contents; }
+  .search { order: 1; } #nodata { order: 2; } #hint { order: 3; } #item { order: 4; } #top { order: 5; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span>Better AH</span> · Sell times · <span id="market" style="color:inherit">Horde Normal</span></div>
+  <div class="meta" id="meta">Loading…</div>
+</header>
+<main>
+  <div class="col left">
+    <div class="search">
+      <input id="q" type="search" placeholder="Search item name or ID" autocomplete="off" aria-label="Search item name or ID" role="combobox" aria-expanded="false" aria-controls="results">
+      <ul id="results" class="results" role="listbox" hidden></ul>
+    </div>
+    <div id="nodata" class="card empty" hidden></div>
+    <div id="item" class="col" hidden>
+      <div class="head">
+        <div><h2 id="name"></h2><div class="sub" id="metricText"></div></div>
+        <div class="tabs" id="tabs" role="group" aria-label="Show">
+          <button data-m="score" aria-pressed="true">Score</button><button data-m="sales" aria-pressed="false">Sales</button><button data-m="min" aria-pressed="false">Lowest price</button><button data-m="supply" aria-pressed="false">Listed</button>
+        </div>
+      </div>
+      <div id="hm" class="hm"></div>
+      <div class="legend"><span id="lo">Slow</span><span class="ramp" id="ramp"></span><span id="hi">Best</span><span><i class="sw"></i> Best 3 hours</span><span>● Now</span></div>
+      <div class="note">Sales are estimated: a listing that vanishes before its time runs out counts as sold, so cancelled auctions count too. Dark cells: zero or no data. Times are your local time.</div>
+    </div>
+  </div>
+  <div class="col side">
+    <div id="hint" class="card" hidden></div>
+    <div id="top" class="card" hidden><div class="k">Most sold</div><div class="list" id="topList"></div></div>
+  </div>
+</main>
+<div id="tip" class="tip" hidden></div>
+<script>
+"use strict";
+var DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+var RAMP = ["#1c2e45", "#1f4163", "#245782", "#2c6fa3", "#3a89c4", "#55a6e0", "#86c6f2"];
+var RATING = ["Best time now.", "Good now.", "Average now.", "Slow now."];
+var METRICS = {
+  score: { col: 3, text: "Expected value per hour of the week: sales × price.", lo: "Slow", hi: "Best" },
+  sales: { col: 1, text: "Average estimated sales in each hour of the week.", lo: "Few", hi: "Many" },
+  min: { col: 4, text: "Typical lowest price in each hour of the week.", lo: "Lowest", hi: "Highest", range: true },
+  supply: { col: 5, text: "Average number listed in each hour of the week.", lo: "Fewest", hi: "Most", range: true }
+};
+var $ = function (id) { return document.getElementById(id); };
+var index = null, item = null, metric = "score", matches = [], sel = -1;
+
+// Weekday-hours count from Monday 00:00 UTC (0) to Sunday 23:00 UTC (167), like the companion app.
+function weekHour(unix) { var h = Math.floor(unix / 3600); return ((Math.floor(h / 24) + 3) % 7) * 24 + h % 24; }
+// UTC weekday-hour to the viewer's local weekday-hour, using the offset in effect now.
+// Grid rows place each UTC hour at the local hour it starts in; labels keep the minutes, so
+// half-hour zones read e.g. 19:30.
+var OFFSET_MIN = -new Date().getTimezoneOffset();
+var OFFSET = Math.floor(OFFSET_MIN / 60), MINUTES = ((OFFSET_MIN % 60) + 60) % 60;
+function toLocal(w) { return ((w + OFFSET) % 168 + 168) % 168; }
+function toUtc(l) { return ((l - OFFSET) % 168 + 168) % 168; }
+function hm(l) { return pad(l % 24) + ":" + pad(MINUTES); }
+function pad(n) { return (n < 10 ? "0" : "") + n; }
+function localName(l) { return DAYS[Math.floor(l / 24)] + " " + hm(l); }
+function windowName(utcStart, long) {
+  var l = toLocal(utcStart), e = (l + 3) % 168, day = DAYS[Math.floor(l / 24)];
+  if (long || MINUTES) return day + " " + hm(l) + "–" + hm(e);
+  return day + " " + (l % 24) + "–" + (e % 24 === 0 ? 24 : e % 24);
+}
+function has(obj, k) { return Object.prototype.hasOwnProperty.call(obj, k); }
+function daysText(n) { return n < 1 ? "less than a day" : n === 1 ? "1 day" : n + " days"; }
+function itemName(id, name) { return name || "Item " + id; }
+
+function money(c) {
+  c = Math.round(c);
+  var g = Math.floor(c / 10000), s = Math.floor(c / 100) % 100, cp = c % 100, out = document.createElement("span");
+  function part(v, cls, padIt) { out.append((padIt ? pad(v) : String(v))); var i = document.createElement("i"); i.className = "coin " + cls; out.append(i); }
+  if (g) part(g, "cg", false);
+  if (g || s) part(s, "cs", g > 0);
+  if (!g) part(cp, "cc", s > 0);
+  return out;
+}
+function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+function decodeHints(rl) {
+  if (!rl) return null;
+  var out = [];
+  for (var i = 0; i < rl.length; i += 2) for (var n = 0; n < rl[i]; n++) out.push(rl[i + 1]);
+  return out.length === 168 ? out : null;
+}
+
+function load(url) { return fetch(url, { cache: "no-cache" }).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }); }
+
+function init() {
+  load("index.json").then(function (data) {
+    index = data;
+    var parts = (data.market || "").split("/").filter(Boolean);
+    if (parts.length === 2) $("market").textContent = parts[1] + " " + parts[0];
+    var upd = data.lastExport ? new Date(data.lastExport * 1000) : null;
+    if (data.version !== 1) { showEmpty("This page is older than its data. Reload the page."); return; }
+    var at = data.lastExport || data.generated, upd = at ? new Date(at * 1000) : null;
+    $("meta").textContent = (upd ? "Updated " + upd.toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) + " · " : "")
+      + daysText(data.days) + " of data";
+    var ids = Object.keys(data.items);
+    if (!ids.length) {
+      showEmpty("No sales seen yet. Sales are counted by comparing two exports, and Blizzard publishes one about every hour. Check back in a couple of hours.");
+      return;
+    }
+    ids.sort(function (a, b) { return data.items[b][1] - data.items[a][1]; });
+    renderTop(ids.slice(0, 10));
+    var want = location.hash.slice(1);
+    open(has(data.items, want) ? want : ids[0]);
+  }).catch(function () { showEmpty("Couldn't load the data. Try reloading the page."); $("meta").textContent = ""; });
+}
+
+function showEmpty(text) { $("item").hidden = true; $("hint").hidden = true; var n = $("nodata"); n.textContent = text; n.hidden = false; }
+
+function renderTop(ids) {
+  var list = $("topList"); list.textContent = "";
+  ids.forEach(function (id) {
+    var e = index.items[id], a = el("a");
+    a.href = "#" + id;
+    a.append(el("span", null, itemName(id, e[0])), el("span", null, e[2] == null ? "Not enough data" : windowName(e[2], false)));
+    list.append(a);
+  });
+  $("top").hidden = false;
+}
+
+var request = 0;
+function open(id) {
+  if (location.hash.slice(1) !== id) history.replaceState(null, "", "#" + id);
+  var mine = ++request;
+  load("items/" + id + ".json").then(function (data) {
+    if (mine !== request) return;
+    item = data; $("nodata").hidden = true; render();
+  }).catch(function () {
+    if (mine !== request) return;
+    item = null; showEmpty("No sell time data for this item.");
+  });
+}
+
+function render() {
+  var cells = {}, m = METRICS[metric], max = 0, min = Infinity, nowW = weekHour(Date.now() / 1000);
+  item.cells.forEach(function (c) { cells[c[0]] = c; if (c[m.col] > 0) { max = Math.max(max, c[m.col]); min = Math.min(min, c[m.col]); } });
+  // Score and sales scale from zero; prices and listings vary less, so they use their own range.
+  var lo = m.range ? min : 0;
+  function shade(v) {
+    var f = max > lo ? (v - lo) / (max - lo) : 0.5;
+    return RAMP[Math.max(0, Math.min(RAMP.length - 1, Math.floor(f * RAMP.length)))];
+  }
+  $("name").textContent = itemName(item.item, item.name);
+  document.title = itemName(item.item, item.name) + " · Better AH sell times";
+  $("metricText").textContent = m.text;
+  $("lo").textContent = m.lo; $("hi").textContent = m.hi;
+  var ramp = $("ramp"); ramp.textContent = "";
+  RAMP.forEach(function (c) { var i = el("i"); i.style.background = c; ramp.append(i); });
+  var tall = window.matchMedia("(max-width: 760px)").matches, hm = $("hm");
+  hm.className = tall ? "hm tall" : "hm"; hm.textContent = "";
+  var best = item.best;
+  function inBest(w) { return best != null && ((w - best + 168) % 168) < 3; }
+  function cell(l) {
+    var w = toUtc(l), c = cells[w], d = el("div", "c");
+    if (c && c[m.col] > 0) d.style.background = shade(c[m.col]);
+    if (inBest(w)) d.className += " b";
+    if (w === nowW) d.className += " n";
+    d.dataset.w = w; d.dataset.l = l;
+    return d;
+  }
+  hm.append(el("div"));
+  if (tall) {
+    DAYS.forEach(function (d) { hm.append(el("div", "hh", d.slice(0, 2))); });
+    for (var h = 0; h < 24; h++) { hm.append(el("div", "dl", pad(h))); for (var dd = 0; dd < 7; dd++) hm.append(cell(dd * 24 + h)); }
+  } else {
+    for (var hh = 0; hh < 24; hh++) hm.append(el("div", "hh", hh % 3 === 0 ? String(hh) : ""));
+    for (var d2 = 0; d2 < 7; d2++) { hm.append(el("div", "dl", DAYS[d2])); for (var h2 = 0; h2 < 24; h2++) hm.append(cell(d2 * 24 + h2)); }
+  }
+  $("item").hidden = false;
+  renderHint(cells, nowW);
+}
+
+function renderHint(cells, nowW) {
+  var card = $("hint"), name = itemName(item.item, item.name), hints = decodeHints(item.hints);
+  card.textContent = "";
+  card.append(el("div", "k", name));
+  if (!hints || item.best == null) {
+    card.append(el("div", null, "Not enough sales yet for a sell time."));
+    card.append(el("div", "sub", "It shows once the item has sold regularly for about a week."));
+  } else {
+    var code = hints[nowW], rating = code & 3, advice = (code >> 2) & 3, betterBy = Math.floor(code / 16);
+    var line = el("div"); var r = el("span", "r" + rating, RATING[rating].slice(0, -1)); r.style.fontWeight = "600";
+    line.append(r, el("span", "sub", " (" + localName(toLocal(nowW)) + ")"));
+    card.append(line);
+    card.append(el("div", "big", "Best: " + windowName(item.best, true)));
+    var advise;
+    if (rating === 0) advise = "Now is the best time. Post 2h.";
+    else {
+      var pct = betterBy === 1000 ? "No sales expected in the next 3 hours." : betterBy === 0 ? "About as good as now." : betterBy + "% better than now.";
+      var dur = [0, 2, 8, 24][advice], until = (item.best - nowW + 168) % 168;
+      if (advice === 0) advise = pct + " Wait until then; even a 24h auction would end first.";
+      // A "good" hour far from the best window also gets 2h: it's nearly as good to sell now.
+      else if (until >= dur) advise = "Nearly as good as the best time. Post " + dur + "h now.";
+      else advise = pct + " Post " + dur + "h now to be listed then.";
+    }
+    card.append(el("div", null, advise));
+  }
+  var now = cells[nowW], bestC = item.best != null ? cells[item.best] : null;
+  var head = el("div", "row sep"); head.append(el("span", "sub"), el("span", "sub", bestC ? "Now  ·  Best" : "Now"));
+  card.append(head);
+  function stat(label, i, fmt) {
+    var row = el("div", "row"), v = el("span");
+    function one(c) { return c && c[i] > 0 ? fmt(c[i]) : document.createTextNode("–"); }
+    v.append(one(now)); if (bestC) { v.append("  ·  "); v.append(one(bestC)); }
+    row.append(el("span", null, label), v); card.append(row);
+  }
+  var num = function (x) { return document.createTextNode(x >= 10 ? Math.round(x).toLocaleString() : String(Math.round(x * 10) / 10)); };
+  stat("Sales per hour", 1, num);
+  stat("Lowest price", 4, money);
+  stat("Listed", 5, num);
+  var sold = el("div", "row"); sold.append(el("span", null, "Sold in " + daysText(index.days)), el("span", null, item.sold.toLocaleString()));
+  card.append(sold);
+  card.hidden = false;
+}
+
+// Search: by name (substring) or exact ID, best sellers first.
+$("q").addEventListener("input", function () {
+  var q = this.value.trim().toLowerCase(), ul = $("results");
+  ul.textContent = ""; sel = -1; matches = [];
+  if (!q || !index) { ul.hidden = true; this.setAttribute("aria-expanded", "false"); return; }
+  Object.keys(index.items).forEach(function (id) {
+    var n = (index.items[id][0] || "").toLowerCase();
+    if (id === q || n.indexOf(q) >= 0) matches.push(id);
+  });
+  matches.sort(function (a, b) { return index.items[b][1] - index.items[a][1]; });
+  matches = matches.slice(0, 20);
+  if (!matches.length) { var li = el("li"); li.append(el("span", null, "No item found")); ul.append(li); }
+  matches.forEach(function (id, i) {
+    var li = el("li"); li.setAttribute("role", "option"); li.dataset.id = id; li.id = "opt" + i;
+    li.append(el("span", null, itemName(id, index.items[id][0])), el("span", null, index.items[id][1].toLocaleString() + " sold"));
+    li.addEventListener("mousedown", function (e) { e.preventDefault(); pick(id); });
+    ul.append(li);
+  });
+  ul.hidden = false; this.setAttribute("aria-expanded", "true");
+});
+$("q").addEventListener("keydown", function (e) {
+  var lis = $("results").querySelectorAll("li[role=option]");
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault(); if (!lis.length) return;
+    sel = (sel + (e.key === "ArrowDown" ? 1 : -1) + lis.length) % lis.length;
+    lis.forEach(function (li, i) { li.setAttribute("aria-selected", i === sel ? "true" : "false"); });
+    lis[sel].scrollIntoView({ block: "nearest" });
+    this.setAttribute("aria-activedescendant", lis[sel].id);
+  } else if (e.key === "Enter") {
+    if (matches.length) pick(matches[sel >= 0 ? sel : 0]);
+  } else if (e.key === "Escape") { $("results").hidden = true; }
+});
+$("q").addEventListener("blur", function () { $("results").hidden = true; this.setAttribute("aria-expanded", "false"); });
+function pick(id) { $("q").value = ""; $("results").hidden = true; $("q").blur(); open(id); }
+
+window.addEventListener("hashchange", function () { var id = location.hash.slice(1); if (index && has(index.items, id) && (!item || String(item.item) !== id)) open(id); });
+// Keep "now" current: redraw when the hour turns and when the tab comes back.
+function tick() { if (item) render(); setTimeout(tick, 3600000 - Date.now() % 3600000 + 1000); }
+setTimeout(tick, 3600000 - Date.now() % 3600000 + 1000);
+document.addEventListener("visibilitychange", function () { if (!document.hidden && item) render(); });
+$("tabs").addEventListener("click", function (e) {
+  var b = e.target.closest("button"); if (!b) return;
+  metric = b.dataset.m;
+  this.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
+  if (item) render();
+});
+var lastTall = null;
+window.addEventListener("resize", function () { var t = window.matchMedia("(max-width: 760px)").matches; if (item && t !== lastTall) { lastTall = t; render(); } });
+
+// Cell tooltip.
+function showTip(e) {
+  var c = e.target.closest(".c"), tip = $("tip");
+  if (!c || !item) { tip.hidden = true; return; }
+  var w = +c.dataset.w, d = null;
+  item.cells.forEach(function (x) { if (x[0] === w) d = x; });
+  tip.textContent = "";
+  tip.append(el("div", null, localName(+c.dataset.l)));
+  if (!d) tip.append(el("div", "sub", "No data"));
+  else {
+    var a = el("div"); a.append("Sales " + (Math.round(d[1] * 10) / 10) + " · Lowest "); a.append(money(d[4])); tip.append(a);
+    tip.append(el("div", null, "Listed " + Math.round(d[5]).toLocaleString()));
+  }
+  tip.hidden = false;
+  var x = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
+  tip.style.left = x + "px"; tip.style.top = (e.clientY + 14) + "px";
+}
+$("hm").addEventListener("mousemove", showTip);
+$("hm").addEventListener("click", showTip); // taps on a phone
+$("hm").addEventListener("mouseleave", function () { $("tip").hidden = true; });
+
+init();
+</script>
+</body>
+</html>

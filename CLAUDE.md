@@ -18,9 +18,11 @@ Goal: everything TradeSkillMaster does for the auction house, with improvements.
   call the WoW API. Pass data in, get data out. That is what we unit test.
 - Isolate WoW API calls behind thin adapter modules (for example an `AuctionAPI` module) so the pure
   modules can be tested with fakes. Forever's AH API (legacy `QueryAuctionItems` vs `C_AuctionHouse`)
-  must be confirmed before building on it.
+  is settled: `C_AuctionHouse` only (ADR 0004, `docs/reference/forever-api.md`).
 - Money is always an integer number of copper.
 - Add any new WoW global you read to `read_globals` in `.luacheckrc`.
+- Before calling a WoW API you haven't used here, check `docs/reference/forever-api.md`: many Classic globals
+  (`GetItemInfo`, `GetCoinTextureString`, ...) are gone on Forever, and some AH calls only work inside a click.
 
 ## Testing (feedback loops)
 

@@ -1339,6 +1339,15 @@ function Window.install(env, addon)
       if w.frame and w.frame:IsShown() and w.model.view == "alts" then w:renderAlts() end
     end
   end
+  -- Redraw Disenchant > Results when a disenchant is recorded while it is on screen (#258).
+  if addon.disenchantWatch then
+    addon.disenchantWatch.onChange = function()
+      local v = w.disenchantView
+      if w.frame and w.frame:IsShown() and w.model.view == "disenchant" and v and v.tab == "results" then
+        v.results:render()
+      end
+    end
+  end
   if addon.Probes then
     addon.Probes.suite():add("Better AH window", function()
       local ok, frame = pcall(w.build, w)

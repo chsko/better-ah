@@ -63,6 +63,7 @@ UI/Loading.lua
 UI/Dropdown.lua
 UI/PostView.lua
 UI/SnipeView.lua
+UI/ResultsView.lua
 UI/ValueChart.lua
 UI/DisenchantView.lua
 UI/SettingsView.lua

@@ -11,7 +11,8 @@ ns = ns or {}
 local DisenchantView = {}
 DisenchantView.__index = DisenchantView
 
-DisenchantView.TABS = { { "values", "Values" }, { "targets", "Targets" }, { "snipe", "Snipe" } }
+DisenchantView.TABS = { { "values", "Values" }, { "targets", "Targets" }, { "snipe", "Snipe" },
+  { "results", "Results" } }
 -- Laid out to fit beside the scroll bar (518 px): the names keep their room, the money columns give it up.
 -- The target name already says its item types ("Armor, req. 21-25"), so the list has no column for them.
 -- Cheapest and Profit now are the target's best listing right now (#246).
@@ -254,6 +255,10 @@ function DisenchantView:build(f, x, y, width, height)
   self.snipePanel = subPanel(env, panel, width, height)
   self.snipe:build(self.snipePanel, width)
   self:buildEditors()
+  -- What each target really earned (#258), built after the editors so its detail box sits with theirs.
+  self.results = ns.ResultsView.new(self)
+  self.resultsPanel = subPanel(env, panel, width, height)
+  self.results:build(self.resultsPanel, width)
   return panel
 end
 
@@ -663,6 +668,7 @@ function DisenchantView:hideEditors()
   if self.editor then self.editor:Hide() end
   if self.makeButton then self.makeButton:Hide() end
   if self.bandDetail then self.bandDetail:Hide(); self.salvagerNote:Hide() end
+  if self.results then self.results:hide() end
 end
 
 function DisenchantView:selectTab(tab)
@@ -839,6 +845,8 @@ function DisenchantView:render()
   self.targetsPanel:SetShown(self.tab == "targets")
   self.snipePanel:SetShown(self.tab == "snipe")
   if self.tab ~= "snipe" then self.snipe:hide() end
+  self.resultsPanel:SetShown(self.tab == "results")
+  if self.tab ~= "results" then self.results:hide() end
   -- Only hidden when it goes away: hiding the editor would take focus from the profit box.
   if self.tab ~= "targets" then self.editor:Hide() end
   if self.tab ~= "values" then
@@ -850,6 +858,8 @@ function DisenchantView:render()
     self:renderTargets()
   elseif self.tab == "snipe" then
     self.snipe:render()
+  elseif self.tab == "results" then
+    self.results:render()
   else
     self:renderValues(key, opts)
   end

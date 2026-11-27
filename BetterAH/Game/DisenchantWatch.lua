@@ -94,6 +94,7 @@ function DisenchantWatch:loot()
   local tracker = self.addon.CharacterTracker
   local char = tracker and tracker.characterKey and tracker.characterKey(self.env) or nil
   profit:disenchanted(got.item, got.suffix, char, try(self.env.GetServerTime) or 0, got.mats, paid and paid.unit)
+  if self.onChange then pcall(self.onChange) end
   return got
 end
 

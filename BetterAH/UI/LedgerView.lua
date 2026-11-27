@@ -243,6 +243,8 @@ function LedgerView:build(f, x, y, width, height)
   footer:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 0, 6) -- clear of the last row and the frame edge
   footer:SetWidth(width - 24)
   footer:SetJustifyH("LEFT")
+  -- One line, so a narrower list (#242) cuts it short rather than wrapping it into the last row.
+  if footer.SetWordWrap then footer:SetWordWrap(false) end
   self.footer = footer
 
   local api = self.addon.ledgerAPI
@@ -254,6 +256,24 @@ function LedgerView:build(f, x, y, width, height)
     end
   end
   return panel
+end
+
+-- Lays the view out for a list listWidth wide, as the divider beside the detail panel is dragged (#236,
+-- #242): both lists, the By day chart (its days spread over the new width) and the texts under them.
+function LedgerView:layoutPanes(listWidth)
+  self.width = listWidth
+  self.panel:SetWidth(listWidth)
+  -- The Item column takes the change in both lists (Transactions starts with When).
+  for _, pair in ipairs({ { self.entryList, self.entryRows, LedgerView.ENTRY_COLUMNS, 3 },
+    { self.itemList, self.itemRows, LedgerView.ITEM_COLUMNS, 1 } }) do
+    pair[1]:SetWidth(listWidth)
+    ns.Window.layoutRows(pair[2], pair[1], ns.Window.fitColumns(pair[3], listWidth, true, pair[4]), listWidth)
+  end
+  self.chart:SetWidth(listWidth - 24)
+  self.empty:SetWidth(listWidth - 40)
+  self.footer:SetWidth(listWidth - 24)
+  -- The lists' cells were placed again above; only the By day chart is drawn for a width.
+  if self.tab == "days" and self.panel:IsShown() and self.window.model.view == "ledger" then self:render() end
 end
 
 -- The By day chart: a column per day, gold in rising from the middle line, gold out falling below it.

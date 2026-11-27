@@ -4504,8 +4504,12 @@ describe("Resizable detail panel (#236)", function()
   end)
 
   it("hides the divider on a view not laid out for other widths yet", function()
-    local _, w = open({ ledger = 400, disenchant = 400 })
+    local _, w, ns = open({ ledger = 400, disenchant = 400 })
+    -- Every resizable view lays itself out now: take Ledger's away to check the gate.
+    local layout = ns.LedgerView.layoutPanes
+    ns.LedgerView.layoutPanes = nil
     sidebarButton(w, "ledger"):Click()
+    ns.LedgerView.layoutPanes = layout
     assert.is_false(w.paneDivider:IsShown())
     assert.equal(300, w.detailPanel:GetWidth(), "a saved width doesn't apply to it")
     sidebarButton(w, "disenchant"):Click()
@@ -4660,6 +4664,28 @@ describe("Resizable detail panel (#236)", function()
       assert.equal(420, ns.paneSettings[case[1]])
     end)
   end
+
+  it("lays the Ledger out for the width, with the By day chart spread over it (#242)", function()
+    local env, w, ns = open()
+    sidebarButton(w, "ledger"):Click()
+    assert.is_true(w.paneDivider:IsShown())
+    local v = w.ledgerView
+    drag(env, w.paneDivider, 500, 2000)
+    assert.equal(600, v.panel:GetWidth())
+    assert.equal(600, v.entryList:GetWidth())
+    assert.equal(600, v.itemList:GetWidth())
+    assert.equal(576, v.chart:GetWidth())
+    assert.equal(576, v.footer.width)
+    assert.equal(600, v.width, "the chart's days spread over the new width")
+    env.cursorX = 0
+    w.paneDivider.scripts.OnUpdate(w.paneDivider, 0.01)
+    assert.equal(420, v.entryList:GetWidth())
+    local lists = { { v.entryRows, ns.LedgerView.ENTRY_COLUMNS }, { v.itemRows, ns.LedgerView.ITEM_COLUMNS } }
+    for _, pair in ipairs(lists) do
+      local last = pair[1][1][#pair[2]]
+      assert.is_true(last.points.LEFT.x + last.width <= 420 - 22, "the last column stays clear of the scroll bar")
+    end
+  end)
 
   it("opens Post at its saved width", function()
     local _, w = open({ post = 260 })

@@ -277,10 +277,8 @@ function DisenchantView:buildValues(p, width)
   note:SetPoint("TOPLEFT", p, "TOPLEFT", 4, -32 - (#ns.Disenchant.greenBands() + 1) * 18 - 8)
   note:SetWidth(width - 8)
   note:SetJustifyH("LEFT")
-  note:SetText("What one green of each band is worth disenchanted, after the 5% auction house cut. "
-    .. "Required level is usually 5 below item level. * Some of its materials have no price yet, so the "
-    .. "value is too low. Scan materials to price them. A full scan updates these values too. "
-    .. "Green and red: what the latest scan changed.")
+  note:SetText("One green's value disenchanted, after the 5% cut. Required level is usually 5 below item "
+    .. "level. * A material has no price yet.")
   self.note = note
 end
 
@@ -811,26 +809,26 @@ function DisenchantView:renderValues(key, opts)
   local scanning = (addon.auctionAPI and addon.auctionAPI.pending) or w.materialScan
   if scanning then self.materialsButton:Disable() else self.materialsButton:Enable() end
   w:showProgress(self.loading)
-  -- Where the prices come from and what the green and red compare with (#143): a full scan updates these
-  -- values too, so the line names the scan rather than leaving "the scan 2 h ago" to read as stale prices.
-  local text
-  -- A materials scan's own message comes first. It needn't name its own prices again, nor the ones it is
-  -- replacing while it runs; when it found nothing, the prices are still the earlier scan's, so say so.
+  -- One short line (#143, #197): which scan the prices come from and what the green and red compare with.
+  -- A materials scan's own message shows while it runs, and after it only when something failed or it
+  -- found nothing; then the line still names the scan the prices come from.
   local own = w.materialStatus and w.materialMarket == key
-  local source = ns.ValueHistory.sourceText(self.newest, self.base, self.now, {
-    skipSource = own and (w.materialScan ~= nil or (self.newest and self.newest.kind == "materials")),
-    market = not own and key and ns.MarketKey.describe(key) or nil,
-  })
-  if own then
+  local alone = own and (w.materialScan ~= nil or w.materialStatus == ns.Window.MATERIALS_WAIT)
+  own = own and not alone and not w.materialQuiet
+  local source = ns.ValueHistory.sourceText(self.newest, self.base, self.now,
+    { skipSource = own and self.newest and self.newest.kind == "materials" })
+  local text
+  if alone then
     text = w.materialStatus
-  elseif key and source ~= "" then
-    text = ""
+  elseif own then
+    text = w.materialStatus .. (source ~= "" and (" " .. source) or "")
+  elseif source ~= "" then
+    text = source
   elseif key then
     text = "Prices from " .. ns.MarketKey.describe(key) .. "."
   else
     text = "Open the auction house to see prices."
   end
-  if source ~= "" then text = text == "" and source or (text .. " " .. source) end
   self.status:SetText(text)
 
   local chosen

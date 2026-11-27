@@ -984,7 +984,7 @@ describe("Window", function()
       env.auctions = { { name = "Linen Cloth", count = 20, buyout = 4000, itemID = 2589 } }
       w:startScan()
       env.runTimers()
-      assert.equal("Prices for ruleset 1, Horde from the full scan just now.", w.disenchantView.status:GetText())
+      assert.equal("Full scan just now.", w.disenchantView.status:GetText())
     end)
 
     local function typeIn(box, text)
@@ -1123,7 +1123,7 @@ describe("Window", function()
       assert.is_true(w.disenchantView.loading.barFrame:IsShown())
       env.runTimers()
       assert.is_false(w.disenchantView.loading.barFrame:IsShown())
-      assert.equal("Materials: 1 updated, 23 not listed by others.", w.disenchantView.status:GetText())
+      assert.equal("Materials scan just now.", w.disenchantView.status:GetText(), "a clean result is one short line")
       assert.is_true(w.disenchantView.materialsButton:IsEnabled())
       assert.are_not.equal("14s 20c", band(w, 4)[3], "the new Soul Dust price counts")
     end)
@@ -1137,10 +1137,10 @@ describe("Window", function()
       assert.equal(1, #ns.disenchant.snapshots["/1/Horde"])
       assert.equal("full", ns.disenchant.snapshots["/1/Horde"][1].kind)
       w:select("disenchant")
-      assert.equal("Prices for ruleset 1, Horde from the full scan just now.", v.status:GetText())
+      assert.equal("Full scan just now.", v.status:GetText())
       v.materialsButton:Click()
       env.runTimers()
-      assert.equal("Materials: 0 updated, 24 not listed by others. Prices from the full scan just now.",
+      assert.equal("Materials: 0 updated, 24 not listed by others. Full scan just now.",
         v.status:GetText(), "a materials scan that found nothing leaves the full scan's prices")
       env.now = env.now + 2 * 3600
       w.addon.auctionAPI.store.answeredAt = nil
@@ -1148,8 +1148,7 @@ describe("Window", function()
       env.auctions[2] = { name = "Soul Dust", count = 10, buyout = 6000, itemID = 11083 } -- a fresh list
       env.runTimers()
       w:select("disenchant")
-      assert.equal("Prices for ruleset 1, Horde from the full scan just now. Green and red: change from the full "
-        .. "scan 2 h ago.", v.status:GetText())
+      assert.equal("Full scan just now. Changes since 2 h ago.", v.status:GetText())
     end)
 
     it("marks what the last scan changed in green or red (#106)", function()
@@ -1159,20 +1158,28 @@ describe("Window", function()
       v.materialsButton:Click()
       env.runTimers()
       assert.is_nil(band(w, 4)[3]:find("|c", 1, true), "nothing to compare the first scan with")
-      assert.is_nil(v.status:GetText():find("Green and red", 1, true))
+      assert.is_nil(v.status:GetText():find("Changes since", 1, true))
       env.listings[11083] = { { unitPrice = 900, quantity = 50 } }
       v.materialsButton:Click()
       env.runTimers()
       assert.equal(2, #ns.disenchant.snapshots["/1/Horde"])
       assert.matches("|cff1eff00+", band(w, 4)[3], 1, true)
-      assert.equal("Materials: 1 updated, 23 not listed by others. Green and red: change from the materials "
-        .. "scan just now.", v.status:GetText())
+      assert.equal("Materials scan just now. Changes since a moment ago.", v.status:GetText())
+      w.materialStatus, w.materialQuiet = "Materials: 23 updated, 0 not listed by others, 1 failed (x).", false
+      v:render()
+      assert.equal("Materials: 23 updated, 0 not listed by others, 1 failed (x). Changes since a moment ago.",
+        v.status:GetText(), "a failure stays, without naming the materials scan twice")
+      w.materialStatus = w.MATERIALS_WAIT
+      v:render()
+      assert.equal(w.MATERIALS_WAIT, v.status:GetText(), "the wait message stands alone")
+      w.materialStatus, w.materialQuiet = nil, true
       v.rows[4].button:Click()
       assert.matches("^|cff1eff00%+", v.classBoxes.armor.change:GetText())
       assert.matches("^|cff1eff00%+", v.materialLines[1][5]:GetText(), "Soul Dust went up")
       assert.equal("same", v.materialLines[2][5]:GetText(), "Greater Astral Essence didn't move")
       env.listings[11083] = { { unitPrice = 100, quantity = 50 } }
       v.materialsButton:Click()
+      assert.equal("Scanning materials: 0 of 24.", v.status:GetText(), "a running scan stands alone")
       env.runTimers()
       assert.matches("^|cffff4a3a%-", v.materialLines[1][5]:GetText(), "and down again, in red")
     end)

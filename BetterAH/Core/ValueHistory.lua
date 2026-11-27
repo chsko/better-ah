@@ -46,29 +46,19 @@ function ValueHistory.latest(store, key)
   return list and list[#list] or nil
 end
 
--- Which scan took a snapshot, for the status line. Snapshots saved before #143 don't say.
-function ValueHistory.scanName(snapshot)
-  local kind = snapshot and snapshot.kind
-  if kind == "full" then return "the full scan" end
-  if kind == "materials" then return "the materials scan" end
-  return "the scan"
-end
-
--- The Values status line's sentences on where the prices come from (latest) and what the green and red
--- changes compare with (base), like "Prices from the full scan 3 min ago. Green and red: change from the
--- full scan 2 h ago." Either part is left out without its snapshot; opts.skipSource leaves out the first
--- sentence (a running materials scan says what it is doing), opts.market names the market in it, like
--- "Prices for Normal, Horde from the full scan 3 min ago." Returns "" for nothing to say.
+-- The Values status line (#143, shortened in #197): which scan the prices come from and what the green and
+-- red changes compare with, like "Full scan 3 min ago. Changes since 2 h ago." Either part is left out
+-- without its snapshot; opts.skipSource leaves out the first (a materials scan's message says it).
+-- Returns "" for nothing to say.
 function ValueHistory.sourceText(latest, base, now, opts)
   local out = {}
   if latest and not (opts and opts.skipSource) then
-    local market = opts and opts.market
-    out[#out + 1] = "Prices " .. (market and ("for " .. market .. " ") or "") .. "from "
-      .. ValueHistory.scanName(latest) .. " " .. ns.Time.ago(latest.time, now) .. "."
+    local names = { full = "Full scan", materials = "Materials scan" }
+    out[#out + 1] = (names[latest.kind] or "Last scan") .. " " .. ns.Time.ago(latest.time, now) .. "."
   end
   if base then
-    out[#out + 1] = "Green and red: change from " .. ValueHistory.scanName(base) .. " "
-      .. ns.Time.ago(base.time, now) .. "."
+    local ago = ns.Time.ago(base.time, now)
+    out[#out + 1] = "Changes since " .. (ago == "just now" and "a moment ago" or ago) .. "."
   end
   return table.concat(out, " ")
 end

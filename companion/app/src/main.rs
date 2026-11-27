@@ -140,8 +140,7 @@ impl Collect {
             files.len() - 1,
             lua.len()
         );
-        fs::write(self.out.join("index.html"), index_html(&stats))
-            .map_err(|e| format!("index: {e}"))?;
+        fs::write(self.out.join("index.html"), INDEX_HTML).map_err(|e| format!("index: {e}"))?;
         fs::write(self.out.join(".nojekyll"), "").map_err(|e| format!(".nojekyll: {e}"))?;
         println!(
             "items={} rows={}",
@@ -369,49 +368,5 @@ fn system_to_unix(t: SystemTime) -> i64 {
         .unwrap_or(0)
 }
 
-/// Placeholder page until the heatmap (#219) exists.
-fn index_html(stats: &Stats) -> String {
-    let when = |t: Option<i64>| {
-        t.map(|t| httpdate::fmt_http_date(unix_to_system(t)))
-            .unwrap_or_else(|| "never".into())
-    };
-    let selling = stats
-        .items
-        .values()
-        .filter(|rows| rows.iter().any(|r| r.sold > 0))
-        .count();
-    format!(
-        r#"<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Better AH sell times</title>
-<style>
-:root {{ color-scheme: light dark; --bg: #f7f5f0; --fg: #1d1b16; --muted: #6b665c; }}
-@media (prefers-color-scheme: dark) {{ :root {{ --bg: #16140f; --fg: #ece8df; --muted: #a29c90; }} }}
-body {{ background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 32px 16px; }}
-main {{ max-width: 640px; margin: 0 auto; }}
-dl {{ display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; }}
-dt {{ color: var(--muted); }}
-</style>
-</head>
-<body>
-<main>
-<h1>Better AH sell times</h1>
-<p>Collecting the Horde Normal auction house (EU) for the best-time-to-sell heatmap. The heatmap comes once there is enough data.</p>
-<dl>
-<dt>Collecting since</dt><dd>{since}</dd>
-<dt>Latest export</dt><dd>{last}</dd>
-<dt>Items seen (30 days)</dt><dd>{items}</dd>
-<dt>Items with estimated sales</dt><dd>{selling}</dd>
-</dl>
-</main>
-</body>
-</html>
-"#,
-        since = when(stats.collecting_since),
-        last = when(stats.last_export),
-        items = stats.items.len(),
-    )
-}
+/// The sell times page (#219). It only shows the published JSON; all numbers come from `core`.
+const INDEX_HTML: &str = include_str!("../site/index.html");

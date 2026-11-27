@@ -89,3 +89,13 @@ A recipe one of your characters has learned, read from that character's professi
 
 **Crafting profit**:
 The net profit of crafting a known recipe: the crafted item's sale value minus the market value of its reagents.
+
+## Mail
+
+**Mailbox window**:
+Better AH's own window at a mailbox, separate from the Better AH auction house window. It replaces Blizzard's mail frame unless that is turned off in Settings.
+_Avoid_: mail frame (that is Blizzard's), mail view
+
+**Mail kind**:
+What a mail is, from the player's point of view: Sold, Bought, Outbid, Cancelled, Expired, Other (player mail), Letter (player mail with text, or from a Game Master) or COD (pay on delivery).
+_Avoid_: mail type, category

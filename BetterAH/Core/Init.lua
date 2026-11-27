@@ -33,6 +33,9 @@ frame:SetScript("OnEvent", function(self, event, loadedName)
     if type(BetterAHDB.browse.history) ~= "table" then BetterAHDB.browse.history = {} end
     ns.browseSettings = BetterAHDB.browse
     if ns.SearchHistory then ns.searchHistory = ns.SearchHistory.new(BetterAHDB.browse.history) end
+    -- The Mailbox window's settings (#154): replace = false keeps Blizzard's mail frame.
+    if type(BetterAHDB.mail) ~= "table" then BetterAHDB.mail = {} end
+    ns.mailSettings = BetterAHDB.mail
     BetterAHDB.fullScan = BetterAHDB.fullScan or {}
     if ns.auctionAPI then ns.auctionAPI:useStore(BetterAHDB.fullScan) end
     self:UnregisterEvent("ADDON_LOADED")

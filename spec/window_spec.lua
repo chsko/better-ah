@@ -2919,6 +2919,76 @@ describe("Browse item page, after review", function()
     item.commodityControls.buy:Click()
     assert.is_true(item.busy, "still waiting for the quote")
   end)
+
+  -- #162: a buy's answer can come after the page has moved on. It is booked for the item that was bought.
+  local function booked(ns)
+    local out = {}
+    for _, e in ipairs(ns.ledger.store.entries) do
+      if e.k == "buy" then out[#out + 1] = { item = e.item, name = e.name, n = e.n, c = e.c, src = e.src } end
+    end
+    return out
+  end
+
+  it("books a buyout answered after leaving the item page (#162)", function()
+    local env, _, ns, view = setupItem()
+    local item = open(view, env, "Battleforge Shoulderpads")
+    item.itemRows[1].button:Click()
+    local placeBid = env.C_AuctionHouse.PlaceBid
+    env.C_AuctionHouse.PlaceBid = function(id, amount) env.bids[#env.bids + 1] = { auctionID = id, amount = amount } end
+    item.itemControls.buy:Click()
+    item.backButton:Click()
+    assert.is_nil(item.row, "the page is closed before the answer")
+    env.C_AuctionHouse.PlaceBid = placeBid
+    env.fire("AUCTION_HOUSE_PURCHASE_COMPLETED", 5)
+    env.runTimers()
+    assert.same({ { item = 10, name = "Battleforge Shoulderpads", n = 1, c = 1250, src = "Browse" } }, booked(ns))
+    assert.is_truthy(ns.purchases:paid("i:10"), "You paid is recorded")
+    assert.is_nil(item.row, "the closed page stays closed")
+  end)
+
+  it("books a late buyout success without touching the page's next buy (#162)", function()
+    local env, _, ns, view = setupItem()
+    env.listings[10][2] = { auctionID = 6, buyoutAmount = 1300, minBid = 900, owners = { "Grukdar" } }
+    local item = open(view, env, "Battleforge Shoulderpads")
+    item.itemRows[1].button:Click()
+    local placeBid = env.C_AuctionHouse.PlaceBid
+    env.C_AuctionHouse.PlaceBid = function(id, amount) env.bids[#env.bids + 1] = { auctionID = id, amount = amount } end
+    item.itemControls.buy:Click()
+    env.runTimers(10)
+    assert.truthy(item.messageText:GetText():find("No answer", 1, true))
+    item.itemRows[2].button:Click()
+    item.itemControls.buy:Click()
+    assert.is_true(item.busy, "the second buy waits")
+    env.fire("AUCTION_HOUSE_PURCHASE_COMPLETED", 5)
+    assert.is_true(item.busy, "the late answer to the first buy doesn't free the buttons")
+    assert.equal(1, #booked(ns), "but it is booked")
+    env.C_AuctionHouse.PlaceBid = placeBid
+  end)
+
+  it("books a late commodity success under the item bought, not the one open now (#162)", function()
+    local env, _, ns, view = setupItem()
+    local item = open(view, env, "Strange Dust")
+    local c = item.commodityControls
+    c.quantity:SetText("2")
+    item:quantityChanged()
+    env.quote = function(_, qty) return 98, qty * 98 end
+    c.buy:Click()
+    env.runTimers()
+    local confirm = env.C_AuctionHouse.ConfirmCommoditiesPurchase
+    env.C_AuctionHouse.ConfirmCommoditiesPurchase = function() end
+    c.confirm:Click()
+    env.runTimers(ns.BrowseAPI.TIMEOUT + 1)
+    env.C_AuctionHouse.ConfirmCommoditiesPurchase = confirm
+    item = open(view, env, "Battleforge Shoulderpads")
+    assert.equal(10, item.row.itemID)
+    env.fire("COMMODITY_PURCHASE_SUCCEEDED")
+    env.runTimers()
+    assert.same({ { item = 20, name = "Strange Dust", n = 2, c = 196, src = "Browse" } }, booked(ns))
+    assert.is_truthy(ns.purchases:paid("i:20"))
+    assert.is_nil(ns.purchases:paid("i:10"), "nothing booked for the item open now")
+    assert.is_nil((item.messageText:GetText() or ""):find("Bought", 1, true),
+      "the other item's page doesn't say it was bought")
+  end)
 end)
 
 describe("My auctions view (#123)", function()

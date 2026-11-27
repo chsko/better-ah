@@ -22,7 +22,7 @@ TooltipPrices.SETTINGS = {
   { key = "shift", label = "Hold Shift for bag totals", sub = true,
     tip = "With Shift held, show the value of every one of the item in your bags." },
   { key = "lowest", label = "Min buyout", sub = true,
-    tip = "The cheapest buyout in your latest scan, and how old that scan is." },
+    tip = "The cheapest buyout in your latest scan, and how old that scan is. With Shift held, for all in your bags." },
   { key = "sales", label = "Sold, past 7 days", sub = true,
     tip = "How many you sold, of how many you posted, on all your characters in the last 7 days (from the Ledger)." },
 }
@@ -83,13 +83,14 @@ function TooltipPrices.lines(item, opts)
     rows[#rows + 1] = { label = label, money = TooltipPrices.round(copper), sign = sign }
   end
 
-  local function lowest(each)
+  -- count: how many it prices (the bag count while Shift is held, #210), like the other lines.
+  local function lowest(count)
     -- Not without a market value: a scan that old says nothing about today, and the "no price" line says why.
     local c = opts.lowest and value and item.current
     if not c then return end
     local age = ns.Time and (" (" .. ns.Time.ago(c.seen, item.now) .. ")") or ""
     if c.listed and c.lowest and c.lowest > 0 then
-      money("Min buyout" .. (each and ", each" or "") .. age, c.lowest)
+      money("Min buyout" .. age, c.lowest * count)
     else
       rows[#rows + 1] = { label = "Min buyout" .. age, text = "none listed", dim = true }
     end
@@ -105,7 +106,7 @@ function TooltipPrices.lines(item, opts)
   if total then
     out.note = "(" .. bags .. " in bags)"
     if value then money("Market value", value * bags) end
-    lowest(true)
+    lowest(bags)
     sales()
     if de then money("Disenchant value", de * bags) end
     if paid then
@@ -121,7 +122,7 @@ function TooltipPrices.lines(item, opts)
   else
     if item.stackable then out.note = "(each)" end
     if value then money("Market value", value) end
-    lowest(false)
+    lowest(1)
     sales()
     if de then money("Disenchant value", de) end
     if paid then

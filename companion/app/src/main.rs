@@ -24,7 +24,12 @@ use flate2::Compression;
 use serde_json::Value;
 
 /// Most item names looked up per run, to stay far below the API's hourly quota.
-const NAME_LOOKUPS_PER_RUN: usize = 300;
+const NAME_LOOKUPS_PER_RUN: usize = 1500;
+/// Longest time a run spends on name lookups.
+const NAME_LOOKUP_TIME: Duration = Duration::from_secs(6 * 60);
+/// Where item names come from, in order. Forever's own static data lacks many items (#219),
+/// so items it lacks are looked up in Classic Era's, which shares item IDs with Classic.
+const NAME_NAMESPACES: [&str; 2] = ["static-forever", "static-classic1x"];
 
 type Res<T> = Result<T, String>;
 
@@ -226,9 +231,16 @@ impl Collect {
     }
 
     fn lookup_names(&self, api: &Api, stats: &mut Stats) {
+        stats.forget_missing_names(NAME_NAMESPACES.len() as u32);
         let todo = stats.unnamed();
         let mut done = 0;
+        let started = std::time::Instant::now();
         for item in todo.into_iter().take(NAME_LOOKUPS_PER_RUN) {
+            // Leave time to save the run well inside the job's 20-minute limit.
+            if started.elapsed() > NAME_LOOKUP_TIME {
+                println!("name lookups stopped: time is up");
+                break;
+            }
             match api.item_name(item) {
                 Ok(name) => {
                     stats.names.insert(item, name);
@@ -333,17 +345,24 @@ impl Api {
         Ok(Fetched { body, modified })
     }
 
-    /// The item's name, `None` if the static API has no entry (404).
+    /// The item's name, `None` if no static namespace in `NAME_NAMESPACES` has it (404).
     fn item_name(&self, item: u32) -> Res<Option<String>> {
         let path = format!("/data/wow/item/{item}?locale=en_GB");
-        match self.get(&path, &format!("static-forever-{}", self.region)) {
-            Ok(resp) => {
-                let v: Value = resp.into_json().map_err(|e| format!("item {item}: {e}"))?;
-                Ok(v.get("name").and_then(Value::as_str).map(str::to_string))
+        for ns in NAME_NAMESPACES {
+            match self.get(&path, &format!("{ns}-{}", self.region)) {
+                Ok(resp) => {
+                    // An unreadable entry is treated like a missing one, so one bad item
+                    // can't stop every later lookup.
+                    let v: Option<Value> = resp.into_json().ok();
+                    if let Some(name) = v.as_ref().and_then(|v| v.get("name")?.as_str()) {
+                        return Ok(Some(name.to_string()));
+                    }
+                }
+                Err(e) if matches!(*e, ureq::Error::Status(404, _)) => {}
+                Err(e) => return Err(format!("item {item}: {}", status_only(&e))),
             }
-            Err(e) if matches!(*e, ureq::Error::Status(404, _)) => Ok(None),
-            Err(e) => Err(format!("item {item}: {}", status_only(&e))),
         }
+        Ok(None)
     }
 }
 

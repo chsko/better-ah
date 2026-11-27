@@ -122,6 +122,26 @@ function ItemView:build(parent, width, height)
   return panel
 end
 
+-- Lays the page out for a list listWidth wide beside a detail panel detailWidth wide, as the divider
+-- between them is dragged (#236, #243). Seller and Running total take the change.
+function ItemView:layoutPanes(listWidth, detailWidth)
+  self.panel:SetWidth(listWidth)
+  self.nameText:SetWidth(listWidth - 310) -- between < Results and the market value left of Refresh
+  for _, part in ipairs({ { self.itemList, self.itemRows, ItemView.ITEM_COLUMNS, 4 },
+    { self.commodityList, self.commodityRows, ItemView.COMMODITY_COLUMNS, 3 } }) do
+    part[1]:SetWidth(listWidth)
+    ns.Window.layoutRows(part[2], part[1], ns.Window.fitColumns(part[3], listWidth, true, part[4]), listWidth)
+  end
+  self.status:SetWidth(listWidth - 8)
+  -- With the spinner showing, the status line starts right of it: Loading places it.
+  if self.loading and self.loading.at then
+    self.loading.at[6] = listWidth - 8
+    self.loading:reflow()
+  end
+  self.messageText:SetWidth(detailWidth - 24)
+  self.commodityControls.confirmText:SetWidth(detailWidth - 24)
+end
+
 -- The buy out and bid controls for an item, on the detail panel.
 function ItemView:buildItemControls()
   local env, layer = self.env, self.window.detailLayer

@@ -282,7 +282,27 @@ describe("PostingAPI", function()
     env.fire("AUCTION_HOUSE_AUCTION_CREATED", 1)
     env.fire("AUCTION_HOUSE_POST_ERROR")
     env.fire("AUCTION_HOUSE_SHOW_ERROR", 2)
+    assert.same({ { true }, { false } }, seen, "a show error with no post waiting is about something else (#163)")
+    api.sending = true
+    env.fire("AUCTION_HOUSE_SHOW_ERROR", 2)
     assert.same({ { true }, { false }, { false, 2 } }, seen)
+    env.fire("AUCTION_HOUSE_SHOW_ERROR", 3)
+    assert.equal(3, #seen, "one answer per post")
+  end)
+
+  it("takes a show error as the post's answer only while a sent post waits (#163)", function()
+    local env, api, ns = setup()
+    env.containers[0] = { linen }
+    local seen = {}
+    api.onPosted = function(ok, err) seen[#seen + 1] = { ok, err } end
+    local e = ns.PostingAPI.readBags(env)[1]
+    assert.equal("sent", (api:post(e, { action = "post", quantity = 1, price = 100, duration = 2 })))
+    env.fire("AUCTION_HOUSE_SHOW_ERROR", 7)
+    assert.same({ { false, 7 } }, seen)
+    assert.equal("sent", (api:post(e, { action = "post", quantity = 1, price = 100, duration = 2 })))
+    api:giveUp()
+    env.fire("AUCTION_HOUSE_SHOW_ERROR", 7)
+    assert.equal(1, #seen, "the view gave up waiting: the error is not about the post")
   end)
 
   it("adds a self-test check for the posting functions, without posting", function()

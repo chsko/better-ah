@@ -110,9 +110,14 @@ function PostView.detailText(row, ownFloor, marketValue, step)
       add(string.format("Your own auction is the cheapest listing, at %s each, so this posts at %s "
         .. "instead of undercutting you%s.", money(math.ceil(plan.matched)), money(plan.price),
         plan.price > plan.matched and " (rounded up to the price step the auction house takes)" or ""))
+    elseif plan.undercut and plan.price >= plan.undercut then
+      -- At the lowest price step there is nothing below the competitor to go to.
+      add(string.format("The cheapest other listing is %s each, the lowest price the auction house takes, so "
+        .. "this posts at %s too.", money(math.ceil(plan.undercut)), money(plan.price)))
     elseif plan.undercut then
+      local gap = math.ceil(plan.undercut) - plan.price
       add(string.format("The cheapest other listing is %s each, so this posts at %s, %s under it.",
-        money(math.ceil(plan.undercut)), money(plan.price), under))
+        money(math.ceil(plan.undercut)), money(plan.price), gap == (step or 1) and under or money(gap)))
     else
       add(string.format("Nobody else is selling this, so it posts at %s.", money(plan.price)))
     end
@@ -525,6 +530,7 @@ function PostView:open()
   self.queue.filter = self:filter()
   self.ruleShown = nil
   self.selected, self.offset, self.message, self.searching, self.busy = nil, 0, nil, {}, nil
+  self.unanswered = nil
   self.recorded, self.known, self.asked, self.tries, self.pending, self.emptyTries = {}, {}, {}, {}, {}, nil
   self:dropConfirm()
   if api then
@@ -757,13 +763,21 @@ function PostView:postNext()
     self.message = nil
     -- Wait for the game and the bags before the next post, so it never posts from a stale row.
     local busy = { item = row.item, units = units or 0, price = row.plan and row.plan.price }
-    self.busy = busy
+    self.busy, self.unanswered = busy, nil
     self.queue:sent(row.item, busy.units, row.plan and row.plan.price)
     local timer = self.env.C_Timer
     if timer and timer.After then
       timer.After(5, function()
         if self.busy == busy then
+          -- No answer: take the units back, so they neither count toward Post at most nor make another
+          -- seller's units at that price look like ours. A late answer that it went up counts them again.
           self.busy = nil
+          self.unanswered = busy
+          self.queue:sent(busy.item, -busy.units, busy.price)
+          self.queue:forget(busy.item)
+          api:giveUp()
+          self.message = "No answer from the auction house for that post yet. Check My auctions before you "
+            .. "post it again."
           self:refresh()
         end
       end)
@@ -787,6 +801,14 @@ end
 -- AUCTION_HOUSE_SHOW_ERROR can be about something else.
 function PostView:posted(ok, event)
   self:dropConfirm()
+  local late = self.unanswered
+  self.unanswered = nil
+  if ok and not self.busy and late and self.queue then
+    -- The post that timed out went up after all.
+    self.queue:sent(late.item, late.units, late.price)
+    self.message = nil
+    return self:refresh()
+  end
   local busy = self.busy
   if busy and self.queue then
     -- Look the item up again before its next post: someone may have undercut it meanwhile.

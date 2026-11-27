@@ -7,7 +7,9 @@
 --     taken mail may no longer say what it held; a take counts once the next read shows it done.
 --   Deposits: C_AuctionHouse.PostItem / PostCommodity and their Confirm calls (hooked, so posts from the
 --     game's own sell frame count too), with the deposit worked out at the call; it counts once
---     AUCTION_HOUSE_AUCTION_CREATED says the auction is up.
+--     AUCTION_HOUSE_AUCTION_CREATED says the auction is up. AUCTION_HOUSE_POST_ERROR drops the post it is
+--     about, and a Post that AUCTION_HOUSE_POST_WARNING held for a Confirm waits aside until it is confirmed,
+--     so neither shifts later deposits onto the wrong post.
 --   Buys made in Better AH (Snipe, Browse): the views call bought() when the game confirms them.
 --
 -- hooksecurefunc runs after the call and leaves it untouched. Needs the client to check: in game, sell
@@ -21,8 +23,9 @@ LedgerAPI.__index = LedgerAPI
 
 LedgerAPI.POST_WAIT = 60 -- seconds a post waits for AUCTION_HOUSE_AUCTION_CREATED
 LedgerAPI.TAKE_WAIT = 120 -- seconds a take from the mail waits for the inbox to show it done
+LedgerAPI.WARN_GAP = 2 -- seconds between a Post and the POST_WARNING that holds it for a Confirm
 LedgerAPI.EVENTS = { "MAIL_SHOW", "MAIL_INBOX_UPDATE", "MAIL_CLOSED", "AUCTION_HOUSE_AUCTION_CREATED",
-  "PLAYER_ENTERING_WORLD" }
+  "AUCTION_HOUSE_POST_ERROR", "AUCTION_HOUSE_POST_WARNING", "PLAYER_ENTERING_WORLD" }
 
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
@@ -179,23 +182,54 @@ function LedgerAPI:posted(call, kind, location, duration, quantity)
   local name = try(env.C_Item and env.C_Item.GetItemName, location)
     or (itemID and LedgerAPI.itemName(env, itemID))
   local now = self:now()
-  local last = self.posts[#self.posts]
   -- A post the client wanted confirmed comes twice (Post, then ConfirmPost): it is one auction. Two Posts
   -- are two auctions, even of the same bag slot.
-  if call == "ConfirmPost" and last and last.call == "Post" and last.location == location and last.kind == kind
-    and last.quantity == quantity and now - last.t <= LedgerAPI.POST_WAIT then
-    last.t, last.call, last.deposit = now, call, deposit or last.deposit
-    return
+  if call == "ConfirmPost" then
+    for i = #self.posts, 1, -1 do
+      local p = self.posts[i]
+      if p.call == "Post" and p.location == location and p.kind == kind and p.quantity == quantity
+        and now - p.t <= LedgerAPI.POST_WAIT then
+        p.t, p.call, p.deposit, p.held = now, call, deposit or p.deposit, nil
+        return
+      end
+    end
   end
-  self.posts[#self.posts + 1] = { t = now, call = call, kind = kind, location = location, quantity = quantity,
-    item = itemID, name = name, deposit = deposit }
+  local p = { t = now, call = call, kind = kind, location = location, quantity = quantity, item = itemID,
+    name = name, deposit = deposit }
+  -- The warning can come inside the Post call, before this hook runs.
+  if call == "Post" and self.warnedAt and now - self.warnedAt <= LedgerAPI.WARN_GAP then p.held = true end
+  self.warnedAt = nil
+  self.posts[#self.posts + 1] = p
+end
+
+-- AUCTION_HOUSE_POST_WARNING: the newest Post waits for a Confirm, and gets no answer until then.
+function LedgerAPI:warned()
+  local now, last = self:now(), self.posts[#self.posts]
+  if last and last.call == "Post" and now - last.t <= LedgerAPI.WARN_GAP then
+    last.held = true
+  else
+    self.warnedAt = now
+  end
+end
+
+-- The oldest post still waiting for its answer, taken off the list. Posts waiting longer than POST_WAIT are
+-- dropped, and a Post held for a Confirm is not waiting for an answer.
+function LedgerAPI:nextAnswered()
+  local now, keep = self:now(), {}
+  for _, p in ipairs(self.posts) do
+    if now - p.t <= LedgerAPI.POST_WAIT then keep[#keep + 1] = p end
+  end
+  self.posts = keep
+  for i, p in ipairs(keep) do
+    if not p.held then return table.remove(keep, i) end
+  end
+  return nil
 end
 
 -- AUCTION_HOUSE_AUCTION_CREATED: the oldest post still waiting is up, and its deposit paid.
 function LedgerAPI:created()
   local now = self:now()
-  while self.posts[1] and now - self.posts[1].t > LedgerAPI.POST_WAIT do table.remove(self.posts, 1) end
-  local p = table.remove(self.posts, 1)
+  local p = self:nextAnswered()
   local ledger = self:ledger()
   if not (p and ledger) then return end
   if p.deposit and p.deposit > 0 then
@@ -223,6 +257,10 @@ function LedgerAPI:onEvent(event)
     self.pending, self.holding = {}, nil
   elseif event == "AUCTION_HOUSE_AUCTION_CREATED" then
     self:created()
+  elseif event == "AUCTION_HOUSE_POST_ERROR" then
+    self:nextAnswered() -- the oldest waiting post failed: no auction, no deposit
+  elseif event == "AUCTION_HOUSE_POST_WARNING" then
+    self:warned()
   elseif event == "PLAYER_ENTERING_WORLD" then
     local ledger = self:ledger()
     if ledger then ledger:prune(self:now()) end

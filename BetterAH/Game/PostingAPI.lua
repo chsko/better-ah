@@ -287,7 +287,7 @@ function PostingAPI:onEvent(event, arg)
     self.open, self.closed = true, nil
   elseif event == "AUCTION_HOUSE_CLOSED" then
     self.open, self.closed = false, true
-    self.pending = nil
+    self.pending, self.sending = nil, nil
     -- Every buy, bid and quote ends when the AH closes; whatever set buying may hear the close later (#161).
     self.buying = nil
     local waiting = self.queue
@@ -331,14 +331,14 @@ function PostingAPI:onEvent(event, arg)
   elseif event == "AUCTION_HOUSE_POST_WARNING" then
     if self.onPostWarning then self.onPostWarning() end
   elseif event == "AUCTION_HOUSE_AUCTION_CREATED" then
-    self.pending = nil
+    self.pending, self.sending = nil, nil
     if self.onPosted then self.onPosted(true) end
   elseif event == "AUCTION_HOUSE_POST_ERROR" or event == "AUCTION_HOUSE_SHOW_ERROR" then
-    -- While the sniper waits on a buy (SnipeAPI sets buying), the error is about that buy. Once the AH
-    -- has closed (not merely never seen open, as after a /reload at the AH), no post can be waiting, so
-    -- an error then is not a post's (most likely a late answer to a buy that ended on close, #161).
-    if event == "AUCTION_HOUSE_SHOW_ERROR" and (self.buying or self.closed) then return end
-    self.pending = nil
+    -- AUCTION_HOUSE_SHOW_ERROR is about anything (a buy, a bid, a cancel): only while a post of ours waits for
+    -- its answer is it about that post. While the sniper waits on a buy (SnipeAPI sets buying), it is that
+    -- buy's; once the AH has closed no post is waiting (a late answer to a buy that ended on close, #161).
+    if event == "AUCTION_HOUSE_SHOW_ERROR" and (self.buying or self.closed or not self.sending) then return end
+    self.pending, self.sending = nil, nil
     if self.onPosted then self.onPosted(false, arg, event) end
   end
 end
@@ -361,7 +361,7 @@ end
 -- PostCommodity takes the units from every bag slot that holds the item, the way Blizzard's sell
 -- frame posts its Max (GetAvailablePostCount). A non-commodity post takes at most the one slot's stack.
 function PostingAPI:post(entry, plan)
-  self.pending = nil
+  self.pending, self.sending = nil, nil
   local ah = self.env.C_AuctionHouse
   if not (plan and plan.action == "post") then return nil, "nothing to post" end
   if not self:ready() then return nil, "the auction house is busy; try again in a moment" end
@@ -376,13 +376,23 @@ function PostingAPI:post(entry, plan)
   args.entry = entry
   local fn = ah and ah["Post" .. args[1]]
   if type(fn) ~= "function" then return nil, "C_AuctionHouse.Post" .. args[1] .. " is missing" end
+  -- Set before the call: an error the client fires inside it is this post's answer.
+  self.sending = true
   local ok, needsConfirmation = pcall(fn, unpack(args, 2, args.n))
-  if not ok then return nil, "the auction house refused: " .. tostring(needsConfirmation) end
+  if not ok then
+    self.sending = nil
+    return nil, "the auction house refused: " .. tostring(needsConfirmation)
+  end
   if needsConfirmation then
-    self.pending = args
+    self.pending, self.sending = args, nil
     return "confirm"
   end
   return "sent", nil, args[4]
+end
+
+-- The view stopped waiting for the answer to the last post: later errors are not about it.
+function PostingAPI:giveUp()
+  self.sending = nil
 end
 
 -- Confirms the post the client asked about. Must run inside a click. Returns "sent" and the units
@@ -395,8 +405,12 @@ function PostingAPI:confirm()
   if not (slot and slot.location == args[2]) then return nil, "your bags changed; the list will update" end
   local fn = self.env.C_AuctionHouse["ConfirmPost" .. args[1]]
   if type(fn) ~= "function" then return nil, "C_AuctionHouse.ConfirmPost" .. args[1] .. " is missing" end
+  self.sending = true
   local ok, err = pcall(fn, unpack(args, 2, args.n))
-  if not ok then return nil, "the auction house refused: " .. tostring(err) end
+  if not ok then
+    self.sending = nil
+    return nil, "the auction house refused: " .. tostring(err)
+  end
   return "sent", nil, args[4]
 end
 

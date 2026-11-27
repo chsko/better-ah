@@ -3755,7 +3755,7 @@ describe("Browse categories and filters", function()
     assert.truthy(view.status:GetText():find("isn't on this auction house", 1, true))
   end)
 
-  it("searches a category picked during a search once that one ends, and saves what was searched", function()
+  it("searches a category picked during a search once that one ends, and saves only that one", function()
     local env, _, ns, _, bar = browse()
     bar.categoryButton:Click()
     bar.columns[1][3]:Click() -- Armor: searching, menu open
@@ -3764,9 +3764,26 @@ describe("Browse categories and filters", function()
     env.runTimers()
     assert.equal(2, #env.browses, "Mail is searched after Armor")
     local _, recent = ns.searchHistory:list()
+    assert.equal(1, #recent, "Armor was replaced before it finished, so it isn't kept (#185)")
     assert.equal("Armor / Mail", recent[1].detail)
-    assert.equal("Armor", recent[2].detail, "the Armor search is saved as Armor")
     assert.is_true(bar.categoryMenu:IsShown(), "Mail has a slot column to show")
+  end)
+
+  it("keeps only the last of several categories picked while searches run (#185)", function()
+    local env, _, ns, _, bar = browse()
+    bar.categoryButton:Click()
+    bar.columns[1][2]:Click() -- Weapons: searching
+    bar.columns[1][3]:Click() -- Armor, before Weapons' answer
+    env.runTimers()
+    local _, recent = ns.searchHistory:list()
+    assert.equal(1, #recent)
+    assert.equal("Armor", recent[1].detail, "Weapons was replaced, Armor kept")
+    bar.columns[1][4]:Click() -- Quest Items: searching
+    bar.columns[1][1]:Click() -- All items, before its answer: a blank search, never kept
+    env.runTimers()
+    _, recent = ns.searchHistory:list()
+    assert.equal(1, #recent, "Quest Items was replaced too")
+    assert.equal("Armor", recent[1].detail)
   end)
 
   it("searches everything when Clear filters leaves a category", function()

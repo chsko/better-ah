@@ -16,7 +16,7 @@ TooltipHook.DIM_COLOR = { 0.62, 0.62, 0.62 }
 TooltipHook.DIM = "|cff9d9d9d"
 TooltipHook.GAIN = { 0.24, 0.88, 0.29 }
 TooltipHook.LOSS = { 1, 0.35, 0.29 }
--- GetItemInfo's bindType: 1 binds on pickup, 4 is a quest item. Neither can be on the auction house.
+-- C_Item.GetItemInfo's bindType: 1 binds on pickup, 4 is a quest item. Neither can be on the auction house.
 TooltipHook.UNSELLABLE = { [1] = true, [4] = true }
 
 local function try(fn, ...)
@@ -34,9 +34,18 @@ function TooltipHook:options()
   return ns.TooltipPrices.options(self.addon.tooltipSettings)
 end
 
+-- Forever has no global GetCoinTextureString (#153): it is C_CurrencyInfo's. The global is for older clients.
 function TooltipHook:moneyText(copper)
-  local n = math.abs(copper)
-  return try(self.env.GetCoinTextureString, n) or (ns.Money and ns.Money.format(n)) or tostring(n)
+  local n, currency = math.abs(copper), self.env.C_CurrencyInfo
+  return (currency and try(currency.GetCoinTextureString, n)) or try(self.env.GetCoinTextureString, n)
+    or (ns.Money and ns.Money.format(n)) or tostring(n)
+end
+
+-- C_Item.GetItemInfo's returns for link: Forever has no global GetItemInfo (#153). Nothing until it is cached.
+function TooltipHook:itemInfo(link)
+  local items = self.env.C_Item
+  if items and type(items.GetItemInfo) == "function" then return try(items.GetItemInfo, link) end
+  return try(self.env.GetItemInfo, link)
 end
 
 function TooltipHook:bagCount(itemID)
@@ -61,7 +70,9 @@ function TooltipHook:gather(link, opts, main)
   -- Shift totals and their hint only on the main tooltip: Shift redraws only that one.
   item.shift = main and opts.shift and try(env.IsShiftKeyDown) and true or false
   if not main then item.bags = math.min(item.bags, 1) end
-  local _, _, quality, level, _, _, _, maxStack, equip, _, _, classID, _, bindType = try(env.GetItemInfo, link)
+  local _, _, quality, level, _, _, _, maxStack, equip, _, _, classID, _, bindType = self:itemInfo(link)
+  -- Not cached yet: draw what we have, but don't keep it (linesFor), so the next redraw gets the full block.
+  item.loading = quality == nil
   if not item.value and TooltipHook.UNSELLABLE[bindType] then return nil end
   item.stackable = (tonumber(maxStack) or 1) > 1
   if opts.disenchant and quality and ns.Disenchant then
@@ -110,7 +121,7 @@ function TooltipHook:linesFor(link, opts, main)
   if cache and cache.stamp == stamp then return cache.out end
   local item = self:gather(link, opts, main)
   local out = item and ns.TooltipPrices.lines(item, opts)
-  self.cache = { stamp = stamp, out = out }
+  self.cache = not (item and item.loading) and { stamp = stamp, out = out } or nil
   return out
 end
 

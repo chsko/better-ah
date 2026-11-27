@@ -29,10 +29,13 @@ describe("TooltipHook", function()
       GameTooltip = tip, now = 86400 * 100, shift = false, count = 1,
       GetServerTime = function() return env.now end,
       IsShiftKeyDown = function() return env.shift end,
-      GetItemCount = function() return env.count end,
-      -- name, link, quality, item level, required level, class, subclass, max stack, equip slot, icon, sell, classID
-      GetItemInfo = function() return "Hillman's Shoulders", link, 2, 26, 21, "Armor", "Leather", 1,
-        "INVTYPE_SHOULDER", 0, 500, 4 end,
+      -- Like the Forever client (#153): no global GetItemInfo, GetItemCount or GetCoinTextureString.
+      C_Item = {
+        GetItemCount = function() return env.count end,
+        -- name, link, quality, item level, required level, class, subclass, max stack, equip slot, icon, sell, classID
+        GetItemInfo = function() return "Hillman's Shoulders", link, 2, 26, 21, "Armor", "Leather", 1,
+          "INVTYPE_SHOULDER", 0, 500, 4 end,
+      },
     }
   end)
 
@@ -66,15 +69,52 @@ describe("TooltipHook", function()
   end)
 
   it("skips a quest item with no price: it can never be on the auction house", function()
-    env.GetItemInfo = function() return "Quest Thing", link, 1, 10, 1, "Quest", "Quest", 1, "", 0, 0, 12, 0, 4 end
+    env.C_Item.GetItemInfo = function()
+      return "Quest Thing", link, 1, 10, 1, "Quest", "Quest", 1, "", 0, 0, 12, 0, 4
+    end
     ns.TooltipHook.new(env, ns):onItem(tip)
     assert.same({}, lines)
+  end)
+
+  it("skips a soulbound item with no price", function()
+    env.C_Item.GetItemInfo = function()
+      return "Bound Thing", link, 2, 20, 15, "Armor", "Cloth", 1, "INVTYPE_CHEST", 0, 0, 4, 1, 1
+    end
+    ns.TooltipHook.new(env, ns):onItem(tip)
+    assert.same({}, lines)
+  end)
+
+  it("draws the full block once an item that wasn't cached has loaded", function()
+    ns.prices:importPrices("/Normal/Horde", env.now, { ["i:4251"] = { value = 42000 }, ["i:11083"] = { value = 3000 } })
+    local info = env.C_Item.GetItemInfo
+    env.C_Item.GetItemInfo = function() end
+    local hook = ns.TooltipHook.new(env, ns)
+    hook:onItem(tip)
+    assert.is_nil(lines[4])
+    lines, env.C_Item.GetItemInfo = {}, info
+    hook:onItem(tip)
+    assert.matches("^Disenchant value | ", lines[4])
   end)
 
   it("never breaks the tooltip when something in it throws", function()
     ns.prices = { marketValue = function() error("bad data") end }
     assert.has_no.errors(function() ns.TooltipHook.new(env, ns):onItem(tip) end)
     assert.same({}, lines)
+  end)
+
+  it("draws money with the coin icons from C_CurrencyInfo", function()
+    ns.prices:importPrices("/Normal/Horde", env.now, { ["i:4251"] = { value = 42000 } })
+    env.C_CurrencyInfo = { GetCoinTextureString = function(c) return "coins:" .. c end }
+    env.GetCoinTextureString = function() return "old global" end
+    ns.TooltipHook.new(env, ns):onItem(tip)
+    assert.equal("Market value | coins:42000", lines[3])
+  end)
+
+  it("still reads a client that has only the old globals", function()
+    ns.prices:importPrices("/Normal/Horde", env.now, { ["i:4251"] = { value = 42000 }, ["i:11083"] = { value = 3000 } })
+    env.GetItemInfo, env.C_Item = env.C_Item.GetItemInfo, nil
+    ns.TooltipHook.new(env, ns):onItem(tip)
+    assert.matches("^Disenchant value | ", lines[4])
   end)
 
   it("shows the bag totals on the main tooltip while Shift is held", function()
@@ -101,8 +141,9 @@ describe("TooltipHook, an item not in the bags", function()
     local tip = { GetItem = function() return "Linen Cloth", "item:2589" end, Show = function() end,
       AddLine = function(_, t) lines[#lines + 1] = t end,
       AddDoubleLine = function(_, l) lines[#lines + 1] = l end }
-    local env = { GameTooltip = tip, GetServerTime = function() return 100 end, GetItemCount = function() return 0 end,
-      GetItemInfo = function() return "Linen Cloth", "item:2589", 1, 5, 0, "Trade Goods", "Cloth", 20 end }
+    local env = { GameTooltip = tip, GetServerTime = function() return 100 end,
+      C_Item = { GetItemCount = function() return 0 end,
+        GetItemInfo = function() return "Linen Cloth", "item:2589", 1, 5, 0, "Trade Goods", "Cloth", 20 end } }
     ns.TooltipHook.new(env, ns):onItem(tip)
     assert.same({ " ", "Better AH |cff9d9d9d(each)|r", "Market value" }, lines)
   end)

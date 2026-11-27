@@ -209,6 +209,7 @@ end
 
 -- Like Blizzard's slots: right-click takes the item back, a click drops the cursor's item or picks this one up.
 function MailSendPanel:clickSlot(i, button)
+  if self:sendingAll() then return end -- the slots hold Send all's mail
   local item = self.items and self.items[i]
   if button == "RightButton" then
     if item then self.api:detach(item.slot) end
@@ -221,7 +222,7 @@ end
 
 -- An alt-clicked bag item, while this panel is in view.
 function MailSendPanel:attachFromBag(bag, slot)
-  if not self:shown() then return end
+  if not self:shown() or self:sendingAll() then return end
   self.api:attachFromBag(bag, slot)
 end
 
@@ -241,6 +242,12 @@ function MailSendPanel:collecting()
   return c and c:running()
 end
 
+-- Send all (#159) uses the same attachment slots and the same answers from the game.
+function MailSendPanel:sendingAll()
+  local s = self.window.sender
+  return s ~= nil and s:running()
+end
+
 function MailSendPanel:send()
   if self.sending then return end
   local api = self.api
@@ -249,6 +256,7 @@ function MailSendPanel:send()
     self.message = MailSendPanel.COLLECTING
     return self:render()
   end
+  if self:sendingAll() then return end
   local mail, why = ns.MailSend.check(self.draft, self.items or api:sendItems(),
     { codEnabled = api:codEnabled(), money = api:playerMoney(), postage = api:postage() })
   if not mail then
@@ -279,8 +287,7 @@ function MailSendPanel:onSent()
   if not mail then return self:render() end -- another addon's send: keep the half-written mail
   self.sending = nil
   -- Blizzard's own (hidden) send frame resets on the same event and may give its To box the keyboard.
-  local blizz = self.env.SendMailNameEditBox
-  if blizz and blizz.HasFocus and blizz:HasFocus() then blizz:ClearFocus() end
+  self.api:releaseSendFocus()
   self.draft = { mode = "money" }
   self.to:SetText("")
   self.subject:SetText("")
@@ -326,7 +333,7 @@ function MailSendPanel:render()
   if have and postage > have then line = "|cffff6060" .. line .. "|r" end
   self.postage:SetText(line)
   self.status:SetText(self.message or "")
-  self.sendButton:SetEnabled(not self.sending and not self:collecting())
+  self.sendButton:SetEnabled(not self.sending and not self:collecting() and not self:sendingAll())
   self.sendButton:SetText(self.sending and "Sending..." or "Send")
   if self.list and not self:shown() then self.list:Hide() end
 end

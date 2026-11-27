@@ -99,3 +99,11 @@ _Avoid_: mail frame (that is Blizzard's), mail view
 **Mail kind**:
 What a mail is, from the player's point of view: Sold, Bought, Outbid, Cancelled, Expired, Other (player mail), Letter (player mail with text, or from a Game Master) or COD (pay on delivery).
 _Avoid_: mail type, category
+
+**Send rule**:
+A saved choice of what Send all mails to one of your characters: one item, a disenchant group (all enchanting mats, dusts, essences or shards) or an item type, a recipient, and how many of each item to keep in the bags. The most specific rule wins: an item, then a disenchant group, then a type. Rules never move gold. Saved per account.
+_Avoid_: mail operation, mail group
+
+**Send all**:
+The Send tab's button that sends what every send rule matches in your bags right now, in mails of up to 12 stacks with one recipient each, one mail at a time, then reports what went out.
+_Avoid_: mail all, auto mail

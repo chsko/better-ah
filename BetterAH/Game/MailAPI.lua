@@ -12,7 +12,7 @@ local MailAPI = {}
 MailAPI.__index = MailAPI
 
 MailAPI.EVENTS = { "MAIL_SHOW", "MAIL_INBOX_UPDATE", "MAIL_CLOSED", "MAIL_FAILED", "MAIL_OPEN_ALL_CANCELED",
-  "MAIL_SEND_INFO_UPDATE", "MAIL_SEND_SUCCESS", "UI_ERROR_MESSAGE" }
+  "MAIL_SEND_INFO_UPDATE", "MAIL_SEND_SUCCESS", "UI_ERROR_MESSAGE", "BAG_UPDATE_DELAYED" }
 MailAPI.SEND_SLOTS = 12 -- ATTACHMENTS_MAX_SEND
 MailAPI.ATTACHMENTS = 16 -- ATTACHMENTS_MAX_RECEIVE in Forever's MailFrame.lua
 
@@ -213,6 +213,60 @@ function MailAPI:attachFromBag(bag, slot)
   return true
 end
 
+-- Every attachment of the new mail back to the bags.
+function MailAPI:clearSend()
+  for _, a in ipairs(self:sendItems()) do self:detach(a.slot) end
+end
+
+-- One bag slot, as Send rules (#159) see it: { bag, slot, itemID, count, name, quality, level, classID, subclassID,
+-- equip, bound, locked }, or nil when it is empty. classID and the rest come from GetItemInfoInstant, which
+-- answers at once; the item level from GetItemInfo, nil (and asked for) while the item isn't cached.
+-- The carried bags: 0 to NUM_TOTAL_EQUIPPED_BAG_SLOTS (Mainline, with the reagent bag) or NUM_BAG_SLOTS; never a
+-- bank bag, whose items can't be picked up away from the bank.
+function MailAPI:bags()
+  local env = self.env
+  local last = tonumber(env.NUM_TOTAL_EQUIPPED_BAG_SLOTS) or tonumber(env.NUM_BAG_SLOTS) or 4
+  local out = {}
+  for bag = 0, last do out[#out + 1] = bag end
+  return out
+end
+function MailAPI:bagStack(bag, slot)
+  local env = self.env
+  local c, items = env.C_Container, env.C_Item
+  local info = c and try(c.GetContainerItemInfo, bag, slot)
+  if type(info) ~= "table" or not info.itemID then return nil end
+  local s = { bag = bag, slot = slot, itemID = info.itemID, count = tonumber(info.stackCount) or 1,
+    name = info.itemName, quality = info.quality, bound = info.isBound and true or false,
+    locked = info.isLocked and true or false }
+  local instant = items and items.GetItemInfoInstant or env.GetItemInfoInstant
+  local _, _, _, equip, _, classID, subclassID = try(instant, info.itemID)
+  s.equip, s.classID, s.subclassID = equip, classID, subclassID
+  local get = items and items.GetItemInfo or env.GetItemInfo
+  local name, _, quality, level = try(get, info.hyperlink or info.itemID)
+  s.name, s.quality, s.level = s.name or name, s.quality or quality, level
+  if not level and items then try(items.RequestLoadItemDataByID, info.itemID) end
+  return s
+end
+
+-- The stacks Send all may send: not soulbound, not locked (being moved, or already on a mail).
+function MailAPI:bagStacks()
+  local c, out = self.env.C_Container, {}
+  if not (c and type(c.GetContainerNumSlots) == "function") then return out end
+  for _, bag in ipairs(self:bags()) do
+    for slot = 1, try(c.GetContainerNumSlots, bag) or 0 do
+      local s = self:bagStack(bag, slot)
+      if s and not s.bound and not s.locked then out[#out + 1] = s end
+    end
+  end
+  return out
+end
+
+-- Blizzard's hidden send frame resets on MAIL_SEND_SUCCESS and may give its To box the keyboard (#158).
+function MailAPI:releaseSendFocus()
+  local blizz = self.env.SendMailNameEditBox
+  if blizz and blizz.HasFocus and blizz:HasFocus() then blizz:ClearFocus() end
+end
+
 -- What the cursor holds, dropped on attachment slot i (or the first free one).
 function MailAPI:dropOnMail(i)
   try(self.env.ClickSendMailItemButton, i)
@@ -354,7 +408,7 @@ function MailAPI:freeSlots()
 end
 
 -- handlers: onOpen(mails), onInbox(mails), onClose(), onFailed(itemID), onCancelled(), onSendInfo(),
--- onSent(), onError(message). Only while replacing Blizzard's frame.
+-- onSent(), onError(message), onBags(). Only while replacing Blizzard's frame.
 function MailAPI:onEvent(event, handlers, ...)
   if event == "MAIL_SHOW" then
     if not self:replacing() then
@@ -383,6 +437,8 @@ function MailAPI:onEvent(event, handlers, ...)
   elseif event == "UI_ERROR_MESSAGE" then
     local _, message = ...
     if self.open and handlers.onError then handlers.onError(message) end
+  elseif event == "BAG_UPDATE_DELAYED" then
+    if self.open and handlers.onBags then handlers.onBags() end
   elseif event == "MAIL_OPEN_ALL_CANCELED" then
     if self.open and handlers.onCancelled then handlers.onCancelled() end
   elseif event == "MAIL_CLOSED" then

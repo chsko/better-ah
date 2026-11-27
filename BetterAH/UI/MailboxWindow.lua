@@ -1,6 +1,7 @@
 -- The Mailbox window (#149, #154): Better AH's own window, separate from the auction house window, shown instead
 -- of Blizzard's mail frame at a mailbox. Inbox lists every mail with its kind (Core/Mailbox.lua); clicking a row
--- opens it in the side panel (#155). Send comes in later tickets. Layout follows the mockup linked from #149.
+-- opens it in the side panel (#155). Send has the send rules and Send all (#159) beside a new mail (#158).
+-- Layout follows the mockup linked from #149.
 -- Game calls go through Game/MailAPI.lua.
 local _, ns = ...
 ns = ns or {}
@@ -17,7 +18,6 @@ MailboxWindow.COLUMNS = {
   { "Kind", 4, 58, "LEFT" }, { "Item or sender", 66, 186, "LEFT" }, { "Qty", 254, 30 }, { "Gold", 288, 80 },
   { "Left", 372, 44 },
 }
-MailboxWindow.SEND_EMPTY = "Send rules and Send all come here."
 MailboxWindow.EMPTY = "No mail."
 MailboxWindow.HINT = "click a row to open it"
 MailboxWindow.REPLY_TIP = "Opens a new mail to the sender, with Re: and the subject."
@@ -36,6 +36,16 @@ function MailboxWindow.new(env, addon)
     self.collector.hooks = {
       onStep = function() self:render() end,
       onDone = function(run) self:collected(run) end,
+    }
+  end
+  if ns.MailSender and ns.SendRules then
+    self.sender = self.addon.mailSender or ns.MailSender.install(env, self.addon)
+    self.sender.hooks = {
+      onStep = function() self:render() end,
+      onDone = function(run)
+        if self.rulesPanel then self.rulesPanel:done(run) end
+        self:render()
+      end,
     }
   end
   return self
@@ -113,10 +123,11 @@ function MailboxWindow:build()
   footer:SetJustifyH("LEFT")
   self.footerText = footer
 
-  local sendNote = text:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  sendNote:SetPoint("TOPLEFT", f, "TOPLEFT", 20, TOP - 20)
-  sendNote:SetText(MailboxWindow.SEND_EMPTY)
-  self.sendNote = sendNote
+  if ns.MailRulesPanel and ns.SendRules then
+    self.rulesPanel = ns.MailRulesPanel.new(self)
+    self.rulesPanel:build(text, LIST_WIDTH, HEIGHT + TOP + 16)
+    self.rulesPanel.frame:SetPoint("TOPLEFT", f, "TOPLEFT", 14, TOP + 22)
+  end
 
   local detail = Window.panel(env, f, Window.ART.detail)
   detail:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, TOP)
@@ -141,7 +152,13 @@ function MailboxWindow:build()
     self.sendPanel = ns.MailSendPanel.new(self)
     self.sendPanel:build(dtext, DETAIL - 24)
     self.api:hookBagClicks(function(bag, slot)
-      if self.tab == "send" then self.sendPanel:attachFromBag(bag, slot) end
+      if self.tab ~= "send" then return end
+      -- An item rule being written takes the item; else it goes on the new mail.
+      if self.rulesPanel and self.rulesPanel:wantsItem() then
+        self.rulesPanel:pickItem(self.api:bagStack(bag, slot))
+      else
+        self.sendPanel:attachFromBag(bag, slot)
+      end
     end)
   end
 
@@ -301,12 +318,16 @@ function MailboxWindow:setTick(kind, on)
   self:render()
 end
 
+function MailboxWindow:sending()
+  return self.sender ~= nil and self.sender:running()
+end
+
 function MailboxWindow:clickCollect()
   local c = self.collector
   if not c then return end
   if c:running() then
     c:stop("stopped")
-  else
+  elseif not self:sending() then -- Send all and Collect would share the game's MAIL_FAILED
     self.selected = nil
     c:start(self:ticks())
   end
@@ -402,7 +423,7 @@ function MailboxWindow:renderCollect(totals)
       self.collectButton:SetText(n == 0 and "Nothing to collect" or (n == 1 and "Collect 1 mail" or
         ("Collect " .. n .. " mails")))
     end
-    self.collectButton:SetEnabled((n > 0 or fetch) and self.collector ~= nil)
+    self.collectButton:SetEnabled((n > 0 or fetch) and self.collector ~= nil and not self:sending())
   end
   self.lastRunText:SetText(self.lastRun and ("Last run: " .. self.lastRun) or "")
 end
@@ -591,7 +612,7 @@ function MailboxWindow:render()
   local totals = self.totals or ns.Mailbox.totals({})
   self.list:SetShown(inbox)
   self.footerText:SetShown(inbox)
-  self.sendNote:SetShown(not inbox)
+  if self.rulesPanel then self.rulesPanel.frame:SetShown(not inbox) end
   self.emptyText:SetText(inbox and #self.rows == 0 and MailboxWindow.EMPTY or "")
   self.footerText:SetText(MailboxWindow.footer(totals, self.api.moreWaiting and self.api:moreWaiting()))
   local name = self.env.UnitName and self.env.UnitName("player")
@@ -610,6 +631,7 @@ function MailboxWindow:render()
     self:renderCollect(totals)
   else
     if send then send:render() end
+    if self.rulesPanel then self.rulesPanel:render() end
   end
   self:renderRows()
 end
@@ -665,15 +687,24 @@ function MailboxWindow:onEvent(event, ...)
     end,
     onClose = function()
       if c then c:stop("closed") end
+      if self.sender then self.sender:closed() end
       self:close()
     end,
     onFailed = function(itemID)
+      if self.sender and self.sender:failed() then return end
       if self.sendPanel and self.sendPanel:onFailed() then return end
       if c then c:failed(itemID) end
     end,
     onSendInfo = function() if self.sendPanel then self.sendPanel:render() end end,
-    onSent = function() if self.sendPanel then self.sendPanel:onSent() end end,
-    onError = function(message) if self.sendPanel then self.sendPanel:onError(message) end end,
+    onSent = function()
+      if self.sender and self.sender:sent() then return self:render() end
+      if self.sendPanel then self.sendPanel:onSent() end
+    end,
+    onError = function(message)
+      if self.sender then self.sender:onError(message) end
+      if self.sendPanel then self.sendPanel:onError(message) end
+    end,
+    onBags = function() if self.tab == "send" then self:render() end end,
     onCancelled = function() if c then c:stop("cancelled") end end,
   }, ...)
 end

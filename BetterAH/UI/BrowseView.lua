@@ -263,6 +263,12 @@ function BrowseView:layoutSearchRow()
   self.searchBox:SetWidth(math.max(120, width))
 end
 
+-- An item's page beside a resized detail panel (#243). The results, which fill both panels, keep their own
+-- divider with the search history (layout).
+function BrowseView:layoutPanes(listWidth, detailWidth)
+  if self.item then self.item:layoutPanes(listWidth, detailWidth) end
+end
+
 -- Whether the view wants the detail panel's room: yes for the results list, no on an item's page.
 function BrowseView:wide()
   return not (self.item and self.item.row)

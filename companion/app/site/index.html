@@ -260,7 +260,8 @@ function renderHint(cells, nowW) {
     var line = el("div"); var r = el("span", "r" + rating, RATING[rating].slice(0, -1)); r.style.fontWeight = "600";
     line.append(r, el("span", "sub", " (" + localName(toLocal(nowW)) + ")"));
     card.append(line);
-    var big = el("div", "big"); big.append(el("span", "star", "★ "), "Best this week: " + windowName(item.best, true));
+    var big = el("div", "big"); var when = el("span", null, windowName(item.best, true)); when.style.whiteSpace = "nowrap";
+    big.append(el("span", "star", "★ "), "Best this week: ", when);
     card.append(big);
     var wb = windowStats(cells, item.best);
     if (wb) card.append(el("div", "sub", "Price " + pctText(wb.price) + ", sales " + pctText(wb.sales) + ". Price counts 70%, sales 30%."));

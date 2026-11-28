@@ -63,6 +63,15 @@ function SellTimes.window(best, offset)
   return long, string.format("%s %d-%d", day, h, eh == 0 and 24 or eh)
 end
 
+-- A day's best window as hours only, in local time: long "19:00-22:00", short "19-22".
+function SellTimes.hours(start, offset)
+  local _, h, m = at(start, offset)
+  local _, eh, em = at((start + 3) % SellTimes.WEEK, offset)
+  local long = string.format("%02d:%02d-%02d:%02d", h, m, eh, em)
+  if m ~= 0 then return long, long end
+  return long, string.format("%d-%d", h, eh == 0 and 24 or eh)
+end
+
 -- Local time minus UTC in seconds, from date("*t", t) and date("!*t", t) for the same moment.
 function SellTimes.offset(localT, utcT)
   if type(localT) ~= "table" or type(utcT) ~= "table" then return 0 end
@@ -86,9 +95,10 @@ end
 -- Returns nil when there is nothing to say (no or stale data, another market), { none = true } when the
 -- data is there but the item has too few sales, else the hint:
 --   rating 0-3 and word ("Best", "Good", "Average", "Slow"), betterBy (percent or nil), duration (0 = wait,
---   else 2, 8 or 24 hours), window and short (the best window in local time), line (the Post screen's
---   sentence), better and advice (the parts of the tooltip's third row), price (typical price in the best
---   window, copper), sold, days, market (name).
+--   else 2, 8 or 24 hours), window and short (the week's best window in local time), today and todayShort
+--   (today's best 3 hours in local time, #263, or nil), inToday (now is in them), line (the Post screen's
+--   sentence) and lead (its coloured start), better and advice (the parts of the tooltip's last row), price
+--   (typical price in the best window, copper), sold, days, market (name).
 function SellTimes.hint(data, id, market, now, offset)
   if type(data) ~= "table" or data.version ~= SellTimes.VERSION or type(data.items) ~= "table" then return nil end
   if not market or data.market ~= market then return nil end
@@ -100,17 +110,32 @@ function SellTimes.hint(data, id, market, now, offset)
   if not (codes and type(best) == "number" and best >= 0 and best < SellTimes.WEEK) then return { none = true } end
   local nowWeek = SellTimes.weekHour(now)
   local untilBest = (best - nowWeek) % SellTimes.WEEK
-  if type(offset) == "function" then offset = offset(now - now % 3600 + untilBest * 3600) end
+  local offsetNow = offset
+  if type(offset) == "function" then
+    offsetNow = offset(now)
+    offset = offset(now - now % 3600 + untilBest * 3600)
+  end
   offset = tonumber(offset) or 0
+  offsetNow = tonumber(offsetNow) or 0
   local rating, advice, betterBy = SellTimes.decode(codes[nowWeek + 1])
   local duration = SellTimes.DURATIONS[advice]
   local window, short = SellTimes.window(best, offset)
   local out = { rating = rating, word = SellTimes.WORDS[rating], betterBy = betterBy, duration = duration,
     window = window, short = short, price = entry.price, sold = entry.sold, days = data.days,
     market = SellTimes.marketName(data.market), generated = data.generated }
+  -- Today's best 3 hours (#263): dayBest holds one UTC weekday-hour per day, Monday first, with days
+  -- as the companion cut them (data.utcOffset hours east of UTC: Oslo). Shown in the player's local time.
+  local dayOffset = type(data.utcOffset) == "number" and data.utcOffset * 3600 or offsetNow
+  local day = (math.floor((now + dayOffset) / 86400) + 3) % 7
+  local todayStart = type(entry.dayBest) == "table" and entry.dayBest[day + 1]
+  if type(todayStart) == "number" and todayStart >= 0 and todayStart < SellTimes.WEEK then
+    out.today, out.todayShort = SellTimes.hours(todayStart, offsetNow)
+    out.inToday = (nowWeek - todayStart) % SellTimes.WEEK < 3
+  end
 
   if rating == 0 then
     out.better, out.advice = "now", "post 2h now"
+    out.lead = "Best time now."
     out.line = "Best time now. Post 2h."
     out.explain = "Now is in the best 3 hours of the week, so a 2h auction sells while it lasts."
     return out
@@ -133,11 +158,21 @@ function SellTimes.hint(data, id, market, now, offset)
     out.advice = "or post 2h now"
     out.explain = "Now is nearly as good as the best time, so a 2h auction now is fine too."
   end
-  -- The Post line, as in the mockup: the advice when there is one, else how much better the best time is.
-  if duration == 0 or untilBest < duration then
-    out.line = string.format("%s now. Best %s, %s.", out.word, short, out.advice)
+  -- The Post line, as in the mockups (#221, #263): the advice when there is one, else how much better the
+  -- best time is.
+  local tail = (duration == 0 or untilBest < duration) and out.advice or out.better
+  if out.inToday and rating == 1 then
+    out.lead = "Best time today."
+    out.line = string.format("%s This week's best is %s, %s.", out.lead, short, tail)
+  elseif out.today and todayStart == best then
+    out.lead = out.word .. " now."
+    out.line = string.format("%s Best today %s, the best of the week, %s.", out.lead, out.todayShort, tail)
+  elseif out.today then
+    out.lead = out.word .. " now."
+    out.line = string.format("%s Best today %s, this week %s, %s.", out.lead, out.todayShort, short, tail)
   else
-    out.line = string.format("%s now. Best %s, %s.", out.word, short, out.better)
+    out.lead = out.word .. " now."
+    out.line = string.format("%s Best %s, %s.", out.lead, short, tail)
   end
   return out
 end
@@ -150,13 +185,18 @@ function SellTimes.details(h, money)
   end
   local lines = {
     string.format("%s, last %s.", h.market, h.days == 1 and "day" or ((h.days or 0) .. " days")),
-    "Best: " .. h.window .. (h.price and h.price > 0 and money and (", typically " .. money(h.price) .. " each") or "")
-      .. ".",
+    h.today and ("Best today: " .. h.today .. ".") or false,
+    "Best this week: " .. h.window
+      .. (h.price and h.price > 0 and money and (", typically " .. money(h.price) .. " each") or "") .. ".",
     string.format("Sold in that time: %d.", h.sold or 0),
     h.explain,
     SellTimes.NOTE,
   }
-  return lines
+  local out = {}
+  for _, l in ipairs(lines) do
+    if l then out[#out + 1] = l end
+  end
+  return out
 end
 
 ns.SellTimes = SellTimes

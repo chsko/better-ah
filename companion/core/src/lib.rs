@@ -8,6 +8,7 @@ pub mod infer;
 pub mod rank;
 pub mod snapshot;
 pub mod stats;
+pub mod tz;
 
 pub use infer::{infer, Inference, Sale};
 pub use snapshot::{Listing, Snapshot, TimeLeft};

@@ -122,6 +122,15 @@ describe("TooltipPrices, best time to sell (#221)", function()
     assert.same({ label = "", text = "40% better · post 8h", dim = true }, r[4])
   end)
 
+  it("adds today's best hours above the week's when there are some (#263)", function()
+    local today = { rating = 2, word = "Average", window = "Sun 20:00-23:00", today = "19:00-22:00",
+      better = "40% better", advice = "post 8h" }
+    local r = TooltipPrices.lines({ value = 10500, bags = 1, sellTime = today }, TooltipPrices.options({})).rows
+    assert.same({ label = "Best today", text = "19:00-22:00" }, r[3])
+    assert.same({ label = "Best this week", text = "Sun 20:00-23:00" }, r[4])
+    assert.same({ label = "", text = "40% better · post 8h", dim = true }, r[5])
+  end)
+
   it("adds nothing with too little data or with the setting off", function()
     assert.equal(1, #TooltipPrices.lines({ value = 1, bags = 1, sellTime = { none = true } }).rows)
     assert.equal(1, #TooltipPrices.lines({ value = 1, bags = 1, sellTime = hint },

@@ -31,6 +31,7 @@ h2 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; color: #ff
 .hm.tall { grid-template-columns: 30px repeat(7, minmax(0, 1fr)); }
 .c { aspect-ratio: 1 / 1; border-radius: 3px; position: relative; background: var(--empty); }
 .hm.tall .c { aspect-ratio: auto; height: 22px; }
+.c.d { box-shadow: inset 0 0 0 2px var(--fg); }
 .c.b { box-shadow: inset 0 0 0 2px var(--best); }
 .c.n::after { content: ""; position: absolute; width: 8px; height: 8px; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 50%; background: #fff; }
 .hh { font-size: 11px; color: var(--muted); }
@@ -39,6 +40,14 @@ h2 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; color: #ff
 .legend { display: flex; align-items: center; gap: 8px 12px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
 .ramp { display: inline-flex; } .ramp i { width: 18px; height: 10px; }
 .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; box-shadow: inset 0 0 0 2px var(--best); }
+.sw.d { box-shadow: inset 0 0 0 2px var(--fg); }
+.star { color: var(--best); }
+.wk { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto auto; white-space: nowrap; column-gap: 10px; font-size: 13px; }
+.wk span { padding: 6px 0; border-top: 1px solid #262a36; }
+.wk .h { color: var(--muted); font-size: 12px; border-top: 0; padding-top: 0; }
+.wk .n { text-align: right; color: var(--soft); white-space: nowrap; }
+.wk .t { color: #fff; font-weight: 600; }
+.pos { color: var(--good); } .neg { color: var(--slow); }
 .card { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
 .big { font-size: 20px; line-height: 26px; color: #fff; font-weight: 600; }
@@ -83,7 +92,7 @@ h2 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; color: #ff
         </div>
       </div>
       <div id="hm" class="hm"></div>
-      <div class="legend"><span id="lo">Slow</span><span class="ramp" id="ramp"></span><span id="hi">Best</span><span><i class="sw"></i> Best 3 hours</span><span>● Now</span></div>
+      <div class="legend"><span id="lo">Slow</span><span class="ramp" id="ramp"></span><span id="hi">Best</span><span><i class="sw"></i> Best 3 hours of the week</span><span><i class="sw d"></i> Best 3 hours of each day</span><span>● Now</span></div>
       <div class="note">Sales are estimated: a listing that vanishes before its time runs out counts as sold, so cancelled auctions count too. Dark cells: zero or no data. Times are your local time.</div>
     </div>
   </div>
@@ -99,7 +108,7 @@ var DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 var RAMP = ["#1c2e45", "#1f4163", "#245782", "#2c6fa3", "#3a89c4", "#55a6e0", "#86c6f2"];
 var RATING = ["Best time now.", "Good now.", "Average now.", "Slow now."];
 var METRICS = {
-  score: { col: 3, text: "Expected value per hour of the week: sales × price.", lo: "Slow", hi: "Best" },
+  score: { col: 3, text: "How good each hour is to sell in: price counts 70%, sales rate 30%, each against the item's average.", lo: "Slow", hi: "Best" },
   sales: { col: 1, text: "Average estimated sales in each hour of the week.", lo: "Few", hi: "Many" },
   min: { col: 4, text: "Typical lowest price in each hour of the week.", lo: "Lowest", hi: "Highest", range: true },
   supply: { col: 5, text: "Average number listed in each hour of the week.", lo: "Fewest", hi: "Most", range: true }
@@ -116,6 +125,7 @@ var OFFSET_MIN = -new Date().getTimezoneOffset();
 var OFFSET = Math.floor(OFFSET_MIN / 60), MINUTES = ((OFFSET_MIN % 60) + 60) % 60;
 function toLocal(w) { return ((w + OFFSET) % 168 + 168) % 168; }
 function toUtc(l) { return ((l - OFFSET) % 168 + 168) % 168; }
+function hours(utcStart) { var l = toLocal(utcStart), e = (l + 3) % 24; return MINUTES ? hm(l) + "–" + hm(l + 3) : (l % 24) + "–" + (e === 0 ? 24 : e); }
 function hm(l) { return pad(l % 24) + ":" + pad(MINUTES); }
 function pad(n) { return (n < 10 ? "0" : "") + n; }
 function localName(l) { return DAYS[Math.floor(l / 24)] + " " + hm(l); }
@@ -213,12 +223,15 @@ function render() {
   RAMP.forEach(function (c) { var i = el("i"); i.style.background = c; ramp.append(i); });
   var tall = window.matchMedia("(max-width: 760px)").matches, hm = $("hm");
   hm.className = tall ? "hm tall" : "hm"; hm.textContent = "";
-  var best = item.best;
-  function inBest(w) { return best != null && ((w - best + 168) % 168) < 3; }
+  var best = item.best, dayBest = (item.dayBest || []).filter(function (d) { return d != null; });
+  function inWin(w, s) { return ((w - s + 168) % 168) < 3; }
+  function inBest(w) { return best != null && inWin(w, best); }
+  function inDay(w) { return dayBest.some(function (s) { return inWin(w, s); }); }
   function cell(l) {
     var w = toUtc(l), c = cells[w], d = el("div", "c");
     if (c && c[m.col] > 0) d.style.background = shade(c[m.col]);
     if (inBest(w)) d.className += " b";
+    else if (inDay(w)) d.className += " d";
     if (w === nowW) d.className += " n";
     d.dataset.w = w; d.dataset.l = l;
     return d;
@@ -247,7 +260,10 @@ function renderHint(cells, nowW) {
     var line = el("div"); var r = el("span", "r" + rating, RATING[rating].slice(0, -1)); r.style.fontWeight = "600";
     line.append(r, el("span", "sub", " (" + localName(toLocal(nowW)) + ")"));
     card.append(line);
-    card.append(el("div", "big", "Best: " + windowName(item.best, true)));
+    var big = el("div", "big"); big.append(el("span", "star", "★ "), "Best this week: " + windowName(item.best, true));
+    card.append(big);
+    var wb = windowStats(cells, item.best);
+    if (wb) card.append(el("div", "sub", "Price " + pctText(wb.price) + ", sales " + pctText(wb.sales) + ". Price counts 70%, sales 30%."));
     var advise;
     if (rating === 0) advise = "Now is the best time. Post 2h.";
     else {
@@ -259,6 +275,7 @@ function renderHint(cells, nowW) {
       else advise = pct + " Post " + dur + "h now to be listed then.";
     }
     card.append(el("div", null, advise));
+    if (item.dayBest) card.append(weekTable(cells, nowW));
   }
   var now = cells[nowW], bestC = item.best != null ? cells[item.best] : null;
   var head = el("div", "row sep"); head.append(el("span", "sub"), el("span", "sub", bestC ? "Now  ·  Best" : "Now"));
@@ -276,6 +293,41 @@ function renderHint(cells, nowW) {
   var sold = el("div", "row"); sold.append(el("span", null, "Sold in " + daysText(index.days)), el("span", null, item.sold.toLocaleString()));
   card.append(sold);
   card.hidden = false;
+}
+
+// A window's average price and sales against the item's, as fractions (0.08 = 8% above).
+function windowStats(cells, start) {
+  var mean = 0, ps = 0, pn = 0, sales = 0;
+  item.cells.forEach(function (c) { mean += c[1]; });
+  mean /= 168;
+  for (var i = 0; i < 3; i++) {
+    var c = cells[(start + i) % 168];
+    if (c && c[1] > 0) { sales += c[1]; ps += c[2]; pn++; }
+  }
+  if (!pn || !mean || !item.median) return null;
+  return { price: ps / pn / item.median - 1, sales: sales / 3 / mean - 1 };
+}
+function pctText(f) { var p = Math.round(f * 100); return p === 0 ? "about average" : Math.abs(p) + "% " + (p > 0 ? "above" : "below") + " average"; }
+function signed(f) { var p = Math.round(f * 100), s = el("span", p > 0 ? "pos" : p < 0 ? "neg" : null, (p > 0 ? "+" : p < 0 ? "−" : "±") + Math.abs(p) + "%"); return s; }
+
+// One row per day (Oslo days, as the companion cuts them): its best 3 hours and how they compare.
+function weekTable(cells, nowW) {
+  // Days are cut in the companion's time zone (index.utcOffset hours east of UTC: Oslo); hours show in the viewer's.
+  var dayOff = typeof index.utcOffset === "number" ? index.utcOffset : OFFSET;
+  var t = el("div", "wk"), today = Math.floor((((nowW + dayOff) % 168) + 168) % 168 / 24);
+  ["Day", "Best 3 hours", "Price", "Sales"].forEach(function (h, i) { var s = el("span", "h" + (i > 1 ? " n" : ""), h); t.append(s); });
+  item.dayBest.forEach(function (start, d) {
+    var cls = d === today ? " t" : "", st = start == null ? null : windowStats(cells, start);
+    var day = el("span", cls.trim() || null);
+    if (start === item.best) day.append(el("span", "star", "★ "));
+    day.append(DAYS[d]);
+    t.append(day, el("span", cls.trim() || null, start == null ? "–" : hours(start)));
+    var p = el("span", "n" + cls), s = el("span", "n" + cls);
+    if (st) { p.append(signed(st.price)); s.append(signed(st.sales)); } else { p.textContent = "–"; s.textContent = "–"; }
+    t.append(p, s);
+  });
+  var wrap = el("div"); wrap.append(t, el("div", "note", "Price and sales in each day's best hours, against the item's average. ★ marks the best of the week."));
+  return wrap;
 }
 
 // Search: by name (substring) or exact ID, best sellers first.

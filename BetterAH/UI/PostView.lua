@@ -412,7 +412,7 @@ function PostView.sellTimeText(hint)
   if not hint then return nil end
   if hint.none then return "|cff9d9d9d" .. ns.SellTimes.NOT_ENOUGH .. "|r" end
   local color = PostView.RATING_COLORS[hint.rating] or ""
-  local word = hint.rating == 0 and "Best time now." or (hint.word .. " now.")
+  local word = hint.lead or (hint.rating == 0 and "Best time now." or (hint.word .. " now."))
   return color .. word .. "|r" .. hint.line:sub(#word + 1)
 end
 

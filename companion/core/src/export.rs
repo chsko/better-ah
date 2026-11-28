@@ -4,8 +4,9 @@ use std::fmt::Write;
 
 use serde_json::{json, Map, Value};
 
-use crate::rank::{rank, Advice, Hint, Rating};
+use crate::rank::{rank_local, Advice, Hint, Rating};
 use crate::stats::Stats;
+use crate::tz::oslo_offset;
 
 /// Format version of both outputs.
 pub const VERSION: u32 = 1;
@@ -64,13 +65,16 @@ pub fn days_covered(stats: &Stats, now: i64) -> u32 {
 /// (`id: [name, sold, best window start or null]`) plus the metadata, and `items/<id>.json`
 /// holds one item's cells that had sales or listings
 /// (`[weekday-hour, sales, price, score, min price, supply]`) and, with enough data, its best
-/// window start and run-length encoded hints. Split so a phone only loads the item it opens.
+/// window start, the best window start of each Oslo day (`dayBest`, Monday first, null for a
+/// day without sales), its median sale price (`median`) and run-length encoded hints. Split so a phone only loads the item it
+/// opens.
 pub fn page_files(stats: &Stats, now: i64, market: &str) -> Vec<(String, Value)> {
     let first = stats.collecting_since.map_or(hour_of(now), hour_of);
+    let offset = oslo_offset(now);
     let mut index = Map::new();
     let mut files = Vec::new();
     for (item, rows) in &stats.items {
-        let r = rank(rows, first, hour_of(now));
+        let r = rank_local(rows, first, hour_of(now), offset);
         if r.sold == 0 {
             continue;
         }
@@ -87,7 +91,7 @@ pub fn page_files(stats: &Stats, now: i64, market: &str) -> Vec<(String, Value)>
                     w,
                     round(c.sales, 2),
                     c.price,
-                    c.score.round(),
+                    round(c.score, 3),
                     c.min_price,
                     round(c.supply, 1)
                 ])
@@ -100,6 +104,8 @@ pub fn page_files(stats: &Stats, now: i64, market: &str) -> Vec<(String, Value)>
                 "name": name,
                 "sold": r.sold,
                 "best": best,
+                "dayBest": r.hints.as_ref().map(|_| r.day_best),
+                "median": r.median_price,
                 "cells": cells,
                 "hints": r.hints.as_ref().map(|h| run_lengths(h)),
             }),
@@ -116,6 +122,7 @@ pub fn page_files(stats: &Stats, now: i64, market: &str) -> Vec<(String, Value)>
                 "collectingSince": stats.collecting_since,
                 "lastExport": stats.last_export,
                 "days": days_covered(stats, now),
+                "utcOffset": offset,
                 "items": index,
             }),
         ),
@@ -127,6 +134,7 @@ pub fn page_files(stats: &Stats, now: i64, market: &str) -> Vec<(String, Value)>
 /// so it uses the addon's namespace and creates no globals.
 pub fn lua_data(stats: &Stats, now: i64, market: &str) -> String {
     let first = stats.collecting_since.map_or(hour_of(now), hour_of);
+    let offset = oslo_offset(now);
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -136,6 +144,10 @@ pub fn lua_data(stats: &Stats, now: i64, market: &str) -> String {
         out,
         "-- hints: run lengths {{count, code, ...}} over 168 weekday-hours from Monday 00:00 UTC;"
     );
+    let _ = writeln!(
+        out,
+        "-- dayBest: start of each Oslo day's best window (UTC weekday-hour), Monday first; false = none."
+    );
     let _ = writeln!(out, "-- code = betterBy * 16 + advice * 4 + rating (betterBy 0-999, 1000 = none;\n-- advice 0 wait, 1 = 2h, 2 = 8h, 3 = 24h; rating 0 best, 1 good, 2 average, 3 slow).");
     let _ = writeln!(out, "local _, ns = ...");
     let _ = writeln!(out, "ns.SellTimesData = {{");
@@ -143,14 +155,23 @@ pub fn lua_data(stats: &Stats, now: i64, market: &str) -> String {
     let _ = writeln!(out, "  generated = {now},");
     let _ = writeln!(out, "  market = {},", lua_string(market));
     let _ = writeln!(out, "  days = {},", days_covered(stats, now));
+    let _ = writeln!(out, "  utcOffset = {offset},");
     let _ = writeln!(out, "  items = {{");
     for (item, rows) in &stats.items {
-        let r = rank(rows, first, hour_of(now));
+        let r = rank_local(rows, first, hour_of(now), offset);
         let Some(hints) = r.hints else { continue };
+        let days: Vec<String> = r
+            .day_best
+            .iter()
+            .map(|d| d.map_or_else(|| "false".to_string(), |w| w.to_string()))
+            .collect();
         let _ = writeln!(
             out,
-            "    [{item}] = {{ sold = {}, price = {}, best = {}, hints = {{",
-            r.sold, r.cells[r.best_start].price, r.best_start
+            "    [{item}] = {{ sold = {}, price = {}, best = {}, dayBest = {{ {} }}, hints = {{",
+            r.sold,
+            r.cells[r.best_start].price,
+            r.best_start,
+            days.join(", ")
         );
         let codes: Vec<String> = run_lengths(&hints).iter().map(u32::to_string).collect();
         let mut line = String::from("     ");

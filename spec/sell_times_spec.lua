@@ -135,10 +135,77 @@ describe("SellTimes (#221)", function()
     local h = SellTimes.hint(data(hints(58, code(120, 0, 3))), 16204, "/Normal/Horde", WED_10, 3600)
     local lines = SellTimes.details(h, function(c) return c .. "c" end)
     assert.equal("Horde Normal, last 26 days.", lines[1])
-    assert.equal("Best: Sun 20:00-23:00, typically 9500c each.", lines[2])
+    assert.equal("Best this week: Sun 20:00-23:00, typically 9500c each.", lines[2])
     assert.equal("Sold in that time: 680.", lines[3])
     assert.matches("Cancelled auctions count as sales", lines[5])
     assert.matches("about a week", SellTimes.details({ none = true })[1])
+  end)
+
+  describe("today's best 3 hours (#263)", function()
+    -- Saturday's best window starts 18:00 UTC (weekday-hour 138), 19:00 in Oslo (UTC+1).
+    local DAY_BEST = { 20, false, 60, false, 116, 138, 163 }
+    local function withDays(at, special, days)
+      local d = data(hints(at, special), { generated = MONDAY + 5 * 86400 })
+      d.items[16204].dayBest = days
+      return d
+    end
+
+    it("names today's best hours and the week's on the Post line", function()
+      local sat12 = MONDAY + 5 * 86400 + 12 * H -- weekday-hour 132
+      local h = SellTimes.hint(withDays(132, code(40, 2, 2), DAY_BEST), 16204, "/Normal/Horde", sat12, 3600)
+      assert.equal("19:00-22:00", h.today)
+      assert.equal("19-22", h.todayShort)
+      assert.is_false(h.inToday)
+      assert.equal("Average now.", h.lead)
+      assert.equal("Average now. Best today 19-22, this week Sun 20-23, 40% better.", h.line)
+      local lines = SellTimes.details(h, function(c) return c .. "c" end)
+      assert.equal("Best today: 19:00-22:00.", lines[2])
+      assert.equal("Best this week: Sun 20:00-23:00, typically 9500c each.", lines[3])
+    end)
+
+    it("says so when now is in today's best hours and rates good", function()
+      local sat19 = MONDAY + 5 * 86400 + 19 * H -- weekday-hour 139, inside 138-140
+      local h = SellTimes.hint(withDays(139, code(40, 1, 1), DAY_BEST), 16204, "/Normal/Horde", sat19, 3600)
+      assert.is_true(h.inToday)
+      assert.equal("Best time today. This week's best is Sun 20-23, 40% better.", h.line)
+      -- A weak day's best hours rated slow keep the rating word.
+      h = SellTimes.hint(withDays(139, code(300, 0, 3), DAY_BEST), 16204, "/Normal/Horde", sat19, 3600)
+      assert.equal("Slow now. Best today 19-22, this week Sun 20-23, wait until then.", h.line)
+    end)
+
+    it("doesn't repeat the window when today holds the week's best", function()
+      local sun10 = MONDAY + 6 * 86400 + 10 * H -- weekday-hour 154
+      local d = withDays(154, code(40, 3, 2), DAY_BEST)
+      d.generated = sun10
+      local h = SellTimes.hint(d, 16204, "/Normal/Horde", sun10, 3600)
+      assert.equal("Average now. Best today 20-23, the best of the week, post 24h.", h.line)
+    end)
+
+    it("cuts days as the companion did, but shows hours in the player's time", function()
+      -- A UK player (UTC+0) at 23:30 UTC Saturday: still Saturday there, but Sunday in Oslo.
+      local sat2330 = MONDAY + 5 * 86400 + 23 * H + 1800
+      local d = withDays(143, code(40, 2, 2), DAY_BEST)
+      d.utcOffset = 1
+      local h = SellTimes.hint(d, 16204, "/Normal/Horde", sat2330, 0)
+      assert.equal("19:00-22:00", h.today, "Oslo's Sunday window, in UK time")
+    end)
+
+    it("uses the local day, which can differ from the UTC day", function()
+      -- Monday 23:30 UTC is Tuesday 00:30 in Oslo: Tuesday has no best window.
+      local d = withDays(23, code(40, 2, 2), DAY_BEST)
+      d.generated = MONDAY + 23 * H
+      local h = SellTimes.hint(d, 16204, "/Normal/Horde", MONDAY + 23 * H + 1800, 3600)
+      assert.is_nil(h.today)
+      assert.equal("Average now. Best Sun 20-23, 40% better.", h.line)
+    end)
+
+    it("ignores a broken dayBest and keeps the week's line", function()
+      local sat12 = MONDAY + 5 * 86400 + 12 * H
+      for _, days in ipairs({ "x", { 1, 2, 3, 4, 5, 999, 7 } }) do
+        local h = SellTimes.hint(withDays(132, code(40, 2, 2), days), 16204, "/Normal/Horde", sat12, 3600)
+        assert.is_nil(h.today)
+      end
+    end)
   end)
 end)
 
@@ -156,6 +223,9 @@ describe("Sell time in game (#221)", function()
         line = "Average now. Best Sun 20-23, 40% better, post 8h." }))
     assert.equal("|cff3ce04aBest time now.|r Post 2h.",
       PostView.sellTimeText({ rating = 0, word = "Best", line = "Best time now. Post 2h." }))
+    assert.equal("|cff3ce04aBest time today.|r This week's best is Sun 20-23, 40% better.",
+      PostView.sellTimeText({ rating = 1, word = "Good", inToday = true, lead = "Best time today.",
+        line = "Best time today. This week's best is Sun 20-23, 40% better." }))
     assert.equal("|cff9d9d9dNot enough sales yet for a sell time.|r", PostView.sellTimeText({ none = true }))
     assert.is_nil(PostView.sellTimeText(nil), "no data file: no line")
   end)

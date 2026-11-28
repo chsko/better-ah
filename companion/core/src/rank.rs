@@ -13,6 +13,11 @@ pub const WINDOW_LEN: usize = 3;
 pub const MIN_SALES: u64 = 10;
 /// ...over at least this many days of collected data.
 pub const MIN_DAYS: u32 = 7;
+/// How much price counts against sales rate in an hour's score (#263): 70% price, 30% sales.
+pub const PRICE_WEIGHT: f64 = 0.7;
+/// An hour's price in the score is pulled toward the item's median as if it had this many more
+/// hours of sales at the median, so one lucky sale can't make an hour the best.
+pub const PRICE_PRIOR_HOURS: f64 = 1.0;
 
 /// The weekday-hour (0 = Monday 00 UTC) of an hour counted from the Unix epoch.
 /// 1970-01-01 was a Thursday, so day 0 is weekday 3.
@@ -29,7 +34,9 @@ pub struct Cell {
     /// Median of the hourly average sale price (copper per unit) in this hour of the week,
     /// or the item's overall median when it never sold in this hour.
     pub price: u64,
-    /// `sales × price`: expected copper earned in this hour of the week.
+    /// How good this hour is to sell in, leaning toward price (#263):
+    /// `(price / item median)^0.7 × (sales / item average)^0.3`. 1.0 is an average hour;
+    /// an hour without sales scores 0, however high its price.
     pub score: f64,
     /// Average lowest listed unit price (copper) in the hours it was listed, 0 if never listed.
     pub min_price: u64,
@@ -73,8 +80,13 @@ pub struct Ranked {
     pub cells: Vec<Cell>,
     /// Units estimated sold in the window.
     pub sold: u64,
+    /// The item's median sale price (copper per unit), which [`Cell::score`] compares with.
+    pub median_price: u64,
     /// Weekday-hour the best window starts at.
     pub best_start: usize,
+    /// The best window of each local day, Monday first: the UTC weekday-hour it starts at,
+    /// or `None` when nothing sold that day. Each window lies wholly inside its local day.
+    pub day_best: [Option<usize>; 7],
     /// 168 hints, one per weekday-hour, or `None` when there is too little data.
     pub hints: Option<Vec<Hint>>,
 }
@@ -103,9 +115,15 @@ fn occurrences(first_hour: u32, now_hour: u32) -> [u32; WEEK_HOURS] {
     n
 }
 
-/// Ranks one item's rows. `first_hour` is the hour collection started (Unix hours) and
-/// `now_hour` the current hour.
+/// Ranks one item's rows with local days equal to UTC days. See [`rank_local`].
 pub fn rank(rows: &[HourRow], first_hour: u32, now_hour: u32) -> Ranked {
+    rank_local(rows, first_hour, now_hour, 0)
+}
+
+/// Ranks one item's rows. `first_hour` is the hour collection started (Unix hours),
+/// `now_hour` the current hour and `utc_offset` local time minus UTC in hours, which sets
+/// where each local day of [`Ranked::day_best`] begins.
+pub fn rank_local(rows: &[HourRow], first_hour: u32, now_hour: u32, utc_offset: i32) -> Ranked {
     let occ = occurrences(first_hour, now_hour);
     // Only rows inside the hours that were counted.
     let oldest = first_hour.max(now_hour.saturating_sub(WINDOW_HOURS - 1));
@@ -137,7 +155,7 @@ pub fn rank(rows: &[HourRow], first_hour: u32, now_hour: u32) -> Ranked {
         }
     }
     let overall = median(all_prices).unwrap_or(0);
-    let cells: Vec<Cell> = (0..WEEK_HOURS)
+    let mut cells: Vec<Cell> = (0..WEEK_HOURS)
         .map(|w| {
             let sales = if occ[w] > 0 {
                 sold[w] as f64 / f64::from(occ[w])
@@ -148,7 +166,7 @@ pub fn rank(rows: &[HourRow], first_hour: u32, now_hour: u32) -> Ranked {
             Cell {
                 sales,
                 price,
-                score: sales * price as f64,
+                score: 0.0,
                 min_price: if listed[w] > 0 {
                     min_sum[w] / u64::from(listed[w])
                 } else {
@@ -162,6 +180,14 @@ pub fn rank(rows: &[HourRow], first_hour: u32, now_hour: u32) -> Ranked {
             }
         })
         .collect();
+    // The item's average hour, over all 168 weekday-hours.
+    let mean_sales = cells.iter().map(|c| c.sales).sum::<f64>() / WEEK_HOURS as f64;
+    for (c, p) in cells.iter_mut().zip(&prices) {
+        let n = p.len() as f64;
+        let damped =
+            (n * c.price as f64 + PRICE_PRIOR_HOURS * overall as f64) / (n + PRICE_PRIOR_HOURS);
+        c.score = score(c.sales, damped, mean_sales, overall);
+    }
 
     let window = |start: usize| -> f64 {
         (0..WINDOW_LEN)
@@ -173,6 +199,17 @@ pub fn rank(rows: &[HourRow], first_hour: u32, now_hour: u32) -> Ranked {
     let key = |s: usize| (window(s), cells[s].score);
     let best_start = (0..WEEK_HOURS).fold(0, |best, s| if key(s) > key(best) { s } else { best });
     let best = window(best_start);
+    let day_best: [Option<usize>; 7] = std::array::from_fn(|d| {
+        // Window starts 00:00-21:00 local, so the window ends by midnight.
+        let to_utc = |local: usize| {
+            (local as i64 - i64::from(utc_offset)).rem_euclid(WEEK_HOURS as i64) as usize
+        };
+        let first = to_utc(d * 24);
+        let pick = (1..=24 - WINDOW_LEN)
+            .map(|i| to_utc(d * 24 + i))
+            .fold(first, |b, s| if key(s) > key(b) { s } else { b });
+        (window(pick) > 0.0).then_some(pick)
+    });
 
     // Days this item has been seen, so an item new to the auction house waits too.
     let seen_from = rows.first().map_or(now_hour, |r| r.hour);
@@ -187,9 +224,21 @@ pub fn rank(rows: &[HourRow], first_hour: u32, now_hour: u32) -> Ranked {
     Ranked {
         cells,
         sold: total,
+        median_price: overall,
         best_start,
+        day_best,
         hints,
     }
+}
+
+/// One hour's score (see [`Cell::score`]); `mean_sales` and `median_price` are the item's.
+fn score(sales: f64, price: f64, mean_sales: f64, median_price: u64) -> f64 {
+    if sales <= 0.0 || price <= 0.0 || mean_sales <= 0.0 || median_price == 0 {
+        return 0.0;
+    }
+    let p = price / median_price as f64;
+    let s = sales / mean_sales;
+    p.powf(PRICE_WEIGHT) * s.powf(1.0 - PRICE_WEIGHT)
 }
 
 fn hint(now: usize, best_start: usize, best: f64, now_window: f64) -> Hint {
@@ -200,7 +249,9 @@ fn hint(now: usize, best_start: usize, best: f64, now_window: f64) -> Hint {
     } else {
         (best_start + WEEK_HOURS - now) % WEEK_HOURS
     };
-    let ratio = now_window / best;
+    // Scores compare as price-equivalents: a ratio r means "like selling at r times the price",
+    // so the thresholds and percentages keep their meaning with the 0.7 power on price.
+    let ratio = (now_window / best).powf(1.0 / PRICE_WEIGHT);
     let rating = if inside {
         Rating::Best
     } else if ratio >= 0.75 {
@@ -214,7 +265,7 @@ fn hint(now: usize, best_start: usize, best: f64, now_window: f64) -> Hint {
         Some(0)
     } else {
         (now_window > 0.0).then(|| {
-            let pct = ((best / now_window - 1.0) * 100.0).round();
+            let pct = ((1.0 / ratio - 1.0) * 100.0).round();
             pct.clamp(0.0, 999.0) as u32
         })
     };
@@ -332,17 +383,101 @@ mod tests {
 
     #[test]
     fn rating_and_percent_compare_now_with_the_best_window() {
+        // Same sales, but hour 50 sells at 40% of hour 100's price.
         let mut rows = weekly(100, 4, 1000);
-        rows.extend(weekly(50, 2, 1000));
+        rows.extend(weekly(50, 4, 400));
         rows.sort_by_key(|r| r.hour);
         let r = rank(&rows, MONDAY, now());
         let h = r.hints.unwrap();
-        // Window starting at 50 holds half of the best window's score.
+        // Damped toward the median (700) by one hour: 940 against 460, like selling at 49% of
+        // the price. Average, and the best is 104% better.
         assert_eq!(h[50].rating, Rating::Average);
-        assert_eq!(h[50].better_by, Some(100));
+        assert_eq!(h[50].better_by, Some(104));
         // Nothing expected around weekday-hour 10.
         assert_eq!(h[10].rating, Rating::Slow);
         assert_eq!(h[10].better_by, None);
+    }
+
+    #[test]
+    fn half_the_sales_at_the_same_price_is_average_not_good() {
+        // 0.5^(0.3/0.7) = 0.74 as a price-equivalent.
+        let mut rows = weekly(100, 4, 1000);
+        rows.extend(weekly(50, 2, 1000));
+        rows.sort_by_key(|r| r.hour);
+        let h = rank(&rows, MONDAY, now()).hints.unwrap();
+        assert_eq!(h[50].rating, Rating::Average);
+        assert_eq!(h[50].better_by, Some(35));
+    }
+
+    #[test]
+    fn one_lucky_sale_does_not_make_the_best_hour() {
+        // Busy hours 2/h at 1000c across 40 hours of the week; one sale at 3000c in four weeks
+        // in hour 63, right after busy hours 60-62.
+        let mut rows = Vec::new();
+        for w in (20..60).chain(100..101) {
+            rows.extend(weekly(w, 2, 1000));
+        }
+        rows.push(sale(MONDAY + 63, 1, 3000));
+        rows.sort_by_key(|r| r.hour);
+        let r = rank(&rows, MONDAY, now());
+        assert!(r.cells[63].score < r.cells[59].score);
+        assert!(!(r.best_start..r.best_start + WINDOW_LEN).contains(&63));
+    }
+
+    #[test]
+    fn price_outweighs_sales_rate() {
+        // Revenue would pick hour 10 (4 × 10s = 40s against 2 × 16s = 32s); leaning 70/30
+        // toward price picks hour 100.
+        let mut rows = weekly(10, 4, 1000);
+        rows.extend(weekly(100, 2, 1600));
+        rows.sort_by_key(|r| r.hour);
+        let r = rank(&rows, MONDAY, now());
+        assert_eq!(r.best_start, 100);
+        assert!(r.cells[100].score > r.cells[10].score);
+    }
+
+    #[test]
+    fn an_hour_without_sales_scores_nothing_however_high_its_price() {
+        let mut rows = weekly(10, 4, 1000);
+        rows.push(HourRow {
+            hour: MONDAY + 50,
+            sold: 0,
+            gold: 0,
+            min_price: 1_000_000,
+            supply: 1,
+        });
+        rows.sort_by_key(|r| r.hour);
+        let r = rank(&rows, MONDAY, now());
+        assert_eq!(r.cells[50].score, 0.0);
+        // An average hour scores 1: one selling hour holds all sales, 168 times the mean.
+        assert!((r.cells[10].score - 168f64.powf(0.3)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn each_local_day_gets_its_own_best_window() {
+        // UTC+1. Local Sunday 20:00 is UTC 19:00 (163); local Tuesday 12:00 is UTC 11:00 (35).
+        let mut rows = weekly(163, 4, 1000);
+        rows.extend(weekly(35, 2, 1000));
+        rows.sort_by_key(|r| r.hour);
+        let r = rank_local(&rows, MONDAY, now(), 1);
+        assert_eq!(r.best_start, 163);
+        assert_eq!(r.day_best[6], Some(163));
+        assert_eq!(r.day_best[1], Some(35));
+        assert_eq!(r.day_best[0], None);
+    }
+
+    #[test]
+    fn a_day_window_stays_inside_its_local_day() {
+        // UTC+1. UTC Sunday 23:00 (167) is local Monday 00:00; UTC 22:00 Monday (22) is local
+        // Monday 23:00, so its window starts at local 21:00 (UTC 20) and ends at midnight.
+        let mut rows = weekly(167, 3, 1000);
+        rows.extend(weekly(22, 3, 1000));
+        rows.sort_by_key(|r| r.hour);
+        let r = rank_local(&rows, MONDAY, now(), 1);
+        assert_eq!(r.day_best[6], None);
+        assert!(r.day_best[0] == Some(167) || r.day_best[0] == Some(20));
+        let r = rank_local(&weekly(22, 3, 1000), MONDAY, now(), 1);
+        assert_eq!(r.day_best[0], Some(20));
     }
 
     #[test]
@@ -426,11 +561,12 @@ mod tests {
 
     #[test]
     fn rating_thresholds() {
-        // Best window 4000 copper; other lone hours at 3000 (0.75), 1600 (0.4), 1500 (0.375).
+        // Same sales everywhere, so a window compares as its damped price share (each price
+        // pulled toward the median 625 by one hour): 0.84, 0.56 and 0.39.
         let mut rows = weekly(100, 4, 1000);
-        rows.extend(weekly(10, 3, 1000));
-        rows.extend(weekly(40, 2, 800));
-        rows.extend(weekly(70, 3, 500));
+        rows.extend(weekly(10, 4, 800));
+        rows.extend(weekly(40, 4, 450));
+        rows.extend(weekly(70, 4, 250));
         rows.sort_by_key(|r| r.hour);
         let h = rank(&rows, MONDAY, now()).hints.unwrap();
         assert_eq!(h[10].rating, Rating::Good);

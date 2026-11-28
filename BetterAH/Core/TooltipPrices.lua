@@ -136,11 +136,12 @@ function TooltipPrices.lines(item, opts)
     end
     if opts.shift and bags > 1 then out.hint = "Hold Shift for all " .. bags .. " in your bags" end
   end
-  -- Best time to sell (#221): how good now is, then the best window and the advice.
+  -- Best time to sell (#221, #263): how good now is, today's and the week's best 3 hours, and the advice.
   local st = opts.sellTime and item.sellTime
   if st and not st.none then
     rows[#rows + 1] = { label = "Sell now", text = st.word, rating = st.rating }
-    rows[#rows + 1] = { label = "Best time", text = st.window }
+    if st.today then rows[#rows + 1] = { label = "Best today", text = st.today } end
+    rows[#rows + 1] = { label = st.today and "Best this week" or "Best time", text = st.window }
     rows[#rows + 1] = { label = "", text = st.better .. " · " .. st.advice, dim = true }
   end
   if not value then
